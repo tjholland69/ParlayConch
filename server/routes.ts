@@ -332,5 +332,108 @@ export async function registerRoutes(
     }
   });
 
+  // ===== CSV IMPORT (Admin only) =====
+  app.post("/api/leagues/:leagueId/import", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const userId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Only league admins can import data" });
+      }
+
+      const { filename, records } = req.body;
+      if (!records || !Array.isArray(records)) {
+        return res.status(400).json({ message: "Invalid import data" });
+      }
+
+      const batch = await storage.createImportBatch({
+        leagueId,
+        uploadedBy: userId,
+        originalFilename: filename || "import.csv",
+        recordCount: records.length
+      });
+
+      let imported = 0;
+      for (const record of records) {
+        try {
+          const { weekId, memberEmail, status, legs } = record;
+          
+          if (!weekId || !memberEmail || !legs || !Array.isArray(legs) || legs.length === 0) {
+            continue;
+          }
+
+          const member = await storage.getLeagueMemberByEmail(leagueId, memberEmail);
+          if (!member) continue;
+
+          const parlayLegs = legs.map((leg: any) => ({
+            gameId: leg.gameId,
+            betType: leg.betType || 'spread',
+            pick: leg.pick,
+            line: leg.line || null,
+            result: leg.result || null
+          }));
+
+          await storage.createImportedParlay(
+            member.userId,
+            { leagueId, weekId },
+            parlayLegs,
+            batch.id,
+            status || 'approved'
+          );
+          imported++;
+        } catch (e) {
+          console.error("Import record error:", e);
+        }
+      }
+
+      res.json({ message: `Imported ${imported} of ${records.length} records`, batchId: batch.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/leagues/:leagueId/imports", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const userId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Admin access required" });
+      }
+
+      const imports = await storage.getLeagueImportHistory(leagueId);
+      res.json(imports);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ===== PARLAY EDIT (Admin only, for imported/manual entries) =====
+  app.patch("/api/parlays/:id", isAuthenticated, async (req, res) => {
+    try {
+      const parlayId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const parlay = await storage.getParlay(parlayId);
+      if (!parlay) {
+        return res.status(404).json({ message: "Parlay not found" });
+      }
+
+      const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Only league admins can edit parlays" });
+      }
+
+      const { status, legs } = req.body;
+      const updated = await storage.updateParlay(parlayId, { status, legs });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }

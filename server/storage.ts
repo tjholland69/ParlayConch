@@ -1,9 +1,10 @@
 import { db } from "./db";
 import {
-  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs,
+  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches,
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
-  type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs
+  type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
+  type ImportBatch, type InsertImportBatch, type ImportParlayLeg
 } from "@shared/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 
@@ -46,6 +47,13 @@ export interface IStorage {
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
   getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]>;
+  updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string }[] }): Promise<Parlay>;
+
+  // Imports
+  createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
+  createImportedParlay(userId: string, parlay: InsertParlay, legs: ImportParlayLeg[], batchId: number, status: string): Promise<Parlay>;
+  getLeagueImportHistory(leagueId: number): Promise<ImportBatch[]>;
+  getLeagueMemberByEmail(leagueId: number, email: string): Promise<LeagueMember | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -405,6 +413,73 @@ export class DatabaseStorage implements IStorage {
     }
 
     return result.sort((a, b) => b.week.weekNumber - a.week.weekNumber);
+  }
+
+  async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string }[] }): Promise<Parlay> {
+    return await db.transaction(async (tx) => {
+      const existingLegs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
+      const validLegIds = new Set(existingLegs.map(l => l.id));
+
+      if (updates.status) {
+        await tx.update(parlays).set({ status: updates.status }).where(eq(parlays.id, parlayId));
+      }
+      
+      if (updates.legs) {
+        for (const leg of updates.legs) {
+          if (!validLegIds.has(leg.id)) continue;
+          if (leg.result !== undefined) {
+            await tx.update(parlayLegs).set({ result: leg.result }).where(eq(parlayLegs.id, leg.id));
+          }
+        }
+      }
+
+      const [parlay] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
+      return parlay;
+    });
+  }
+
+  // Imports
+  async createImportBatch(batch: InsertImportBatch): Promise<ImportBatch> {
+    const [newBatch] = await db.insert(importBatches).values(batch).returning();
+    return newBatch;
+  }
+
+  async createImportedParlay(userId: string, parlay: InsertParlay, legs: ImportParlayLeg[], batchId: number, status: string): Promise<Parlay> {
+    return await db.transaction(async (tx) => {
+      const [newParlay] = await tx.insert(parlays)
+        .values({ ...parlay, userId, source: 'imported', importBatchId: batchId, status })
+        .returning();
+
+      if (legs.length > 0) {
+        await tx.insert(parlayLegs).values(legs.map(leg => ({ 
+          gameId: leg.gameId,
+          betType: leg.betType,
+          pick: leg.pick,
+          line: leg.line,
+          result: leg.result,
+          parlayId: newParlay.id 
+        })));
+      }
+
+      return newParlay;
+    });
+  }
+
+  async getLeagueMemberByEmail(leagueId: number, email: string): Promise<LeagueMember | null> {
+    const result = await db.select({
+      member: leagueMembers
+    })
+    .from(leagueMembers)
+    .innerJoin(users, eq(leagueMembers.userId, users.id))
+    .where(and(eq(leagueMembers.leagueId, leagueId), eq(users.email, email.toLowerCase())));
+    
+    return result.length > 0 ? result[0].member : null;
+  }
+
+  async getLeagueImportHistory(leagueId: number): Promise<ImportBatch[]> {
+    return await db.select().from(importBatches)
+      .where(eq(importBatches.leagueId, leagueId))
+      .orderBy(desc(importBatches.uploadedAt));
   }
 }
 

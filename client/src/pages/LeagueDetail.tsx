@@ -6,10 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2 } from "lucide-react";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import type { Game } from "@shared/schema";
+import { ImportHistoryModal } from "@/components/ImportHistoryModal";
+import { EditParlayDialog } from "@/components/EditParlayDialog";
+import type { Game, ParlayWithLegs } from "@shared/schema";
 
 type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
 
@@ -39,6 +42,9 @@ export default function LeagueDetail() {
   const rejectParlay = useRejectParlay();
 
   const [selectedLegs, setSelectedLegs] = useState<ParlayLeg[]>([]);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [editParlayOpen, setEditParlayOpen] = useState(false);
+  const [selectedParlay, setSelectedParlay] = useState<ParlayWithLegs | null>(null);
 
   const toggleLeg = (game: Game, betType: string, pick: string) => {
     const existing = selectedLegs.findIndex(l => l.gameId === game.id);
@@ -91,19 +97,31 @@ export default function LeagueDetail() {
             </div>
           </div>
           
-          <Select value={selectedWeekId?.toString()} onValueChange={(v) => setSelectedWeekId(Number(v))}>
-            <SelectTrigger className="w-48 bg-background border-white/10">
-              <Calendar className="w-4 h-4 text-primary mr-2" />
-              <SelectValue placeholder="Select Week" />
-            </SelectTrigger>
-            <SelectContent>
-              {weeks?.map((week) => (
-                <SelectItem key={week.id} value={week.id.toString()}>
-                  {week.label} {week.isActive && "(Current)"}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <div className="flex items-center gap-2 flex-wrap">
+            {league.isAdmin && (
+              <Button 
+                variant="outline" 
+                onClick={() => setImportModalOpen(true)}
+                data-testid="button-import-history"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Import History
+              </Button>
+            )}
+            <Select value={selectedWeekId?.toString()} onValueChange={(v) => setSelectedWeekId(Number(v))}>
+              <SelectTrigger className="w-48 bg-background border-white/10">
+                <Calendar className="w-4 h-4 text-primary mr-2" />
+                <SelectValue placeholder="Select Week" />
+              </SelectTrigger>
+              <SelectContent>
+                {weeks?.map((week) => (
+                  <SelectItem key={week.id} value={week.id.toString()}>
+                    {week.label} {week.isActive && "(Current)"}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
 
@@ -252,64 +270,89 @@ export default function LeagueDetail() {
             </div>
           ) : (
             leagueParlays?.map((parlay) => (
-              <Card key={parlay.id} className="bg-card/50 border-white/5" data-testid={`card-parlay-${parlay.id}`}>
-                <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
-                      {parlay.user?.firstName?.[0] || '?'}
-                    </div>
-                    <div>
-                      <p className="font-bold">{parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
-                      <p className="text-xs text-muted-foreground">{parlay.legs.length} leg parlay</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={
-                      parlay.status === 'approved' ? 'default' :
-                      parlay.status === 'rejected' ? 'destructive' :
-                      parlay.status === 'win' ? 'default' :
-                      parlay.status === 'loss' ? 'destructive' :
-                      'secondary'
-                    }>
-                      {parlay.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
-                      {parlay.status}
-                    </Badge>
-                    
-                    {league.isAdmin && parlay.status === 'pending' && (
-                      <>
-                        <Button 
-                          size="sm" 
-                          variant="ghost" 
-                          onClick={() => approveParlay.mutate(parlay.id)}
-                          data-testid={`button-approve-${parlay.id}`}
-                        >
-                          <Check className="w-4 h-4 text-green-500" />
-                        </Button>
-                        <Button 
-                          size="sm" 
-                          variant="ghost" 
-                          onClick={() => rejectParlay.mutate(parlay.id)}
-                          data-testid={`button-reject-${parlay.id}`}
-                        >
-                          <X className="w-4 h-4 text-red-500" />
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-1">
-                    {parlay.legs.map((leg, i) => (
-                      <div key={i} className="flex items-center justify-between text-sm p-2 bg-white/5 rounded">
-                        <span>{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
-                        <Badge variant="outline" className="text-xs">
-                          {leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam}
-                        </Badge>
+              <ContextMenu key={parlay.id}>
+                <ContextMenuTrigger asChild>
+                  <Card className="bg-card/50 border-white/5" data-testid={`card-parlay-${parlay.id}`}>
+                    <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
+                          {parlay.user?.firstName?.[0] || '?'}
+                        </div>
+                        <div>
+                          <p className="font-bold">{parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {parlay.legs.length} leg parlay
+                            {parlay.source === 'imported' && <Badge variant="outline" className="ml-2 text-xs">Imported</Badge>}
+                          </p>
+                        </div>
                       </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={
+                          parlay.status === 'approved' ? 'default' :
+                          parlay.status === 'rejected' ? 'destructive' :
+                          parlay.status === 'win' ? 'default' :
+                          parlay.status === 'loss' ? 'destructive' :
+                          'secondary'
+                        }>
+                          {parlay.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
+                          {parlay.status}
+                        </Badge>
+                        
+                        {league.isAdmin && parlay.status === 'pending' && (
+                          <>
+                            <Button 
+                              size="sm" 
+                              variant="ghost" 
+                              onClick={() => approveParlay.mutate(parlay.id)}
+                              data-testid={`button-approve-${parlay.id}`}
+                            >
+                              <Check className="w-4 h-4 text-green-500" />
+                            </Button>
+                            <Button 
+                              size="sm" 
+                              variant="ghost" 
+                              onClick={() => rejectParlay.mutate(parlay.id)}
+                              data-testid={`button-reject-${parlay.id}`}
+                            >
+                              <X className="w-4 h-4 text-red-500" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-1">
+                        {parlay.legs.map((leg, i) => (
+                          <div key={i} className="flex items-center justify-between text-sm p-2 bg-white/5 rounded">
+                            <span>{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
+                            <div className="flex items-center gap-2">
+                              {leg.result && (
+                                <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
+                                  {leg.result}
+                                </Badge>
+                              )}
+                              <Badge variant="outline" className="text-xs">
+                                {leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam}
+                              </Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                </ContextMenuTrigger>
+                {league.isAdmin && (
+                  <ContextMenuContent>
+                    <ContextMenuItem 
+                      onClick={() => { setSelectedParlay(parlay); setEditParlayOpen(true); }}
+                      data-testid={`context-edit-${parlay.id}`}
+                    >
+                      <Edit className="w-4 h-4 mr-2" />
+                      Edit Parlay
+                    </ContextMenuItem>
+                  </ContextMenuContent>
+                )}
+              </ContextMenu>
             ))
           )}
         </TabsContent>
@@ -381,6 +424,20 @@ export default function LeagueDetail() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Modals */}
+      <ImportHistoryModal 
+        open={importModalOpen} 
+        onOpenChange={setImportModalOpen} 
+        leagueId={leagueId} 
+      />
+      <EditParlayDialog
+        open={editParlayOpen}
+        onOpenChange={setEditParlayOpen}
+        parlay={selectedParlay}
+        leagueId={leagueId}
+        weekId={selectedWeekId || 0}
+      />
     </div>
   );
 }

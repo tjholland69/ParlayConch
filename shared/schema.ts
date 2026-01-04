@@ -56,6 +56,16 @@ export const leagueMembers = pgTable("league_members", {
   joinedAt: timestamp("joined_at").defaultNow(),
 });
 
+// Import batches - tracks CSV imports
+export const importBatches = pgTable("import_batches", {
+  id: serial("id").primaryKey(),
+  leagueId: integer("league_id").notNull(),
+  uploadedBy: varchar("uploaded_by").notNull(),
+  originalFilename: text("original_filename").notNull(),
+  recordCount: integer("record_count").default(0),
+  uploadedAt: timestamp("uploaded_at").defaultNow(),
+});
+
 // Parlays - a user's weekly pick (replaces individual bets)
 export const parlays = pgTable("parlays", {
   id: serial("id").primaryKey(),
@@ -66,6 +76,8 @@ export const parlays = pgTable("parlays", {
   approvedBy: varchar("approved_by"),
   approvedAt: timestamp("approved_at"),
   createdAt: timestamp("created_at").defaultNow(),
+  source: text("source").default("live"), // 'live', 'imported'
+  importBatchId: integer("import_batch_id"),
 });
 
 // Parlay legs - individual picks within a parlay
@@ -96,8 +108,9 @@ export const insertBetSchema = createInsertSchema(bets).omit({ id: true, userId:
 
 export const insertLeagueSchema = createInsertSchema(leagues).omit({ id: true, inviteCode: true, createdAt: true });
 export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({ id: true, joinedAt: true });
-export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true });
+export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true, source: true, importBatchId: true });
 export const insertParlayLegSchema = createInsertSchema(parlayLegs).omit({ id: true, result: true });
+export const insertImportBatchSchema = createInsertSchema(importBatches).omit({ id: true, uploadedAt: true });
 
 // Types
 export type Week = typeof weeks.$inferSelect;
@@ -107,11 +120,14 @@ export type League = typeof leagues.$inferSelect;
 export type LeagueMember = typeof leagueMembers.$inferSelect;
 export type Parlay = typeof parlays.$inferSelect;
 export type ParlayLeg = typeof parlayLegs.$inferSelect;
+export type ImportBatch = typeof importBatches.$inferSelect;
 
 export type InsertBet = z.infer<typeof insertBetSchema>;
 export type InsertLeague = z.infer<typeof insertLeagueSchema>;
 export type InsertParlay = z.infer<typeof insertParlaySchema>;
 export type InsertParlayLeg = z.infer<typeof insertParlayLegSchema>;
+export type InsertImportBatch = z.infer<typeof insertImportBatchSchema>;
+export type ImportParlayLeg = Omit<InsertParlayLeg, 'parlayId'> & { result?: string | null };
 
 // API Response Types
 export type GameWithBet = Game & { userBet?: Bet };
