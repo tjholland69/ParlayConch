@@ -1,5 +1,6 @@
 import { useStats } from "@/hooks/use-bets";
 import { StatsChart } from "@/components/StatsChart";
+import { NewsFeed } from "@/components/NewsFeed";
 import { Trophy, TrendingUp, AlertCircle, Medal } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -142,6 +143,9 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* News Feed */}
+      <NewsFeed />
     </div>
   );
 }
