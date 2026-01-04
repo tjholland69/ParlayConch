@@ -6,8 +6,8 @@ import {
   History, 
   LogOut, 
   Menu,
-  X,
-  User
+  User,
+  Users
 } from "lucide-react";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -16,7 +16,8 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
-  { label: "Make Picks", href: "/picks", icon: Trophy },
+  { label: "My Leagues", href: "/leagues", icon: Users },
+  { label: "Quick Pick", href: "/picks", icon: Trophy },
   { label: "My History", href: "/history", icon: History },
 ];
 
@@ -30,10 +31,10 @@ export function Sidebar() {
       <div className="p-6">
         <h1 className="text-2xl font-bold tracking-tighter text-primary flex items-center gap-2">
           <Trophy className="w-8 h-8" />
-          <span className="text-glow">BET.LEAGUE</span>
+          <span className="text-glow">PARLAY.CLUB</span>
         </h1>
         <p className="text-xs text-muted-foreground mt-1 font-mono uppercase tracking-widest">
-          NFL Pick'em
+          NFL Parlay Tracker
         </p>
       </div>
 
@@ -48,6 +49,7 @@ export function Sidebar() {
                   : "text-muted-foreground hover:bg-white/5 hover:text-white"
               )}
               onClick={() => setOpen(false)}
+              data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
             >
               <item.icon className={cn(
                 "w-5 h-5 transition-transform group-hover:scale-110",
@@ -62,12 +64,16 @@ export function Sidebar() {
       <div className="p-4 border-t border-white/5">
         <div className="bg-card/50 rounded-xl p-4 mb-4 backdrop-blur-sm border border-white/5">
           <div className="flex items-center gap-3 mb-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-lg shadow-lg">
-              {user?.firstName?.[0] || user?.username?.[0] || <User className="w-5 h-5" />}
-            </div>
+            {user?.profileImageUrl ? (
+              <img src={user.profileImageUrl} alt="" className="w-10 h-10 rounded-full" />
+            ) : (
+              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-lg shadow-lg">
+                {user?.firstName?.[0] || <User className="w-5 h-5" />}
+              </div>
+            )}
             <div className="overflow-hidden">
               <p className="text-sm font-bold truncate text-white">
-                {user?.firstName || user?.username || 'Player'}
+                {user?.firstName || 'Player'}
               </p>
               <p className="text-xs text-muted-foreground truncate">
                 {user?.email}
@@ -78,6 +84,7 @@ export function Sidebar() {
             variant="ghost" 
             className="w-full justify-start text-destructive hover:text-destructive hover:bg-destructive/10"
             onClick={() => logout()}
+            data-testid="button-logout"
           >
             <LogOut className="w-4 h-4 mr-2" />
             Sign Out
@@ -93,11 +100,11 @@ export function Sidebar() {
       <div className="md:hidden fixed top-0 left-0 right-0 z-50 p-4 bg-background/80 backdrop-blur-md border-b border-white/5 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Trophy className="w-6 h-6 text-primary" />
-          <span className="font-bold font-display text-lg tracking-tight">BET.LEAGUE</span>
+          <span className="font-bold font-display text-lg tracking-tight">PARLAY.CLUB</span>
         </div>
         <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>
-            <Button variant="ghost" size="icon">
+            <Button variant="ghost" size="icon" data-testid="button-mobile-menu">
               <Menu className="w-6 h-6" />
             </Button>
           </SheetTrigger>
