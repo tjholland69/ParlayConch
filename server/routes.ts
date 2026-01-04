@@ -5,6 +5,7 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import { z } from "zod";
 import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema } from "@shared/schema";
 import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames } from "./services/oddsApi";
+import { fetchNFLNews } from "./services/nflNews";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -315,6 +316,17 @@ export async function registerRoutes(
     try {
       const usage = await getApiUsage();
       res.json(usage);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ===== NFL NEWS =====
+  app.get("/api/news", async (req, res) => {
+    try {
+      const limit = Math.min(Number(req.query.limit) || 10, 20);
+      const news = await fetchNFLNews(limit);
+      res.json(news);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
