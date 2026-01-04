@@ -1,5 +1,5 @@
 import { Button } from "@/components/ui/button";
-import { Trophy, Shield, Coins, ArrowRight } from "lucide-react";
+import { Shell, Shield, Coins, ArrowRight, Trophy } from "lucide-react";
 
 export default function Landing() {
   const handleLogin = () => {
@@ -18,8 +18,8 @@ export default function Landing() {
       {/* Header */}
       <header className="relative z-10 container mx-auto px-6 py-6 flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <Trophy className="w-8 h-8 text-blue-500" />
-          <span className="text-2xl font-display font-bold tracking-tighter">BET.LEAGUE</span>
+          <Shell className="w-8 h-8 text-blue-500" />
+          <span className="text-2xl font-display font-bold tracking-tighter">PARLAYCONCH</span>
         </div>
         <Button onClick={handleLogin} variant="outline" className="border-blue-500/20 hover:bg-blue-500/10">
           Login
@@ -50,7 +50,7 @@ export default function Landing() {
         {/* Feature Grid */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-24 w-full max-w-5xl">
           {[
-            { icon: Trophy, title: "Weekly Picks", desc: "Make your picks against the spread every week." },
+            { icon: Trophy, title: "Weekly Picks", desc: "Make your picks every week." },
             { icon: Shield, title: "Track History", desc: "Detailed history of all your wins, losses, and pushes." },
             { icon: Coins, title: "Leaderboard", desc: "Live standings to see who really knows ball." }
           ].map((feature, i) => (
