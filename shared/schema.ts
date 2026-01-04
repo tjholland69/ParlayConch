@@ -20,7 +20,10 @@ export const games = pgTable("games", {
   homeTeam: text("home_team").notNull(),
   awayTeam: text("away_team").notNull(),
   spread: text("spread"),
+  spreadOdds: text("spread_odds"),
   overUnder: text("over_under"),
+  overOdds: text("over_odds"),
+  underOdds: text("under_odds"),
   moneylineHome: text("moneyline_home"),
   moneylineAway: text("moneyline_away"),
   gameTime: timestamp("game_time").notNull(),
@@ -28,7 +31,6 @@ export const games = pgTable("games", {
   awayScore: integer("away_score"),
   isFinished: boolean("is_finished").default(false),
   winner: text("winner"),
-  // NFL Reference data
   venue: text("venue"),
   weather: text("weather"),
   homeRecord: text("home_record"),

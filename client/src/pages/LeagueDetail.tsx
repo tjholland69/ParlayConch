@@ -46,17 +46,35 @@ export default function LeagueDetail() {
   const [editParlayOpen, setEditParlayOpen] = useState(false);
   const [selectedParlay, setSelectedParlay] = useState<ParlayWithLegs | null>(null);
 
+  const getLineForBet = (game: Game, betType: string, pick: string): string | undefined => {
+    if (betType === 'spread') {
+      const line = pick === 'home' ? game.spread : (game.spread ? (game.spread.startsWith('-') ? `+${game.spread.slice(1)}` : `-${game.spread.slice(1)}`) : null);
+      const odds = game.spreadOdds || '-110';
+      return line ? `${line} (${odds})` : undefined;
+    } else if (betType === 'moneyline') {
+      return pick === 'home' ? game.moneylineHome || undefined : game.moneylineAway || undefined;
+    } else if (betType === 'over') {
+      const odds = game.overOdds || '-110';
+      return game.overUnder ? `O${game.overUnder} (${odds})` : undefined;
+    } else if (betType === 'under') {
+      const odds = game.underOdds || '-110';
+      return game.overUnder ? `U${game.overUnder} (${odds})` : undefined;
+    }
+    return undefined;
+  };
+
   const toggleLeg = (game: Game, betType: string, pick: string) => {
     const existing = selectedLegs.findIndex(l => l.gameId === game.id);
+    const line = getLineForBet(game, betType, pick);
+    
     if (existing >= 0) {
-      // If same pick, remove. If different, replace.
       if (selectedLegs[existing].pick === pick && selectedLegs[existing].betType === betType) {
         setSelectedLegs(prev => prev.filter((_, i) => i !== existing));
       } else {
-        setSelectedLegs(prev => prev.map((l, i) => i === existing ? { gameId: game.id, betType, pick, line: game.spread || undefined } : l));
+        setSelectedLegs(prev => prev.map((l, i) => i === existing ? { gameId: game.id, betType, pick, line } : l));
       }
     } else {
-      setSelectedLegs(prev => [...prev, { gameId: game.id, betType, pick, line: game.spread || undefined }]);
+      setSelectedLegs(prev => [...prev, { gameId: game.id, betType, pick, line }]);
     }
   };
 
@@ -144,12 +162,25 @@ export default function LeagueDetail() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {myParlay.legs.map((leg, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
-                      <span>{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
-                      <Badge>{leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam} ({leg.betType})</Badge>
-                    </div>
-                  ))}
+                  {myParlay.legs.map((leg, i) => {
+                    const pickDisplay = 
+                      leg.betType === 'over' ? `Over ${leg.line || leg.game.overUnder}` :
+                      leg.betType === 'under' ? `Under ${leg.line || leg.game.overUnder}` :
+                      leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam;
+                    const lineDisplay = 
+                      leg.betType === 'spread' ? leg.line || leg.game.spread :
+                      leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game.moneylineHome : leg.game.moneylineAway) :
+                      null;
+                    return (
+                      <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
+                        <span className="text-sm">{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs uppercase">{leg.betType}</Badge>
+                          <Badge>{pickDisplay} {lineDisplay && `(${lineDisplay})`}</Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="mt-4 flex items-center gap-2">
                   <Badge variant={myParlay.status === 'approved' ? 'default' : myParlay.status === 'rejected' ? 'destructive' : 'secondary'}>
@@ -184,9 +215,16 @@ export default function LeagueDetail() {
                     <div className="flex flex-wrap gap-2">
                       {selectedLegs.map((leg, i) => {
                         const game = games?.find(g => g.id === leg.gameId);
+                        const pickLabel = 
+                          leg.betType === 'over' ? `O ${game?.overUnder}` :
+                          leg.betType === 'under' ? `U ${game?.overUnder}` :
+                          leg.pick === 'home' ? game?.homeTeam : game?.awayTeam;
+                        const betLabel = 
+                          leg.betType === 'spread' ? 'SPR' :
+                          leg.betType === 'moneyline' ? 'ML' : '';
                         return (
                           <Badge key={i} variant="outline" className="text-sm">
-                            {leg.pick === 'home' ? game?.homeTeam : game?.awayTeam}
+                            {pickLabel} {betLabel && `(${betLabel})`}
                           </Badge>
                         );
                       })}
@@ -201,6 +239,9 @@ export default function LeagueDetail() {
                   const pick = getPickForGame(game.id);
                   const isPast = new Date(game.gameTime) < new Date();
                   
+                  const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
+                  const homeSpread = game.spread || null;
+                  
                   return (
                     <Card 
                       key={game.id} 
@@ -213,42 +254,99 @@ export default function LeagueDetail() {
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between mb-3 text-xs text-muted-foreground">
                           <span>{format(new Date(game.gameTime), "EEE, MMM d h:mm a")}</span>
-                          {game.venue && <span>{game.venue}</span>}
+                          {game.venue && <span className="truncate max-w-[120px]">{game.venue}</span>}
                         </div>
                         
-                        <div className="grid grid-cols-3 gap-2 items-center">
-                          <Button
-                            variant={pick?.pick === 'away' ? 'default' : 'outline'}
-                            className="flex flex-col h-auto py-3"
-                            onClick={() => !isPast && toggleLeg(game, 'spread', 'away')}
-                            disabled={isPast}
-                            data-testid={`button-pick-away-${game.id}`}
-                          >
-                            <span className="font-bold">{game.awayTeam}</span>
-                            <span className="text-xs text-muted-foreground">{game.awayRecord}</span>
-                            {game.spread && <span className="text-xs">+{game.spread?.replace('-', '')}</span>}
-                          </Button>
-                          
-                          <div className="text-center text-sm text-muted-foreground">
-                            <span className="block">@</span>
-                            {game.spread && <span className="font-mono">{game.spread}</span>}
+                        {/* Teams Header */}
+                        <div className="grid grid-cols-4 gap-1 mb-3 text-sm font-medium">
+                          <div></div>
+                          <div className="text-center text-muted-foreground text-xs">Spread</div>
+                          <div className="text-center text-muted-foreground text-xs">ML</div>
+                          <div className="text-center text-muted-foreground text-xs">Total</div>
+                        </div>
+
+                        {/* Away Team Row */}
+                        <div className="grid grid-cols-4 gap-1 mb-2 items-center">
+                          <div className="pr-2">
+                            <div className="font-bold text-sm truncate">{game.awayTeam}</div>
+                            <div className="text-xs text-muted-foreground">{game.awayRecord}</div>
                           </div>
-                          
                           <Button
-                            variant={pick?.pick === 'home' ? 'default' : 'outline'}
-                            className="flex flex-col h-auto py-3"
-                            onClick={() => !isPast && toggleLeg(game, 'spread', 'home')}
-                            disabled={isPast}
-                            data-testid={`button-pick-home-${game.id}`}
+                            size="sm"
+                            variant={pick?.betType === 'spread' && pick?.pick === 'away' ? 'default' : 'outline'}
+                            className="h-auto py-1.5 flex flex-col text-xs leading-tight"
+                            onClick={() => !isPast && toggleLeg(game, 'spread', 'away')}
+                            disabled={isPast || !game.spread}
+                            data-testid={`button-spread-away-${game.id}`}
                           >
-                            <span className="font-bold">{game.homeTeam}</span>
-                            <span className="text-xs text-muted-foreground">{game.homeRecord}</span>
-                            {game.spread && <span className="text-xs">{game.spread}</span>}
+                            <span>{awaySpread || '-'}</span>
+                            {game.spreadOdds && <span className="text-muted-foreground">{game.spreadOdds}</span>}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={pick?.betType === 'moneyline' && pick?.pick === 'away' ? 'default' : 'outline'}
+                            className="h-auto py-1.5 flex flex-col text-xs"
+                            onClick={() => !isPast && toggleLeg(game, 'moneyline', 'away')}
+                            disabled={isPast || !game.moneylineAway}
+                            data-testid={`button-ml-away-${game.id}`}
+                          >
+                            {game.moneylineAway || '-'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={pick?.betType === 'over' && pick?.pick === 'over' ? 'default' : 'outline'}
+                            className="h-auto py-1.5 flex flex-col text-xs leading-tight"
+                            onClick={() => !isPast && toggleLeg(game, 'over', 'over')}
+                            disabled={isPast || !game.overUnder}
+                            data-testid={`button-over-${game.id}`}
+                          >
+                            <span>O {game.overUnder || '-'}</span>
+                            {game.overOdds && <span className="text-muted-foreground">{game.overOdds}</span>}
+                          </Button>
+                        </div>
+
+                        {/* Home Team Row */}
+                        <div className="grid grid-cols-4 gap-1 items-center">
+                          <div className="pr-2">
+                            <div className="font-bold text-sm truncate">{game.homeTeam}</div>
+                            <div className="text-xs text-muted-foreground">{game.homeRecord}</div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant={pick?.betType === 'spread' && pick?.pick === 'home' ? 'default' : 'outline'}
+                            className="h-auto py-1.5 flex flex-col text-xs leading-tight"
+                            onClick={() => !isPast && toggleLeg(game, 'spread', 'home')}
+                            disabled={isPast || !game.spread}
+                            data-testid={`button-spread-home-${game.id}`}
+                          >
+                            <span>{homeSpread || '-'}</span>
+                            {game.spreadOdds && <span className="text-muted-foreground">{game.spreadOdds}</span>}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={pick?.betType === 'moneyline' && pick?.pick === 'home' ? 'default' : 'outline'}
+                            className="h-auto py-1.5 flex flex-col text-xs"
+                            onClick={() => !isPast && toggleLeg(game, 'moneyline', 'home')}
+                            disabled={isPast || !game.moneylineHome}
+                            data-testid={`button-ml-home-${game.id}`}
+                          >
+                            {game.moneylineHome || '-'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant={pick?.betType === 'under' && pick?.pick === 'under' ? 'default' : 'outline'}
+                            className="h-auto py-1.5 flex flex-col text-xs leading-tight"
+                            onClick={() => !isPast && toggleLeg(game, 'under', 'under')}
+                            disabled={isPast || !game.overUnder}
+                            data-testid={`button-under-${game.id}`}
+                          >
+                            <span>U {game.overUnder || '-'}</span>
+                            {game.underOdds && <span className="text-muted-foreground">{game.underOdds}</span>}
                           </Button>
                         </div>
 
                         {game.isFinished && (
-                          <div className="mt-3 text-center text-sm">
+                          <div className="mt-3 pt-3 border-t border-white/10 text-center text-sm">
                             <span className="font-mono">{game.awayScore} - {game.homeScore}</span>
                             <Badge variant="outline" className="ml-2">Final</Badge>
                           </div>
@@ -322,21 +420,32 @@ export default function LeagueDetail() {
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-1">
-                        {parlay.legs.map((leg, i) => (
-                          <div key={i} className="flex items-center justify-between text-sm p-2 bg-white/5 rounded">
-                            <span>{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
-                            <div className="flex items-center gap-2">
-                              {leg.result && (
-                                <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
-                                  {leg.result}
+                        {parlay.legs.map((leg, i) => {
+                          const pickDisplay = 
+                            leg.betType === 'over' ? `Over ${leg.line || leg.game.overUnder}` :
+                            leg.betType === 'under' ? `Under ${leg.line || leg.game.overUnder}` :
+                            leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam;
+                          const lineDisplay = 
+                            leg.betType === 'spread' ? leg.line || leg.game.spread :
+                            leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game.moneylineHome : leg.game.moneylineAway) :
+                            null;
+                          return (
+                            <div key={i} className="flex items-center justify-between text-sm p-2 bg-white/5 rounded">
+                              <span>{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
+                              <div className="flex items-center gap-2">
+                                {leg.result && (
+                                  <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
+                                    {leg.result}
+                                  </Badge>
+                                )}
+                                <Badge variant="outline" className="text-xs uppercase">{leg.betType}</Badge>
+                                <Badge variant="outline" className="text-xs">
+                                  {pickDisplay} {lineDisplay && `(${lineDisplay})`}
                                 </Badge>
-                              )}
-                              <Badge variant="outline" className="text-xs">
-                                {leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam}
-                              </Badge>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </CardContent>
                   </Card>

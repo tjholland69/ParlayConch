@@ -99,7 +99,10 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
     const gameTime = new Date(oddsGame.commence_time);
 
     let spread: string | null = null;
+    let spreadOdds: string | null = null;
     let overUnder: string | null = null;
+    let overOdds: string | null = null;
+    let underOdds: string | null = null;
     let moneylineHome: string | null = null;
     let moneylineAway: string | null = null;
 
@@ -113,12 +116,18 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
           const homeSpread = market.outcomes.find(o => o.name === oddsGame.home_team);
           if (homeSpread?.point !== undefined) {
             spread = homeSpread.point > 0 ? `+${homeSpread.point}` : `${homeSpread.point}`;
+            spreadOdds = homeSpread.price > 0 ? `+${homeSpread.price}` : `${homeSpread.price}`;
           }
         }
         if (market.key === "totals") {
           const over = market.outcomes.find(o => o.name === "Over");
+          const under = market.outcomes.find(o => o.name === "Under");
           if (over?.point) {
             overUnder = `${over.point}`;
+            overOdds = over.price > 0 ? `+${over.price}` : `${over.price}`;
+          }
+          if (under) {
+            underOdds = under.price > 0 ? `+${under.price}` : `${under.price}`;
           }
         }
         if (market.key === "h2h") {
@@ -141,7 +150,7 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
 
     if (existing) {
       await db.update(games)
-        .set({ spread, overUnder, moneylineHome, moneylineAway, gameTime })
+        .set({ spread, spreadOdds, overUnder, overOdds, underOdds, moneylineHome, moneylineAway, gameTime })
         .where(eq(games.id, existing.id));
       updated++;
     } else {
@@ -150,7 +159,10 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
         homeTeam,
         awayTeam,
         spread,
+        spreadOdds,
         overUnder,
+        overOdds,
+        underOdds,
         moneylineHome,
         moneylineAway,
         gameTime,
