@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { z } from "zod";
 import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema } from "@shared/schema";
+import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames } from "./services/oddsApi";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -277,6 +278,45 @@ export async function registerRoutes(
       res.json({ message: "Seeded with sample data" });
     } else {
       res.json({ message: "Already seeded" });
+    }
+  });
+
+  // ===== ODDS API INTEGRATION =====
+  app.get("/api/odds/upcoming", isAuthenticated, async (req, res) => {
+    try {
+      const games = await fetchUpcomingGames();
+      res.json(games);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/odds/sync", isAuthenticated, async (req, res) => {
+    try {
+      const { weekId } = req.body;
+      if (!weekId) return res.status(400).json({ message: "weekId required" });
+      
+      const userId = (req.user as any).claims.sub;
+      const leagues = await storage.getUserLeagues(userId);
+      const isAdmin = leagues.some(l => l.isAdmin);
+      
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Only league admins can sync odds data" });
+      }
+
+      const result = await syncGamesFromOddsApi(weekId);
+      res.json({ message: `Synced games: ${result.added} added, ${result.updated} updated` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/odds/usage", isAuthenticated, async (req, res) => {
+    try {
+      const usage = await getApiUsage();
+      res.json(usage);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 
