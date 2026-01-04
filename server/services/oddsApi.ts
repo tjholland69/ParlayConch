@@ -1,0 +1,178 @@
+import { db } from "../db";
+import { games, weeks } from "@shared/schema";
+import { eq } from "drizzle-orm";
+
+const ODDS_API_KEY = process.env.ODDS_API_KEY;
+const BASE_URL = "https://api.the-odds-api.com/v4";
+const SPORT = "americanfootball_nfl";
+
+interface OddsGame {
+  id: string;
+  sport_key: string;
+  commence_time: string;
+  home_team: string;
+  away_team: string;
+  bookmakers: Bookmaker[];
+}
+
+interface Bookmaker {
+  key: string;
+  title: string;
+  markets: Market[];
+}
+
+interface Market {
+  key: string;
+  outcomes: Outcome[];
+}
+
+interface Outcome {
+  name: string;
+  price: number;
+  point?: number;
+}
+
+const teamNameMap: Record<string, string> = {
+  "Arizona Cardinals": "Cardinals",
+  "Atlanta Falcons": "Falcons",
+  "Baltimore Ravens": "Ravens",
+  "Buffalo Bills": "Bills",
+  "Carolina Panthers": "Panthers",
+  "Chicago Bears": "Bears",
+  "Cincinnati Bengals": "Bengals",
+  "Cleveland Browns": "Browns",
+  "Dallas Cowboys": "Cowboys",
+  "Denver Broncos": "Broncos",
+  "Detroit Lions": "Lions",
+  "Green Bay Packers": "Packers",
+  "Houston Texans": "Texans",
+  "Indianapolis Colts": "Colts",
+  "Jacksonville Jaguars": "Jaguars",
+  "Kansas City Chiefs": "Chiefs",
+  "Las Vegas Raiders": "Raiders",
+  "Los Angeles Chargers": "Chargers",
+  "Los Angeles Rams": "Rams",
+  "Miami Dolphins": "Dolphins",
+  "Minnesota Vikings": "Vikings",
+  "New England Patriots": "Patriots",
+  "New Orleans Saints": "Saints",
+  "New York Giants": "Giants",
+  "New York Jets": "Jets",
+  "Philadelphia Eagles": "Eagles",
+  "Pittsburgh Steelers": "Steelers",
+  "San Francisco 49ers": "49ers",
+  "Seattle Seahawks": "Seahawks",
+  "Tampa Bay Buccaneers": "Buccaneers",
+  "Tennessee Titans": "Titans",
+  "Washington Commanders": "Commanders",
+};
+
+function shortenTeamName(fullName: string): string {
+  return teamNameMap[fullName] || fullName;
+}
+
+export async function fetchUpcomingGames(): Promise<OddsGame[]> {
+  if (!ODDS_API_KEY) {
+    throw new Error("ODDS_API_KEY not configured");
+  }
+
+  const url = `${BASE_URL}/sports/${SPORT}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`;
+  
+  const response = await fetch(url);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Odds API error: ${response.status} - ${text}`);
+  }
+
+  return response.json();
+}
+
+export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: number; updated: number }> {
+  const oddsGames = await fetchUpcomingGames();
+  
+  let added = 0;
+  let updated = 0;
+
+  for (const oddsGame of oddsGames) {
+    const homeTeam = shortenTeamName(oddsGame.home_team);
+    const awayTeam = shortenTeamName(oddsGame.away_team);
+    const gameTime = new Date(oddsGame.commence_time);
+
+    let spread: string | null = null;
+    let overUnder: string | null = null;
+    let moneylineHome: string | null = null;
+    let moneylineAway: string | null = null;
+
+    const bookmaker = oddsGame.bookmakers.find(b => 
+      b.key === "draftkings" || b.key === "fanduel" || b.key === "betmgm"
+    ) || oddsGame.bookmakers[0];
+
+    if (bookmaker) {
+      for (const market of bookmaker.markets) {
+        if (market.key === "spreads") {
+          const homeSpread = market.outcomes.find(o => o.name === oddsGame.home_team);
+          if (homeSpread?.point !== undefined) {
+            spread = homeSpread.point > 0 ? `+${homeSpread.point}` : `${homeSpread.point}`;
+          }
+        }
+        if (market.key === "totals") {
+          const over = market.outcomes.find(o => o.name === "Over");
+          if (over?.point) {
+            overUnder = `${over.point}`;
+          }
+        }
+        if (market.key === "h2h") {
+          const home = market.outcomes.find(o => o.name === oddsGame.home_team);
+          const away = market.outcomes.find(o => o.name === oddsGame.away_team);
+          if (home) {
+            moneylineHome = home.price > 0 ? `+${home.price}` : `${home.price}`;
+          }
+          if (away) {
+            moneylineAway = away.price > 0 ? `+${away.price}` : `${away.price}`;
+          }
+        }
+      }
+    }
+
+    const existingGames = await db.select().from(games).where(eq(games.weekId, weekId));
+    const existing = existingGames.find(g => 
+      g.homeTeam === homeTeam && g.awayTeam === awayTeam
+    );
+
+    if (existing) {
+      await db.update(games)
+        .set({ spread, overUnder, moneylineHome, moneylineAway, gameTime })
+        .where(eq(games.id, existing.id));
+      updated++;
+    } else {
+      await db.insert(games).values({
+        weekId,
+        homeTeam,
+        awayTeam,
+        spread,
+        overUnder,
+        moneylineHome,
+        moneylineAway,
+        gameTime,
+        isFinished: false,
+      });
+      added++;
+    }
+  }
+
+  return { added, updated };
+}
+
+export async function getApiUsage(): Promise<{ remaining: number; used: number }> {
+  if (!ODDS_API_KEY) {
+    throw new Error("ODDS_API_KEY not configured");
+  }
+
+  const url = `${BASE_URL}/sports?apiKey=${ODDS_API_KEY}`;
+  const response = await fetch(url);
+  
+  const remaining = parseInt(response.headers.get("x-requests-remaining") || "0");
+  const used = parseInt(response.headers.get("x-requests-used") || "0");
+
+  return { remaining, used };
+}
