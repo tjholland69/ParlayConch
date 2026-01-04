@@ -1,25 +1,10 @@
-import { pgTable, text, serial, integer, boolean, timestamp, varchar } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { users } from "./models/auth";
 
 // Export users and sessions from auth model
 export * from "./models/auth";
-
-export const leagues = pgTable("leagues", {
-  id: serial("id").primaryKey(),
-  name: text("name").notNull(),
-  inviteCode: text("invite_code").notNull().unique(),
-  adminId: varchar("admin_id").notNull(), // User ID of the league creator/admin
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-export const leagueMembers = pgTable("league_members", {
-  id: serial("id").primaryKey(),
-  leagueId: integer("league_id").notNull(),
-  userId: varchar("user_id").notNull(),
-  joinedAt: timestamp("joined_at").defaultNow(),
-});
 
 export const weeks = pgTable("weeks", {
   id: serial("id").primaryKey(),
@@ -35,36 +20,66 @@ export const games = pgTable("games", {
   homeTeam: text("home_team").notNull(),
   awayTeam: text("away_team").notNull(),
   spread: text("spread"),
+  overUnder: text("over_under"),
+  moneylineHome: text("moneyline_home"),
+  moneylineAway: text("moneyline_away"),
   gameTime: timestamp("game_time").notNull(),
   homeScore: integer("home_score"),
   awayScore: integer("away_score"),
   isFinished: boolean("is_finished").default(false),
   winner: text("winner"),
-  // NFL Reference Data
-  nflRefId: text("nfl_ref_id"), // ID from external NFL reference
+  // NFL Reference data
   venue: text("venue"),
   weather: text("weather"),
+  homeRecord: text("home_record"),
+  awayRecord: text("away_record"),
 });
 
-export const parlays = pgTable("parlays", {
+// Leagues - groups of users
+export const leagues = pgTable("leagues", {
   id: serial("id").primaryKey(),
-  userId: varchar("user_id").notNull(),
-  weekId: integer("week_id").notNull(),
-  leagueId: integer("league_id").notNull(),
-  status: text("status").default('pending'), // 'pending', 'approved', 'win', 'loss', 'push'
-  adminNote: text("admin_note"),
+  name: text("name").notNull(),
+  description: text("description"),
+  inviteCode: text("invite_code").notNull().unique(),
+  maxParlaysPerWeek: integer("max_parlays_per_week").default(1),
+  minLegsPerParlay: integer("min_legs_per_parlay").default(3),
+  maxLegsPerParlay: integer("max_legs_per_parlay").default(5),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// League memberships
+export const leagueMembers = pgTable("league_members", {
+  id: serial("id").primaryKey(),
+  leagueId: integer("league_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  role: text("role").default("member"), // 'admin', 'member'
+  joinedAt: timestamp("joined_at").defaultNow(),
+});
+
+// Parlays - a user's weekly pick (replaces individual bets)
+export const parlays = pgTable("parlays", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  leagueId: integer("league_id").notNull(),
+  weekId: integer("week_id").notNull(),
+  status: text("status").default("pending"), // 'pending', 'approved', 'rejected', 'win', 'loss', 'push'
+  approvedBy: varchar("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// Parlay legs - individual picks within a parlay
 export const parlayLegs = pgTable("parlay_legs", {
   id: serial("id").primaryKey(),
   parlayId: integer("parlay_id").notNull(),
   gameId: integer("game_id").notNull(),
-  pick: text("pick").notNull(), // 'home' or 'away'
-  status: text("status").default('pending'),
+  betType: text("bet_type").notNull(), // 'spread', 'moneyline', 'over', 'under'
+  pick: text("pick").notNull(), // 'home', 'away', 'over', 'under'
+  line: text("line"), // The line at time of pick
+  result: text("result"), // 'win', 'loss', 'push', null
 });
 
-// Deprecated bets table replaced by parlays/parlayLegs for the new structure
+// Legacy bets table (keep for backward compatibility)
 export const bets = pgTable("bets", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
@@ -75,15 +90,56 @@ export const bets = pgTable("bets", {
 });
 
 // Schemas
-export const insertLeagueSchema = createInsertSchema(leagues).omit({ id: true, createdAt: true });
-export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, status: true, createdAt: true });
-export const insertParlayLegSchema = createInsertSchema(parlayLegs).omit({ id: true, status: true });
+export const insertWeekSchema = createInsertSchema(weeks).omit({ id: true });
+export const insertGameSchema = createInsertSchema(games).omit({ id: true });
+export const insertBetSchema = createInsertSchema(bets).omit({ id: true, userId: true, status: true, createdAt: true });
+
+export const insertLeagueSchema = createInsertSchema(leagues).omit({ id: true, inviteCode: true, createdAt: true });
+export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({ id: true, joinedAt: true });
+export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true });
+export const insertParlayLegSchema = createInsertSchema(parlayLegs).omit({ id: true, result: true });
 
 // Types
-export type League = typeof leagues.$inferSelect;
-export type Parlay = typeof parlays.$inferSelect;
-export type ParlayLeg = typeof parlayLegs.$inferSelect;
 export type Week = typeof weeks.$inferSelect;
 export type Game = typeof games.$inferSelect;
+export type Bet = typeof bets.$inferSelect;
+export type League = typeof leagues.$inferSelect;
+export type LeagueMember = typeof leagueMembers.$inferSelect;
+export type Parlay = typeof parlays.$inferSelect;
+export type ParlayLeg = typeof parlayLegs.$inferSelect;
 
-export type ParlayWithLegs = Parlay & { legs: (ParlayLeg & { game: Game })[] };
+export type InsertBet = z.infer<typeof insertBetSchema>;
+export type InsertLeague = z.infer<typeof insertLeagueSchema>;
+export type InsertParlay = z.infer<typeof insertParlaySchema>;
+export type InsertParlayLeg = z.infer<typeof insertParlayLegSchema>;
+
+// API Response Types
+export type GameWithBet = Game & { userBet?: Bet };
+export type BetHistoryItem = Bet & { game: Game, week: Week };
+export type UserStat = {
+  userId: string;
+  username: string;
+  profileImageUrl?: string | null;
+  wins: number;
+  losses: number;
+  pushes: number;
+  winRate: number;
+};
+
+export type LeagueWithMembers = League & {
+  members: (LeagueMember & { user: { id: string; firstName?: string | null; email?: string | null; profileImageUrl?: string | null } })[];
+  memberCount: number;
+  isAdmin: boolean;
+};
+
+export type ParlayWithLegs = Parlay & {
+  legs: (ParlayLeg & { game: Game })[];
+  week: Week;
+  user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null };
+};
+
+export type LeagueStats = {
+  leagueId: number;
+  leagueName: string;
+  standings: UserStat[];
+};

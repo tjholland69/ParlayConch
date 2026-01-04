@@ -1,14 +1,17 @@
 import { useState, useEffect } from "react";
-import { useWeeks, useGames, useCreateBet } from "@/hooks/use-bets";
-import { GameCard } from "@/components/GameCard";
+import { useWeeks, useGames, useLeagues } from "@/hooks/use-bets";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Calendar } from "lucide-react";
+import { Loader2, Calendar, Users, ArrowRight } from "lucide-react";
+import { Link } from "wouter";
+import { format } from "date-fns";
 
 export default function Picks() {
   const { data: weeks, isLoading: isLoadingWeeks } = useWeeks();
+  const { data: leagues, isLoading: isLoadingLeagues } = useLeagues();
   const [selectedWeekId, setSelectedWeekId] = useState<string | undefined>();
   
-  // Set default week to first active one or just the first one
   useEffect(() => {
     if (weeks?.length && !selectedWeekId) {
       const activeWeek = weeks.find(w => w.isActive);
@@ -17,12 +20,32 @@ export default function Picks() {
   }, [weeks, selectedWeekId]);
 
   const { data: games, isLoading: isLoadingGames } = useGames(Number(selectedWeekId));
-  const { mutate: placeBet, isPending: isBetting } = useCreateBet();
 
-  if (isLoadingWeeks) {
+  if (isLoadingWeeks || isLoadingLeagues) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
         <Loader2 className="w-10 h-10 text-primary animate-spin" />
+      </div>
+    );
+  }
+
+  // If user has no leagues, prompt them to join/create one
+  if (!leagues?.length) {
+    return (
+      <div className="max-w-2xl mx-auto space-y-8 pb-12">
+        <div className="text-center py-16 bg-card/30 rounded-2xl border border-white/10">
+          <Users className="w-16 h-16 mx-auto text-primary mb-4" />
+          <h2 className="text-2xl font-bold mb-2">Join a League to Make Picks</h2>
+          <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+            Parlays are submitted through leagues. Create or join a league to start making your weekly parlay picks.
+          </p>
+          <Link href="/leagues">
+            <Button size="lg" data-testid="button-go-to-leagues">
+              Go to Leagues
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </Link>
+        </div>
       </div>
     );
   }
@@ -31,8 +54,8 @@ export default function Picks() {
     <div className="max-w-4xl mx-auto space-y-8 pb-12">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-card/30 p-6 rounded-2xl border border-white/5 backdrop-blur-sm">
         <div>
-          <h1 className="text-3xl font-display font-bold">Make Your Picks</h1>
-          <p className="text-muted-foreground">Select winners for the week. Good luck!</p>
+          <h1 className="text-3xl font-display font-bold" data-testid="text-picks-title">Quick View</h1>
+          <p className="text-muted-foreground">Browse games for the week. Make picks in your league.</p>
         </div>
         
         <div className="w-full md:w-64">
@@ -57,28 +80,78 @@ export default function Picks() {
         </div>
       </div>
 
-      {isLoadingGames ? (
-        <div className="grid gap-4">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-48 rounded-2xl bg-white/5 animate-pulse" />
-          ))}
-        </div>
-      ) : games?.length === 0 ? (
-        <div className="text-center py-12 bg-card/20 rounded-2xl border border-dashed border-white/10">
-          <p className="text-muted-foreground">No games scheduled for this week yet.</p>
-        </div>
-      ) : (
-        <div className="grid gap-6">
-          {games?.map((game) => (
-            <GameCard
-              key={game.id}
-              game={game}
-              onPick={(gameId, pick) => placeBet({ gameId, pick })}
-              isPending={isBetting}
-            />
-          ))}
-        </div>
-      )}
+      {/* League Shortcuts */}
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+        {leagues.map((league) => (
+          <Link key={league.id} href={`/leagues/${league.id}`}>
+            <Card className="bg-card/50 border-white/5 hover:bg-white/5 transition-colors cursor-pointer" data-testid={`card-league-quick-${league.id}`}>
+              <CardContent className="p-4 flex items-center justify-between">
+                <div>
+                  <p className="font-bold">{league.name}</p>
+                  <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
+                </div>
+                <Button size="sm" variant="ghost">
+                  Make Picks
+                  <ArrowRight className="w-3 h-3 ml-1" />
+                </Button>
+              </CardContent>
+            </Card>
+          </Link>
+        ))}
+      </div>
+
+      {/* Games Preview */}
+      <div>
+        <h2 className="text-xl font-bold mb-4">This Week's Games</h2>
+        {isLoadingGames ? (
+          <div className="grid gap-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-24 rounded-2xl bg-white/5 animate-pulse" />
+            ))}
+          </div>
+        ) : games?.length === 0 ? (
+          <div className="text-center py-12 bg-card/20 rounded-2xl border border-dashed border-white/10">
+            <p className="text-muted-foreground">No games scheduled for this week yet.</p>
+          </div>
+        ) : (
+          <div className="grid gap-3 md:grid-cols-2">
+            {games?.map((game) => (
+              <Card key={game.id} className="bg-card/50 border-white/5" data-testid={`card-game-preview-${game.id}`}>
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-muted-foreground">
+                      {format(new Date(game.gameTime), "EEE, MMM d h:mm a")}
+                    </span>
+                    {game.isFinished && (
+                      <span className="text-xs font-mono text-muted-foreground">Final</span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <p className="font-bold">{game.awayTeam}</p>
+                      <p className="text-xs text-muted-foreground">{game.awayRecord}</p>
+                    </div>
+                    <div className="px-4 text-center">
+                      {game.isFinished ? (
+                        <p className="font-mono">{game.awayScore} - {game.homeScore}</p>
+                      ) : (
+                        <>
+                          <p className="text-xs text-muted-foreground">@</p>
+                          <p className="font-mono text-sm">{game.spread}</p>
+                        </>
+                      )}
+                    </div>
+                    <div className="flex-1 text-right">
+                      <p className="font-bold">{game.homeTeam}</p>
+                      <p className="text-xs text-muted-foreground">{game.homeRecord}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
