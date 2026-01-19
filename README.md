@@ -5,6 +5,15 @@ Users can log parlays, view historical performance, and analyze trends through i
 
 ---
 
+## 🎨 Design & Wireframes
+
+The UI and user flows were designed in Figma before development.
+
+Figma file:  
+https://www.figma.com/file/YOUR_FIGMA_LINK
+
+---
+
 ## 🚀 Features
 
 - Create weekly parlays (10–12 legs per entry)
