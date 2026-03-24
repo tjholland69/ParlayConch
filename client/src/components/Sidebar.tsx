@@ -1,5 +1,6 @@
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
+import { useSetUserDemo } from "@/hooks/use-bets";
 import { 
   LayoutDashboard, 
   Trophy, 
@@ -7,11 +8,13 @@ import {
   LogOut, 
   Menu,
   User,
-  Users
+  Users,
+  FlaskConical
 } from "lucide-react";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
@@ -24,6 +27,7 @@ const NAV_ITEMS = [
 export function Sidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
+  const setUserDemo = useSetUserDemo();
   const [open, setOpen] = useState(false);
 
   const NavContent = () => (
@@ -71,15 +75,38 @@ export function Sidebar() {
                 {user?.firstName?.[0] || <User className="w-5 h-5" />}
               </div>
             )}
-            <div className="overflow-hidden">
-              <p className="text-sm font-bold truncate text-white">
-                {user?.firstName || 'Player'}
-              </p>
+            <div className="overflow-hidden flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-bold truncate text-white">
+                  {user?.firstName || 'Player'}
+                </p>
+                {user?.isDemo && (
+                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4 shrink-0" data-testid="badge-user-demo">
+                    DEMO
+                  </Badge>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground truncate">
                 {user?.email}
               </p>
             </div>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn(
+              "w-full justify-start text-xs mb-1",
+              user?.isDemo
+                ? "text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10"
+                : "text-muted-foreground hover:text-yellow-400 hover:bg-yellow-500/10"
+            )}
+            onClick={() => setUserDemo.mutate(!user?.isDemo)}
+            disabled={setUserDemo.isPending}
+            data-testid="button-toggle-user-demo"
+          >
+            <FlaskConical className="w-3 h-3 mr-2" />
+            {user?.isDemo ? "Remove Demo Flag" : "Mark as Demo Account"}
+          </Button>
           <Button 
             variant="ghost" 
             className="w-full justify-start text-destructive hover:text-destructive hover:bg-destructive/10"

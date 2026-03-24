@@ -61,6 +61,18 @@ The `shared/` directory contains code used by both frontend and backend:
 - Production: esbuild bundles server, Vite builds client to `dist/`
 - Database migrations: `drizzle-kit push` for schema synchronization
 
+## Demo / QA Flagging
+
+The app supports tagging records as demo/QA data to distinguish test entries from live production records:
+
+- **Users**: Any user can toggle their own account as demo via the sidebar profile section. Demo accounts show a yellow "DEMO" badge next to their name everywhere they appear.
+- **Leagues**: League admins can toggle a league as demo via the "Mark as Demo" button in the league header. Demo leagues show:
+  - A yellow warning banner at the top of the league page
+  - A "DEMO" badge next to the league name in both the leagues list and the league detail page
+  - A "DEMO" badge on any parlay submitted by a demo user within the league
+- Schema: `users.is_demo` (boolean) and `leagues.is_demo` (boolean) columns
+- API: `PATCH /api/users/me/demo` (self-service) and `PATCH /api/leagues/:id/demo` (league admin only)
+
 ## External Dependencies
 
 ### Database
