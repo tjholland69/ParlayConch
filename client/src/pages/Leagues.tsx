@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Users, Plus, LogIn, Copy, Crown, Settings } from "lucide-react";
+import { Users, Plus, LogIn, Copy, Crown, FlaskConical } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 
@@ -140,12 +140,18 @@ export default function Leagues() {
             <Card key={league.id} className="bg-card/50 backdrop-blur-sm border-white/5" data-testid={`card-league-${league.id}`}>
               <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
                 <div className="flex-1">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <CardTitle className="text-xl">{league.name}</CardTitle>
                     {league.isAdmin && (
                       <Badge variant="secondary" className="text-xs">
                         <Crown className="w-3 h-3 mr-1" />
                         Admin
+                      </Badge>
+                    )}
+                    {league.isDemo && (
+                      <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs" data-testid={`badge-demo-league-${league.id}`}>
+                        <FlaskConical className="w-3 h-3 mr-1" />
+                        DEMO
                       </Badge>
                     )}
                   </div>

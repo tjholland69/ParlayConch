@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
 import { useRoute } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useSetLeagueDemo } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit } from "lucide-react";
+import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
@@ -40,6 +40,8 @@ export default function LeagueDetail() {
   const createParlay = useCreateParlay();
   const approveParlay = useApproveParlay();
   const rejectParlay = useRejectParlay();
+
+  const setLeagueDemo = useSetLeagueDemo(leagueId);
 
   const [selectedLegs, setSelectedLegs] = useState<ParlayLeg[]>([]);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -103,11 +105,28 @@ export default function LeagueDetail() {
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
+      {/* Demo Banner */}
+      {league.isDemo && (
+        <div className="flex items-center gap-3 px-5 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-yellow-400" data-testid="banner-demo-league">
+          <FlaskConical className="w-5 h-5 shrink-0" />
+          <span className="text-sm font-medium">
+            This league is flagged as <strong>Demo / QA data</strong> — records here are not live production entries.
+          </span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="bg-card/30 p-6 rounded-2xl border border-white/5 backdrop-blur-sm">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-3xl font-display font-bold" data-testid="text-league-name">{league.name}</h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-3xl font-display font-bold" data-testid="text-league-name">{league.name}</h1>
+              {league.isDemo && (
+                <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30" data-testid="badge-league-demo">
+                  DEMO
+                </Badge>
+              )}
+            </div>
             {league.description && <p className="text-muted-foreground">{league.description}</p>}
             <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
               <span className="flex items-center gap-1"><Users className="w-4 h-4" />{league.memberCount} members</span>
@@ -117,14 +136,32 @@ export default function LeagueDetail() {
           
           <div className="flex items-center gap-2 flex-wrap">
             {league.isAdmin && (
-              <Button 
-                variant="outline" 
-                onClick={() => setImportModalOpen(true)}
-                data-testid="button-import-history"
-              >
-                <Upload className="w-4 h-4 mr-2" />
-                Import History
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    "text-xs",
+                    league.isDemo
+                      ? "border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
+                      : "border-white/10 text-muted-foreground hover:text-yellow-400 hover:border-yellow-500/40"
+                  )}
+                  onClick={() => setLeagueDemo.mutate(!league.isDemo)}
+                  disabled={setLeagueDemo.isPending}
+                  data-testid="button-toggle-league-demo"
+                >
+                  <FlaskConical className="w-3 h-3 mr-2" />
+                  {league.isDemo ? "Remove Demo Flag" : "Mark as Demo"}
+                </Button>
+                <Button 
+                  variant="outline" 
+                  onClick={() => setImportModalOpen(true)}
+                  data-testid="button-import-history"
+                >
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import History
+                </Button>
+              </>
             )}
             <Select value={selectedWeekId?.toString()} onValueChange={(v) => setSelectedWeekId(Number(v))}>
               <SelectTrigger className="w-48 bg-background border-white/10">
@@ -377,7 +414,14 @@ export default function LeagueDetail() {
                           {parlay.user?.firstName?.[0] || '?'}
                         </div>
                         <div>
-                          <p className="font-bold">{parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold">{parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
+                            {parlay.user?.isDemo && (
+                              <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4" data-testid={`badge-demo-user-${parlay.id}`}>
+                                DEMO
+                              </Badge>
+                            )}
+                          </div>
                           <p className="text-xs text-muted-foreground">
                             {parlay.legs.length} leg parlay
                             {parlay.source === 'imported' && <Badge variant="outline" className="ml-2 text-xs">Imported</Badge>}

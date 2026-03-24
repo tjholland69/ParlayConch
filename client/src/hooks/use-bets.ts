@@ -228,3 +228,63 @@ export function useRejectParlay() {
     },
   });
 }
+
+export function useSetUserDemo() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (isDemo: boolean) => {
+      const res = await fetch("/api/users/me/demo", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isDemo }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to update demo status");
+      return res.json();
+    },
+    onSuccess: (_, isDemo) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({
+        title: isDemo ? "Account marked as Demo" : "Demo flag removed",
+        description: isDemo
+          ? "Your account is now flagged as a demo/QA account."
+          : "Your account is now flagged as a live account.",
+      });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useSetLeagueDemo(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (isDemo: boolean) => {
+      const res = await fetch(`/api/leagues/${leagueId}/demo`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isDemo }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to update league demo status");
+      return res.json();
+    },
+    onSuccess: (_, isDemo) => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      toast({
+        title: isDemo ? "League marked as Demo" : "League demo flag removed",
+        description: isDemo
+          ? "This league is now flagged as demo/QA data."
+          : "This league is now flagged as live data.",
+      });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}

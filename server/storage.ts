@@ -54,6 +54,10 @@ export interface IStorage {
   createImportedParlay(userId: string, parlay: InsertParlay, legs: ImportParlayLeg[], batchId: number, status: string): Promise<Parlay>;
   getLeagueImportHistory(leagueId: number): Promise<ImportBatch[]>;
   getLeagueMemberByEmail(leagueId: number, email: string): Promise<LeagueMember | null>;
+
+  // Demo flags
+  setUserDemoFlag(userId: string, isDemo: boolean): Promise<void>;
+  setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -363,7 +367,7 @@ export class DatabaseStorage implements IStorage {
         ...parlay,
         legs: legs.map(l => ({ ...l.leg, game: l.game })),
         week,
-        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl }
+        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo }
       });
     }
 
@@ -480,6 +484,14 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(importBatches)
       .where(eq(importBatches.leagueId, leagueId))
       .orderBy(desc(importBatches.uploadedAt));
+  }
+
+  async setUserDemoFlag(userId: string, isDemo: boolean): Promise<void> {
+    await db.update(users).set({ isDemo }).where(eq(users.id, userId));
+  }
+
+  async setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void> {
+    await db.update(leagues).set({ isDemo }).where(eq(leagues.id, leagueId));
   }
 }
 
