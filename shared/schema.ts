@@ -46,6 +46,7 @@ export const leagues = pgTable("leagues", {
   maxParlaysPerWeek: integer("max_parlays_per_week").default(1),
   minLegsPerParlay: integer("min_legs_per_parlay").default(3),
   maxLegsPerParlay: integer("max_legs_per_parlay").default(5),
+  isDemo: boolean("is_demo").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -153,7 +154,7 @@ export type LeagueWithMembers = League & {
 export type ParlayWithLegs = Parlay & {
   legs: (ParlayLeg & { game: Game })[];
   week: Week;
-  user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null };
+  user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null };
 };
 
 export type LeagueStats = {

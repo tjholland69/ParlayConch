@@ -411,6 +411,36 @@ export async function registerRoutes(
     }
   });
 
+  // ===== DEMO FLAGS =====
+  app.patch("/api/users/me/demo", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const { isDemo } = z.object({ isDemo: z.boolean() }).parse(req.body);
+      await storage.setUserDemoFlag(userId, isDemo);
+      res.json({ success: true, isDemo });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/leagues/:id/demo", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const { isDemo } = z.object({ isDemo: z.boolean() }).parse(req.body);
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Only league admins can change demo status" });
+      }
+
+      await storage.setLeagueDemoFlag(leagueId, isDemo);
+      res.json({ success: true, isDemo });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   // ===== PARLAY EDIT (Admin only, for imported/manual entries) =====
   app.patch("/api/parlays/:id", isAuthenticated, async (req, res) => {
     try {
