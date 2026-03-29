@@ -20,8 +20,28 @@ export const DEFAULT_LIEUTENANT_PERMISSIONS: LieutenantPermissions = {
   markLeagueDemo: false,
 };
 
+export type UserNotificationPreferences = {
+  email: boolean;
+  sms: boolean;
+  push: boolean;
+  phone?: string;
+};
+
 export type UserSettings = {
   displayName?: string;
+  notificationPreferences?: UserNotificationPreferences;
+};
+
+export type LeagueNotificationSettings = {
+  scheduledReminders: boolean;
+  reminderDaysBeforeDeadline: number;
+  reminderMessage: string;
+};
+
+export const DEFAULT_LEAGUE_NOTIFICATION_SETTINGS: LeagueNotificationSettings = {
+  scheduledReminders: false,
+  reminderDaysBeforeDeadline: 2,
+  reminderMessage: "Don't forget to submit your picks this week!",
 };
 
 export const weeks = pgTable("weeks", {
@@ -66,6 +86,7 @@ export const leagues = pgTable("leagues", {
   maxLegsPerParlay: integer("max_legs_per_parlay").default(5),
   isDemo: boolean("is_demo").default(false),
   lieutenantPermissions: jsonb("lieutenant_permissions").$type<LieutenantPermissions>(),
+  notificationSettings: jsonb("notification_settings").$type<LeagueNotificationSettings>(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -113,6 +134,18 @@ export const parlayLegs = pgTable("parlay_legs", {
   result: text("result"), // 'win', 'loss', 'push', null
 });
 
+// In-app notifications
+export const notifications = pgTable("notifications", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  leagueId: integer("league_id"),
+  type: text("type").notNull(), // 'announcement', 'parlay_approved', 'parlay_rejected', 'reminder', 'system'
+  title: text("title").notNull(),
+  message: text("message"),
+  isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Legacy bets table (keep for backward compatibility)
 export const bets = pgTable("bets", {
   id: serial("id").primaryKey(),
@@ -124,6 +157,7 @@ export const bets = pgTable("bets", {
 });
 
 // Schemas
+export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, isRead: true, createdAt: true });
 export const insertWeekSchema = createInsertSchema(weeks).omit({ id: true });
 export const insertGameSchema = createInsertSchema(games).omit({ id: true });
 export const insertBetSchema = createInsertSchema(bets).omit({ id: true, userId: true, status: true, createdAt: true });
@@ -138,6 +172,8 @@ export const insertImportBatchSchema = createInsertSchema(importBatches).omit({ 
 export type Week = typeof weeks.$inferSelect;
 export type Game = typeof games.$inferSelect;
 export type Bet = typeof bets.$inferSelect;
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type League = typeof leagues.$inferSelect;
 export type LeagueMember = typeof leagueMembers.$inferSelect;
 export type Parlay = typeof parlays.$inferSelect;

@@ -17,6 +17,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { NotificationBell } from "@/components/NotificationBell";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -131,16 +132,19 @@ export function Sidebar() {
           <Trophy className="w-6 h-6 text-primary" />
           <span className="font-bold font-display text-lg tracking-tight">PARLAY.CLUB</span>
         </div>
-        <Sheet open={open} onOpenChange={setOpen}>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" data-testid="button-mobile-menu">
-              <Menu className="w-6 h-6" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="left" className="p-0 bg-background border-r border-white/5 w-80">
-            <NavContent />
-          </SheetContent>
-        </Sheet>
+        <div className="flex items-center gap-1">
+          <NotificationBell />
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" data-testid="button-mobile-menu">
+                <Menu className="w-6 h-6" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="left" className="p-0 bg-background border-r border-white/5 w-80">
+              <NavContent />
+            </SheetContent>
+          </Sheet>
+        </div>
       </div>
 
       {/* Desktop Sidebar */}

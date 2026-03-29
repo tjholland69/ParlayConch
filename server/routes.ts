@@ -560,5 +560,96 @@ export async function registerRoutes(
     }
   });
 
+  // ===== NOTIFICATIONS =====
+  app.get("/api/notifications", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const notifs = await storage.getNotifications(userId);
+      res.json(notifs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/notifications/:id/read", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const id = Number(req.params.id);
+      await storage.markNotificationRead(id, userId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/notifications/read-all", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      await storage.markAllNotificationsRead(userId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Parlay Maestro: send ad hoc announcement to all league members
+  app.post("/api/leagues/:id/notifications/announce", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can send league announcements" });
+
+      const { title, message } = z.object({
+        title: z.string().min(1).max(120),
+        message: z.string().max(500).optional(),
+      }).parse(req.body);
+
+      await storage.createLeagueAnnouncement(leagueId, title, message || "");
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // Parlay Maestro: configure scheduled reminder settings
+  app.patch("/api/leagues/:id/notification-settings", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+
+      const settings = z.object({
+        scheduledReminders: z.boolean(),
+        reminderDaysBeforeDeadline: z.number().min(1).max(7),
+        reminderMessage: z.string().max(500),
+      }).parse(req.body);
+
+      const league = await storage.updateLeagueNotificationSettings(leagueId, settings);
+      res.json(league);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // User: update notification delivery preferences
+  app.patch("/api/users/me/notification-preferences", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const prefs = z.object({
+        email: z.boolean(),
+        sms: z.boolean(),
+        push: z.boolean(),
+        phone: z.string().optional(),
+      }).parse(req.body);
+
+      await storage.updateUserSettings(userId, { notificationPreferences: prefs });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }
