@@ -145,7 +145,7 @@ export default function Leagues() {
                     {league.isAdmin && (
                       <Badge variant="secondary" className="text-xs">
                         <Crown className="w-3 h-3 mr-1" />
-                        Admin
+                        Parlay Maestro
                       </Badge>
                     )}
                     {league.isDemo && (
