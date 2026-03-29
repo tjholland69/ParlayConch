@@ -4,7 +4,8 @@ import {
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
-  type ImportBatch, type InsertImportBatch, type ImportParlayLeg
+  type ImportBatch, type InsertImportBatch, type ImportParlayLeg,
+  type LieutenantPermissions, type LeagueMemberWithUser, DEFAULT_LIEUTENANT_PERMISSIONS
 } from "@shared/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 
@@ -37,7 +38,13 @@ export interface IStorage {
   getUserLeagues(userId: string): Promise<LeagueWithMembers[]>;
   joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null>;
   getLeagueMembers(leagueId: number): Promise<LeagueMember[]>;
+  getLeagueMembersWithUsers(leagueId: number): Promise<LeagueMemberWithUser[]>;
   isLeagueAdmin(leagueId: number, userId: string): Promise<boolean>;
+  isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean>;
+  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay'>>): Promise<League>;
+  updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League>;
+  setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember>;
+  getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]>;
 
   // Parlays
   getParlay(id: number): Promise<Parlay | undefined>;
@@ -58,6 +65,9 @@ export interface IStorage {
   // Demo flags
   setUserDemoFlag(userId: string, isDemo: boolean): Promise<void>;
   setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void>;
+
+  // User settings
+  updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -239,11 +249,13 @@ export class DatabaseStorage implements IStorage {
             id: m.user.id,
             firstName: m.user.firstName,
             email: m.user.email,
-            profileImageUrl: m.user.profileImageUrl
+            profileImageUrl: m.user.profileImageUrl,
+            isDemo: m.user.isDemo
           }
         })),
         memberCount: allMembers.length,
-        isAdmin: userMembership?.role === 'admin'
+        isAdmin: userMembership?.role === 'admin',
+        isLieutenant: userMembership?.role === 'lieutenant'
       });
     }
 
@@ -273,6 +285,62 @@ export class DatabaseStorage implements IStorage {
     const [member] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
     return member?.role === 'admin';
+  }
+
+  async isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean> {
+    const [member] = await db.select().from(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+    return member?.role === 'lieutenant';
+  }
+
+  async getLeagueMembersWithUsers(leagueId: number): Promise<LeagueMemberWithUser[]> {
+    const result = await db.select({
+      member: leagueMembers,
+      user: users
+    })
+    .from(leagueMembers)
+    .innerJoin(users, eq(leagueMembers.userId, users.id))
+    .where(eq(leagueMembers.leagueId, leagueId));
+
+    return result.map(r => ({
+      ...r.member,
+      user: {
+        id: r.user.id,
+        firstName: r.user.firstName,
+        email: r.user.email,
+        profileImageUrl: r.user.profileImageUrl,
+        isDemo: r.user.isDemo
+      }
+    }));
+  }
+
+  async getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]> {
+    const all = await this.getLeagueMembersWithUsers(leagueId);
+    return all.filter(m => m.role === 'lieutenant');
+  }
+
+  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay'>>): Promise<League> {
+    const [updated] = await db.update(leagues)
+      .set(updates)
+      .where(eq(leagues.id, leagueId))
+      .returning();
+    return updated;
+  }
+
+  async updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League> {
+    const [updated] = await db.update(leagues)
+      .set({ lieutenantPermissions: permissions })
+      .where(eq(leagues.id, leagueId))
+      .returning();
+    return updated;
+  }
+
+  async setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember> {
+    const [updated] = await db.update(leagueMembers)
+      .set({ role })
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)))
+      .returning();
+    return updated;
   }
 
   // Parlays
@@ -492,6 +560,12 @@ export class DatabaseStorage implements IStorage {
 
   async setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void> {
     await db.update(leagues).set({ isDemo }).where(eq(leagues.id, leagueId));
+  }
+
+  async updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void> {
+    const [current] = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId));
+    const merged = { ...(current?.settings as Record<string, unknown> || {}), ...settings };
+    await db.update(users).set({ settings: merged }).where(eq(users.id, userId));
   }
 }
 

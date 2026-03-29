@@ -61,6 +61,32 @@ The `shared/` directory contains code used by both frontend and backend:
 - Production: esbuild bundles server, Vite builds client to `dist/`
 - Database migrations: `drizzle-kit push` for schema synchronization
 
+## Configuration Management
+
+### User Settings (`/settings`)
+Tabbed settings page accessible via the sidebar:
+- **Profile**: Display name (stored in `users.settings` JSONB), read-only email and avatar from Replit Auth
+- **Preferences**: Placeholder for theme, default week view, odds format (coming soon)
+- **Notifications**: Placeholder for parlay approved/rejected/weekly reminders (coming soon)
+- **Account**: Demo mode toggle, danger zone (delete account — coming soon)
+
+### League Settings (`/leagues/:id/settings`)
+Admin-only settings page linked from each league's detail page:
+- **General**: Edit league name, description, parlay constraints (min/max legs, max parlays/week)
+- **Lieutenants**: Assign up to 2 members as Lieutenants; configure per-league Lieutenant permissions
+- **Advanced**: Demo/QA flag toggle; future settings (lock picks, public league, scoring)
+
+### Lieutenant System
+- `leagueMembers.role` values: `'admin'`, `'lieutenant'`, `'member'`
+- Up to 2 lieutenants per league (enforced server-side)
+- Permissions stored in `leagues.lieutenant_permissions` (JSONB), configurable per league:
+  - `approveRejectParlays` — approve/reject pending parlay submissions
+  - `editParlays` — edit parlay picks and leg results
+  - `importHistory` — import historical data via CSV
+  - `markLeagueDemo` — toggle the league's demo/QA flag
+- Default: only `approveRejectParlays` is enabled
+- Lieutenant badges (blue) shown in member lists and parlay cards
+
 ## Demo / QA Flagging
 
 The app supports tagging records as demo/QA data to distinguish test entries from live production records:
