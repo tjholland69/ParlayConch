@@ -411,6 +411,101 @@ export async function registerRoutes(
     }
   });
 
+  // ===== LEAGUE SETTINGS =====
+  app.get("/api/leagues/:id/members", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isMember = (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+      if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+      const members = await storage.getLeagueMembersWithUsers(leagueId);
+      res.json(members);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/leagues/:id/settings", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Admin access required" });
+
+      const schema = z.object({
+        name: z.string().min(1).optional(),
+        description: z.string().nullable().optional(),
+        maxParlaysPerWeek: z.number().int().positive().optional(),
+        minLegsPerParlay: z.number().int().min(1).optional(),
+        maxLegsPerParlay: z.number().int().min(1).optional(),
+      });
+      const updates = schema.parse(req.body);
+      const league = await storage.updateLeagueSettings(leagueId, updates);
+      res.json(league);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/leagues/:id/members/:userId/role", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const targetUserId = req.params.userId;
+      const adminId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, adminId);
+      if (!isAdmin) return res.status(403).json({ message: "Admin access required" });
+
+      const { role } = z.object({ role: z.enum(['member', 'lieutenant']) }).parse(req.body);
+
+      // Enforce max 2 lieutenants
+      if (role === 'lieutenant') {
+        const current = await storage.getLieutenants(leagueId);
+        const alreadyLt = current.some(m => m.userId === targetUserId);
+        if (!alreadyLt && current.length >= 2) {
+          return res.status(400).json({ message: "Maximum 2 lieutenants allowed per league" });
+        }
+      }
+
+      const member = await storage.setMemberRole(leagueId, targetUserId, role);
+      res.json(member);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/leagues/:id/lieutenant-permissions", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Admin access required" });
+
+      const schema = z.object({
+        approveRejectParlays: z.boolean(),
+        editParlays: z.boolean(),
+        importHistory: z.boolean(),
+        markLeagueDemo: z.boolean(),
+      });
+      const permissions = schema.parse(req.body);
+      const league = await storage.updateLieutenantPermissions(leagueId, permissions);
+      res.json(league);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // ===== USER SETTINGS =====
+  app.patch("/api/users/me/settings", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      await storage.updateUserSettings(userId, req.body);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ===== DEMO FLAGS =====
   app.patch("/api/users/me/demo", isAuthenticated, async (req, res) => {
     try {

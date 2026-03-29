@@ -6,6 +6,24 @@ import { users } from "./models/auth";
 // Export users and sessions from auth model
 export * from "./models/auth";
 
+export type LieutenantPermissions = {
+  approveRejectParlays: boolean;
+  editParlays: boolean;
+  importHistory: boolean;
+  markLeagueDemo: boolean;
+};
+
+export const DEFAULT_LIEUTENANT_PERMISSIONS: LieutenantPermissions = {
+  approveRejectParlays: true,
+  editParlays: false,
+  importHistory: false,
+  markLeagueDemo: false,
+};
+
+export type UserSettings = {
+  displayName?: string;
+};
+
 export const weeks = pgTable("weeks", {
   id: serial("id").primaryKey(),
   season: integer("season").notNull(),
@@ -47,6 +65,7 @@ export const leagues = pgTable("leagues", {
   minLegsPerParlay: integer("min_legs_per_parlay").default(3),
   maxLegsPerParlay: integer("max_legs_per_parlay").default(5),
   isDemo: boolean("is_demo").default(false),
+  lieutenantPermissions: jsonb("lieutenant_permissions").$type<LieutenantPermissions>(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -145,10 +164,15 @@ export type UserStat = {
   winRate: number;
 };
 
+export type LeagueMemberWithUser = LeagueMember & {
+  user: { id: string; firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null };
+};
+
 export type LeagueWithMembers = League & {
-  members: (LeagueMember & { user: { id: string; firstName?: string | null; email?: string | null; profileImageUrl?: string | null } })[];
+  members: LeagueMemberWithUser[];
   memberCount: number;
   isAdmin: boolean;
+  isLieutenant: boolean;
 };
 
 export type ParlayWithLegs = Parlay & {

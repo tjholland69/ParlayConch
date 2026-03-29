@@ -1,17 +1,18 @@
 import { useState, useEffect } from "react";
 import { useRoute } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useSetLeagueDemo } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical } from "lucide-react";
+import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { EditParlayDialog } from "@/components/EditParlayDialog";
+import { Link } from "wouter";
 import type { Game, ParlayWithLegs } from "@shared/schema";
 
 type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
@@ -40,8 +41,6 @@ export default function LeagueDetail() {
   const createParlay = useCreateParlay();
   const approveParlay = useApproveParlay();
   const rejectParlay = useRejectParlay();
-
-  const setLeagueDemo = useSetLeagueDemo(leagueId);
 
   const [selectedLegs, setSelectedLegs] = useState<ParlayLeg[]>([]);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -137,22 +136,6 @@ export default function LeagueDetail() {
           <div className="flex items-center gap-2 flex-wrap">
             {league.isAdmin && (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className={cn(
-                    "text-xs",
-                    league.isDemo
-                      ? "border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10"
-                      : "border-white/10 text-muted-foreground hover:text-yellow-400 hover:border-yellow-500/40"
-                  )}
-                  onClick={() => setLeagueDemo.mutate(!league.isDemo)}
-                  disabled={setLeagueDemo.isPending}
-                  data-testid="button-toggle-league-demo"
-                >
-                  <FlaskConical className="w-3 h-3 mr-2" />
-                  {league.isDemo ? "Remove Demo Flag" : "Mark as Demo"}
-                </Button>
                 <Button 
                   variant="outline" 
                   onClick={() => setImportModalOpen(true)}
@@ -161,6 +144,12 @@ export default function LeagueDetail() {
                   <Upload className="w-4 h-4 mr-2" />
                   Import History
                 </Button>
+                <Link href={`/leagues/${leagueId}/settings`}>
+                  <Button variant="outline" data-testid="button-league-settings">
+                    <Settings className="w-4 h-4 mr-2" />
+                    Settings
+                  </Button>
+                </Link>
               </>
             )}
             <Select value={selectedWeekId?.toString()} onValueChange={(v) => setSelectedWeekId(Number(v))}>
