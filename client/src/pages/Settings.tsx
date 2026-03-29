@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useSetUserDemo, useUpdateUserSettings } from "@/hooks/use-bets";
+import { useSetUserDemo, useUpdateUserSettings, useUpdateNotificationPreferences } from "@/hooks/use-bets";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,15 +9,25 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { User, Bell, Palette, FlaskConical, Shield } from "lucide-react";
+import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone } from "lucide-react";
 import { cn } from "@/lib/utils";
+import type { UserNotificationPreferences } from "@shared/schema";
+
+const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
 
 export default function Settings() {
   const { user } = useAuth();
   const setUserDemo = useSetUserDemo();
   const updateSettings = useUpdateUserSettings();
+  const updateNotifPrefs = useUpdateNotificationPreferences();
 
   const [displayName, setDisplayName] = useState(user?.firstName || "");
+  const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
+
+  useEffect(() => {
+    const stored = (user?.settings as any)?.notificationPreferences;
+    if (stored) setNotifPrefs({ ...DEFAULT_PREFS, ...stored });
+  }, [user]);
 
   const handleSaveProfile = () => {
     updateSettings.mutate({ displayName });
@@ -170,30 +180,106 @@ export default function Settings() {
         <TabsContent value="notifications" className="space-y-4">
           <Card className="bg-card/50 border-white/5">
             <CardHeader>
-              <CardTitle>Notification Preferences</CardTitle>
-              <CardDescription>Control when and how you receive updates</CardDescription>
+              <CardTitle className="flex items-center gap-2">
+                <Bell className="w-5 h-5 text-primary" />
+                Notification Delivery
+              </CardTitle>
+              <CardDescription>
+                Choose how you want to receive alerts in addition to the in-app notification bell
+              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="flex items-center justify-between py-3 border-b border-white/5">
-                <div>
-                  <p className="font-medium text-sm">Parlay Approved</p>
-                  <p className="text-xs text-muted-foreground">When the Parlay Maestro approves your pick</p>
+            <CardContent className="space-y-4">
+              {/* Email */}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                      <Mail className="w-4 h-4 text-blue-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Email</p>
+                      <p className="text-xs text-muted-foreground">{user?.email}</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={notifPrefs.email}
+                    onCheckedChange={(v) => setNotifPrefs((p) => ({ ...p, email: v }))}
+                    data-testid="switch-email-notifications"
+                  />
                 </div>
-                <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
+                {notifPrefs.email && (
+                  <p className="text-xs text-blue-400/80 pl-11">
+                    Email delivery requires additional setup — your preference is saved.
+                  </p>
+                )}
               </div>
-              <div className="flex items-center justify-between py-3 border-b border-white/5">
-                <div>
-                  <p className="font-medium text-sm">Parlay Rejected</p>
-                  <p className="text-xs text-muted-foreground">When the Parlay Maestro rejects your pick</p>
+
+              {/* SMS */}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-green-500/20 flex items-center justify-center">
+                      <MessageSquare className="w-4 h-4 text-green-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">SMS / Text Message</p>
+                      <p className="text-xs text-muted-foreground">Requires a verified phone number</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={notifPrefs.sms}
+                    onCheckedChange={(v) => setNotifPrefs((p) => ({ ...p, sms: v }))}
+                    data-testid="switch-sms-notifications"
+                  />
                 </div>
-                <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
+                {notifPrefs.sms && (
+                  <div className="pl-11 space-y-2">
+                    <Label htmlFor="phone" className="text-xs text-muted-foreground">Phone number</Label>
+                    <Input
+                      id="phone"
+                      type="tel"
+                      placeholder="+1 555 000 0000"
+                      value={notifPrefs.phone || ""}
+                      onChange={(e) => setNotifPrefs((p) => ({ ...p, phone: e.target.value }))}
+                      className="bg-background border-white/10 h-8 text-sm"
+                      data-testid="input-phone-number"
+                    />
+                    <p className="text-xs text-green-400/80">SMS delivery requires Twilio integration — your preference is saved.</p>
+                  </div>
+                )}
               </div>
-              <div className="flex items-center justify-between py-3">
-                <div>
-                  <p className="font-medium text-sm">Weekly Reminder</p>
-                  <p className="text-xs text-muted-foreground">Reminder to submit your weekly parlay</p>
+
+              {/* Push */}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                      <Smartphone className="w-4 h-4 text-purple-400" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Push Notifications</p>
+                      <p className="text-xs text-muted-foreground">Native app only — not available in browser</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={notifPrefs.push}
+                    onCheckedChange={(v) => setNotifPrefs((p) => ({ ...p, push: v }))}
+                    data-testid="switch-push-notifications"
+                  />
                 </div>
-                <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
+                {notifPrefs.push && (
+                  <p className="text-xs text-purple-400/80 mt-2 pl-11">Push notifications will be available when a native app is released.</p>
+                )}
+              </div>
+
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={() => updateNotifPrefs.mutate(notifPrefs)}
+                  disabled={updateNotifPrefs.isPending}
+                  data-testid="button-save-notification-prefs"
+                >
+                  {updateNotifPrefs.isPending ? "Saving…" : "Save Preferences"}
+                </Button>
               </div>
             </CardContent>
           </Card>

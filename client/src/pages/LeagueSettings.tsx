@@ -7,6 +7,8 @@ import {
   useSetMemberRole,
   useUpdateLieutenantPermissions,
   useSetLeagueDemo,
+  useSendLeagueAnnouncement,
+  useUpdateLeagueNotificationSettings,
 } from "@/hooks/use-bets";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -27,11 +29,14 @@ import {
   Loader2,
   Star,
   StarOff,
+  Bell,
+  Megaphone,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
-import type { LieutenantPermissions, LeagueMemberWithUser } from "@shared/schema";
-import { DEFAULT_LIEUTENANT_PERMISSIONS } from "@shared/schema";
+import type { LieutenantPermissions, LeagueMemberWithUser, LeagueNotificationSettings } from "@shared/schema";
+import { DEFAULT_LIEUTENANT_PERMISSIONS, DEFAULT_LEAGUE_NOTIFICATION_SETTINGS } from "@shared/schema";
 
 const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: string; description: string }[] = [
   { key: "approveRejectParlays", label: "Approve / Reject Parlays", description: "Can approve or reject pending parlay submissions" },
@@ -147,6 +152,8 @@ export default function LeagueSettings() {
   const setMemberRole = useSetMemberRole(leagueId);
   const updatePerms = useUpdateLieutenantPermissions(leagueId);
   const setLeagueDemo = useSetLeagueDemo(leagueId);
+  const sendAnnouncement = useSendLeagueAnnouncement(leagueId);
+  const updateNotifSettings = useUpdateLeagueNotificationSettings(leagueId);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -154,6 +161,9 @@ export default function LeagueSettings() {
   const [maxLegs, setMaxLegs] = useState(5);
   const [maxParlays, setMaxParlays] = useState(1);
   const [perms, setPerms] = useState<LieutenantPermissions>(DEFAULT_LIEUTENANT_PERMISSIONS);
+  const [notifSettings, setNotifSettings] = useState<LeagueNotificationSettings>(DEFAULT_LEAGUE_NOTIFICATION_SETTINGS);
+  const [announceTitle, setAnnounceTitle] = useState("");
+  const [announceMessage, setAnnounceMessage] = useState("");
 
   useEffect(() => {
     if (league) {
@@ -164,6 +174,9 @@ export default function LeagueSettings() {
       setMaxParlays(league.maxParlaysPerWeek || 1);
       setPerms(
         (league.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS
+      );
+      setNotifSettings(
+        (league.notificationSettings as LeagueNotificationSettings) || DEFAULT_LEAGUE_NOTIFICATION_SETTINGS
       );
     }
   }, [league]);
@@ -244,6 +257,10 @@ export default function LeagueSettings() {
                 {lieutenants.length}
               </Badge>
             )}
+          </TabsTrigger>
+          <TabsTrigger value="notifications" data-testid="tab-league-notifications">
+            <Bell className="w-4 h-4 mr-2" />
+            Notifications
           </TabsTrigger>
           <TabsTrigger value="advanced" data-testid="tab-league-advanced">
             <Shield className="w-4 h-4 mr-2" />
@@ -439,6 +456,137 @@ export default function LeagueSettings() {
                   data-testid="button-save-permissions"
                 >
                   {updatePerms.isPending ? "Saving…" : "Save Permissions"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Notifications Tab */}
+        <TabsContent value="notifications" className="space-y-4">
+          {/* Option 1: Ad Hoc Announcement */}
+          <Card className="bg-card/50 border-white/5">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Megaphone className="w-5 h-5 text-primary" />
+                Send Announcement
+              </CardTitle>
+              <CardDescription>
+                Send an immediate notification to every member of this league
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="announce-title">Title</Label>
+                <Input
+                  id="announce-title"
+                  value={announceTitle}
+                  onChange={(e) => setAnnounceTitle(e.target.value)}
+                  placeholder="e.g. Picks are due by Sunday noon!"
+                  className="bg-background border-white/10"
+                  maxLength={120}
+                  data-testid="input-announce-title"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="announce-message">Message (optional)</Label>
+                <Input
+                  id="announce-message"
+                  value={announceMessage}
+                  onChange={(e) => setAnnounceMessage(e.target.value)}
+                  placeholder="Add more detail here..."
+                  className="bg-background border-white/10"
+                  maxLength={500}
+                  data-testid="input-announce-message"
+                />
+                <p className="text-xs text-muted-foreground">
+                  This will create an in-app notification for all {members?.length || 0} league members
+                </p>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => {
+                    sendAnnouncement.mutate({ title: announceTitle, message: announceMessage });
+                    setAnnounceTitle("");
+                    setAnnounceMessage("");
+                  }}
+                  disabled={sendAnnouncement.isPending || !announceTitle.trim()}
+                  data-testid="button-send-announcement"
+                >
+                  <Megaphone className="w-4 h-4 mr-2" />
+                  {sendAnnouncement.isPending ? "Sending…" : "Send to League"}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Option 2: Scheduled Reminders */}
+          <Card className="bg-card/50 border-white/5">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-primary" />
+                Scheduled Pick Reminders
+              </CardTitle>
+              <CardDescription>
+                Automatically remind members to submit their picks before the weekly deadline
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5">
+                <div>
+                  <p className="text-sm font-medium">Enable Scheduled Reminders</p>
+                  <p className="text-xs text-muted-foreground">Members who haven't submitted yet will be notified</p>
+                </div>
+                <Switch
+                  checked={notifSettings.scheduledReminders}
+                  onCheckedChange={(v) => setNotifSettings((s) => ({ ...s, scheduledReminders: v }))}
+                  data-testid="switch-scheduled-reminders"
+                />
+              </div>
+
+              {notifSettings.scheduledReminders && (
+                <div className="space-y-4 pl-1">
+                  <div className="space-y-2">
+                    <Label htmlFor="reminder-days">Days before deadline</Label>
+                    <div className="flex items-center gap-3">
+                      <Input
+                        id="reminder-days"
+                        type="number"
+                        min={1}
+                        max={7}
+                        value={notifSettings.reminderDaysBeforeDeadline}
+                        onChange={(e) => setNotifSettings((s) => ({ ...s, reminderDaysBeforeDeadline: Number(e.target.value) }))}
+                        className="bg-background border-white/10 w-24"
+                        data-testid="input-reminder-days"
+                      />
+                      <p className="text-sm text-muted-foreground">day{notifSettings.reminderDaysBeforeDeadline !== 1 ? "s" : ""} before the weekly deadline</p>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="reminder-msg">Reminder message</Label>
+                    <Input
+                      id="reminder-msg"
+                      value={notifSettings.reminderMessage}
+                      onChange={(e) => setNotifSettings((s) => ({ ...s, reminderMessage: e.target.value }))}
+                      className="bg-background border-white/10"
+                      maxLength={500}
+                      data-testid="input-reminder-message"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground/70 bg-white/5 rounded-lg px-3 py-2">
+                Scheduled delivery requires a background job service. Your settings are saved and will be active once the scheduler is configured.
+              </p>
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => updateNotifSettings.mutate(notifSettings)}
+                  disabled={updateNotifSettings.isPending}
+                  data-testid="button-save-notif-settings"
+                >
+                  {updateNotifSettings.isPending ? "Saving…" : "Save Reminder Settings"}
                 </Button>
               </div>
             </CardContent>
