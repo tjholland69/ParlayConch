@@ -9,7 +9,8 @@ import {
   Menu,
   User,
   Users,
-  FlaskConical
+  FlaskConical,
+  Settings
 } from "lucide-react";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -22,6 +23,7 @@ const NAV_ITEMS = [
   { label: "My Leagues", href: "/leagues", icon: Users },
   { label: "Quick Pick", href: "/picks", icon: Trophy },
   { label: "My History", href: "/history", icon: History },
+  { label: "Settings", href: "/settings", icon: Settings },
 ];
 
 export function Sidebar() {
