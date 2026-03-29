@@ -1,11 +1,12 @@
 import { db } from "./db";
 import {
-  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches,
+  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications,
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
   type ImportBatch, type InsertImportBatch, type ImportParlayLeg,
-  type LieutenantPermissions, type LeagueMemberWithUser, DEFAULT_LIEUTENANT_PERMISSIONS
+  type LieutenantPermissions, type LeagueMemberWithUser, DEFAULT_LIEUTENANT_PERMISSIONS,
+  type Notification, type LeagueNotificationSettings
 } from "@shared/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 
@@ -68,6 +69,15 @@ export interface IStorage {
 
   // User settings
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void>;
+
+  // Notifications
+  getNotifications(userId: string): Promise<Notification[]>;
+  getUnreadNotificationCount(userId: string): Promise<number>;
+  markNotificationRead(id: number, userId: string): Promise<void>;
+  markAllNotificationsRead(userId: string): Promise<void>;
+  createNotification(data: { userId: string; leagueId?: number; type: string; title: string; message?: string }): Promise<Notification>;
+  createLeagueAnnouncement(leagueId: number, title: string, message: string): Promise<void>;
+  updateLeagueNotificationSettings(leagueId: number, settings: LeagueNotificationSettings): Promise<League>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -566,6 +576,57 @@ export class DatabaseStorage implements IStorage {
     const [current] = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId));
     const merged = { ...(current?.settings as Record<string, unknown> || {}), ...settings };
     await db.update(users).set({ settings: merged }).where(eq(users.id, userId));
+  }
+
+  // Notifications
+  async getNotifications(userId: string): Promise<Notification[]> {
+    return await db.select().from(notifications)
+      .where(eq(notifications.userId, userId))
+      .orderBy(desc(notifications.createdAt));
+  }
+
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    const rows = await db.select().from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
+    return rows.length;
+  }
+
+  async markNotificationRead(id: number, userId: string): Promise<void> {
+    await db.update(notifications)
+      .set({ isRead: true })
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId)));
+  }
+
+  async markAllNotificationsRead(userId: string): Promise<void> {
+    await db.update(notifications)
+      .set({ isRead: true })
+      .where(eq(notifications.userId, userId));
+  }
+
+  async createNotification(data: { userId: string; leagueId?: number; type: string; title: string; message?: string }): Promise<Notification> {
+    const [notif] = await db.insert(notifications).values(data).returning();
+    return notif;
+  }
+
+  async createLeagueAnnouncement(leagueId: number, title: string, message: string): Promise<void> {
+    const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
+    for (const member of members) {
+      await db.insert(notifications).values({
+        userId: member.userId,
+        leagueId,
+        type: 'announcement',
+        title,
+        message,
+      });
+    }
+  }
+
+  async updateLeagueNotificationSettings(leagueId: number, settings: LeagueNotificationSettings): Promise<League> {
+    const [updated] = await db.update(leagues)
+      .set({ notificationSettings: settings })
+      .where(eq(leagues.id, leagueId))
+      .returning();
+    return updated;
   }
 }
 

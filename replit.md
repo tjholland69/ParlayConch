@@ -61,6 +61,39 @@ The `shared/` directory contains code used by both frontend and backend:
 - Production: esbuild bundles server, Vite builds client to `dist/`
 - Database migrations: `drizzle-kit push` for schema synchronization
 
+## Notification System
+
+### In-App Notification Bell
+- Fixed bell icon in the top-right: desktop top bar (above main content) + mobile header
+- Shows an unread count badge (red) when there are unread notifications
+- Dropdown lists all notifications with type icon, title, message, and time-ago
+- Click any unread notification to mark it as read; "Mark all read" button clears all
+- Polls for new notifications every 30 seconds
+- Notification types: `announcement`, `parlay_approved`, `parlay_rejected`, `reminder`, `system`
+
+### League Notifications (Parlay Maestro only — League Settings → Notifications tab)
+- **Ad Hoc Announcements (Option 1)**: Type a title + optional message, click "Send to League" — creates an in-app notification for every league member immediately
+- **Scheduled Reminders (Option 2)**: Enable toggle, configure days-before-deadline (1–7) and reminder message text; settings stored, actual delivery requires a background job service
+
+### User Notification Delivery (Settings → Notifications tab)
+Three delivery channels, all stored as preferences in `users.settings.notificationPreferences` JSONB:
+- **Email**: Toggle on/off; email delivery requires email service integration (e.g. Resend/SendGrid)
+- **SMS**: Toggle + phone number input; SMS delivery requires Twilio integration
+- **Push**: Toggle; only available for native app (not browser); placeholder until app is released
+
+### Database
+- `notifications` table: `id`, `userId`, `leagueId` (nullable), `type`, `title`, `message`, `isRead`, `createdAt`
+- `leagues.notificationSettings` JSONB: `{ scheduledReminders, reminderDaysBeforeDeadline, reminderMessage }`
+- `users.settings.notificationPreferences` JSONB: `{ email, sms, push, phone? }`
+
+### API Routes
+- `GET /api/notifications` — fetch current user's notifications
+- `POST /api/notifications/:id/read` — mark one notification as read
+- `POST /api/notifications/read-all` — mark all as read
+- `POST /api/leagues/:id/notifications/announce` — Parlay Maestro sends ad hoc announcement
+- `PATCH /api/leagues/:id/notification-settings` — Parlay Maestro configures scheduled reminders
+- `PATCH /api/users/me/notification-preferences` — user updates delivery preferences
+
 ## Configuration Management
 
 ### User Settings (`/settings`)
