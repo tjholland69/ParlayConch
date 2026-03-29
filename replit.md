@@ -76,16 +76,20 @@ Admin-only settings page linked from each league's detail page:
 - **Lieutenants**: Assign up to 2 members as Lieutenants; configure per-league Lieutenant permissions
 - **Advanced**: Demo/QA flag toggle; future settings (lock picks, public league, scoring)
 
-### Lieutenant System
-- `leagueMembers.role` values: `'admin'`, `'lieutenant'`, `'member'`
-- Up to 2 lieutenants per league (enforced server-side)
+### Role Terminology (UI vs DB)
+- **Parlay Maestro** — displayed in UI for the league creator/admin; stored as `'admin'` in `leagueMembers.role`
+- **Parlay Lieutenant** — displayed in UI for trusted deputies; stored as `'lieutenant'` in `leagueMembers.role`
+- Regular members have role `'member'`
+
+### Parlay Lieutenant System
+- Up to 2 Parlay Lieutenants per league (enforced server-side)
 - Permissions stored in `leagues.lieutenant_permissions` (JSONB), configurable per league:
   - `approveRejectParlays` — approve/reject pending parlay submissions
   - `editParlays` — edit parlay picks and leg results
   - `importHistory` — import historical data via CSV
   - `markLeagueDemo` — toggle the league's demo/QA flag
 - Default: only `approveRejectParlays` is enabled
-- Lieutenant badges (blue) shown in member lists and parlay cards
+- Parlay Lieutenant badges (blue) shown in member lists; Parlay Maestro badge shown on league cards
 
 ## Demo / QA Flagging
 

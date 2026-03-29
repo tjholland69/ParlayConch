@@ -332,7 +332,7 @@ export function useUpdateLieutenantPermissions(leagueId: number) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
-      toast({ title: "Lieutenant permissions saved" });
+      toast({ title: "Parlay Lieutenant permissions saved" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });

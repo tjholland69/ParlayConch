@@ -169,7 +169,7 @@ export async function registerRoutes(
     // Check if user is admin of this specific league
     const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
     if (!isAdmin) {
-      return res.status(403).json({ message: "Only league admins can approve parlays" });
+      return res.status(403).json({ message: "Only the Parlay Maestro can approve parlays" });
     }
 
     const updated = await storage.approveParlay(parlayId, userId);
@@ -189,7 +189,7 @@ export async function registerRoutes(
     // Check if user is admin of this specific league
     const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
     if (!isAdmin) {
-      return res.status(403).json({ message: "Only league admins can reject parlays" });
+      return res.status(403).json({ message: "Only the Parlay Maestro can reject parlays" });
     }
 
     const updated = await storage.rejectParlay(parlayId, userId);
@@ -302,7 +302,7 @@ export async function registerRoutes(
       const isAdmin = leagues.some(l => l.isAdmin);
       
       if (!isAdmin) {
-        return res.status(403).json({ message: "Only league admins can sync odds data" });
+        return res.status(403).json({ message: "Only the Parlay Maestro can sync odds data" });
       }
 
       const result = await syncGamesFromOddsApi(weekId);
@@ -340,7 +340,7 @@ export async function registerRoutes(
 
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
       if (!isAdmin) {
-        return res.status(403).json({ message: "Only league admins can import data" });
+        return res.status(403).json({ message: "Only the Parlay Maestro can import data" });
       }
 
       const { filename, records } = req.body;
@@ -401,7 +401,7 @@ export async function registerRoutes(
 
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
       if (!isAdmin) {
-        return res.status(403).json({ message: "Admin access required" });
+        return res.status(403).json({ message: "Parlay Maestro access required" });
       }
 
       const imports = await storage.getLeagueImportHistory(leagueId);
@@ -430,7 +430,7 @@ export async function registerRoutes(
       const leagueId = Number(req.params.id);
       const userId = (req.user as any).claims.sub;
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
-      if (!isAdmin) return res.status(403).json({ message: "Admin access required" });
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
 
       const schema = z.object({
         name: z.string().min(1).optional(),
@@ -454,7 +454,7 @@ export async function registerRoutes(
       const adminId = (req.user as any).claims.sub;
 
       const isAdmin = await storage.isLeagueAdmin(leagueId, adminId);
-      if (!isAdmin) return res.status(403).json({ message: "Admin access required" });
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
 
       const { role } = z.object({ role: z.enum(['member', 'lieutenant']) }).parse(req.body);
 
@@ -463,7 +463,7 @@ export async function registerRoutes(
         const current = await storage.getLieutenants(leagueId);
         const alreadyLt = current.some(m => m.userId === targetUserId);
         if (!alreadyLt && current.length >= 2) {
-          return res.status(400).json({ message: "Maximum 2 lieutenants allowed per league" });
+          return res.status(400).json({ message: "Maximum 2 Parlay Lieutenants allowed per league" });
         }
       }
 
@@ -479,7 +479,7 @@ export async function registerRoutes(
       const leagueId = Number(req.params.id);
       const userId = (req.user as any).claims.sub;
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
-      if (!isAdmin) return res.status(403).json({ message: "Admin access required" });
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
 
       const schema = z.object({
         approveRejectParlays: z.boolean(),
@@ -526,7 +526,7 @@ export async function registerRoutes(
 
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
       if (!isAdmin) {
-        return res.status(403).json({ message: "Only league admins can change demo status" });
+        return res.status(403).json({ message: "Only the Parlay Maestro can change demo status" });
       }
 
       await storage.setLeagueDemoFlag(leagueId, isDemo);
@@ -549,7 +549,7 @@ export async function registerRoutes(
 
       const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
       if (!isAdmin) {
-        return res.status(403).json({ message: "Only league admins can edit parlays" });
+        return res.status(403).json({ message: "Only the Parlay Maestro can edit parlays" });
       }
 
       const { status, legs } = req.body;

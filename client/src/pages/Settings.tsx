@@ -177,14 +177,14 @@ export default function Settings() {
               <div className="flex items-center justify-between py-3 border-b border-white/5">
                 <div>
                   <p className="font-medium text-sm">Parlay Approved</p>
-                  <p className="text-xs text-muted-foreground">When a league admin approves your pick</p>
+                  <p className="text-xs text-muted-foreground">When the Parlay Maestro approves your pick</p>
                 </div>
                 <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
               </div>
               <div className="flex items-center justify-between py-3 border-b border-white/5">
                 <div>
                   <p className="font-medium text-sm">Parlay Rejected</p>
-                  <p className="text-xs text-muted-foreground">When a league admin rejects your pick</p>
+                  <p className="text-xs text-muted-foreground">When the Parlay Maestro rejects your pick</p>
                 </div>
                 <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
               </div>
