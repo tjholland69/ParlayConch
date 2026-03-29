@@ -75,13 +75,13 @@ function MemberRow({
             {isMemberAdmin && (
               <Badge variant="secondary" className="text-xs h-4 px-1">
                 <Crown className="w-2.5 h-2.5 mr-1" />
-                Admin
+                Parlay Maestro
               </Badge>
             )}
             {isLt && (
               <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-xs h-4 px-1">
                 <Star className="w-2.5 h-2.5 mr-1" />
-                Lieutenant
+                Parlay Lieutenant
               </Badge>
             )}
             {member.user.isDemo && (
@@ -109,10 +109,10 @@ function MemberRow({
           onClick={() => onRoleChange(member.userId, isLt ? "member" : "lieutenant")}
           title={
             isLt
-              ? "Remove Lieutenant role"
+              ? "Remove Parlay Lieutenant role"
               : canPromote
-              ? "Promote to Lieutenant"
-              : "Maximum 2 lieutenants reached"
+              ? "Promote to Parlay Lieutenant"
+              : "Maximum 2 Parlay Lieutenants reached"
           }
           data-testid={`button-role-toggle-${member.userId}`}
         >
@@ -180,8 +180,8 @@ export default function LeagueSettings() {
     return (
       <div className="max-w-lg mx-auto text-center py-20">
         <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-        <h2 className="text-xl font-bold mb-2">Admin Access Required</h2>
-        <p className="text-muted-foreground mb-6">Only league admins can access settings.</p>
+        <h2 className="text-xl font-bold mb-2">Parlay Maestro Access Required</h2>
+        <p className="text-muted-foreground mb-6">Only the Parlay Maestro can access league settings.</p>
         <Link href={`/leagues/${leagueId}`}>
           <Button variant="outline">Back to League</Button>
         </Link>
@@ -238,7 +238,7 @@ export default function LeagueSettings() {
           </TabsTrigger>
           <TabsTrigger value="lieutenants" data-testid="tab-league-lieutenants">
             <Star className="w-4 h-4 mr-2" />
-            Lieutenants
+            Parlay Lieutenants
             {lieutenants.length > 0 && (
               <Badge className="ml-1.5 bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px] px-1 h-4">
                 {lieutenants.length}
@@ -359,26 +359,26 @@ export default function LeagueSettings() {
           </div>
         </TabsContent>
 
-        {/* Lieutenants Tab */}
+        {/* Parlay Lieutenants Tab */}
         <TabsContent value="lieutenants" className="space-y-4">
           <Card className="bg-card/50 border-white/5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Star className="w-5 h-5 text-blue-400" />
-                Lieutenant Assignment
+                Parlay Lieutenant Assignment
               </CardTitle>
               <CardDescription>
-                Designate up to 2 trusted members as Lieutenants. Their permitted actions are configured in the Permissions section below.
+                Designate up to 2 trusted members as Parlay Lieutenants. Their permitted actions are configured in the Permissions section below.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              {/* Current lieutenant summary */}
+              {/* Current Parlay Lieutenant summary */}
               <div className="flex items-center gap-3 p-3 rounded-xl bg-blue-500/5 border border-blue-500/20 mb-4">
                 <Star className="w-4 h-4 text-blue-400 shrink-0" />
                 <p className="text-sm text-blue-300">
                   {lieutenants.length === 0
-                    ? "No lieutenants assigned yet"
-                    : `${lieutenants.length} of 2 lieutenant slot${lieutenants.length !== 1 ? "s" : ""} filled`}
+                    ? "No Parlay Lieutenants assigned yet"
+                    : `${lieutenants.length} of 2 Parlay Lieutenant slot${lieutenants.length !== 1 ? "s" : ""} filled`}
                 </p>
               </div>
 
@@ -409,10 +409,10 @@ export default function LeagueSettings() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="w-5 h-5 text-primary" />
-                Lieutenant Permissions
+                Parlay Lieutenant Permissions
               </CardTitle>
               <CardDescription>
-                Choose which admin actions Lieutenants are allowed to perform in this league
+                Choose which Parlay Maestro actions Parlay Lieutenants are allowed to perform in this league
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
