@@ -3,9 +3,20 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { z } from "zod";
-import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema } from "@shared/schema";
+import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS } from "@shared/schema";
 import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames } from "./services/oddsApi";
 import { fetchNFLNews } from "./services/nflNews";
+
+/** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
+async function hasLeaguePermission(leagueId: number, userId: string, permission: keyof LieutenantPermissions): Promise<boolean> {
+  const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+  if (isAdmin) return true;
+  const isLt = await storage.isLeagueLieutenant(leagueId, userId);
+  if (!isLt) return false;
+  const league = await storage.getLeague(leagueId);
+  const perms = (league?.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS;
+  return perms[permission] === true;
+}
 
 export async function registerRoutes(
   httpServer: Server,
@@ -670,8 +681,8 @@ export async function registerRoutes(
       const leagueId = Number(req.params.id);
       const weekId = Number(req.params.weekId);
 
-      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
-      if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can lock the parlay." });
+      const canLock = await hasLeaguePermission(leagueId, userId, "lockParlay");
+      if (!canLock) return res.status(403).json({ message: "Only the Parlay Maestro (or a Lieutenant with Lock permission) can lock the parlay." });
 
       const current = await storage.getWeekLockStatus(leagueId, weekId);
       if (current.isLocked) return res.status(409).json({ message: "This week's parlay is already locked." });
@@ -691,8 +702,8 @@ export async function registerRoutes(
       const leagueId = Number(req.params.id);
       const weekId = Number(req.params.weekId);
 
-      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
-      if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can unlock the parlay." });
+      const canUnlock = await hasLeaguePermission(leagueId, userId, "unlockParlay");
+      if (!canUnlock) return res.status(403).json({ message: "Only the Parlay Maestro (or a Lieutenant with Unlock permission) can unlock the parlay." });
 
       await storage.unlockWeekParlay(leagueId, weekId);
       res.json({ success: true });

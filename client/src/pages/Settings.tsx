@@ -324,65 +324,132 @@ export default function Settings() {
                   <div className="flex items-center gap-2 px-1">
                     <Crown className="w-4 h-4 text-primary" />
                     <h2 className="text-sm font-semibold text-primary uppercase tracking-wider">
-                      Parlay Maestro Settings
+                      Parlay Maestro
                     </h2>
                   </div>
 
-                  {/* Leagues where user is admin */}
+                  {/* League list with per-league permission summaries */}
                   <Card className="bg-card/50 border-white/5">
                     <CardHeader>
-                      <CardTitle className="text-base">Your Leagues (Parlay Maestro)</CardTitle>
+                      <CardTitle className="text-base">Your Admin Leagues</CardTitle>
                       <CardDescription>
-                        You have full administrative control over the following leagues. Per-league settings can be configured from each league's Settings page.
+                        You have full control over the following leagues. Configure per-league Lieutenant permissions from each league's Settings page.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-2">
-                      {adminLeagues.map(league => (
-                        <div
-                          key={league.id}
-                          className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/5"
-                          data-testid={`row-admin-league-${league.id}`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
-                              <Crown className="w-4 h-4 text-primary" />
+                    <CardContent className="space-y-3">
+                      {adminLeagues.map(league => {
+                        const lp = league.lieutenantPermissions as Record<string, boolean> | null;
+                        const grantedCount = lp ? Object.values(lp).filter(Boolean).length : 0;
+                        return (
+                          <div
+                            key={league.id}
+                            className="p-3 rounded-lg bg-white/5 border border-white/5"
+                            data-testid={`row-admin-league-${league.id}`}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                                  <Crown className="w-4 h-4 text-primary" />
+                                </div>
+                                <div>
+                                  <p className="text-sm font-medium">{league.name}</p>
+                                  <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
+                                </div>
+                              </div>
+                              <Link href={`/leagues/${league.id}/settings`}>
+                                <Button size="sm" variant="outline" data-testid={`button-league-settings-${league.id}`}>
+                                  Configure
+                                </Button>
+                              </Link>
                             </div>
-                            <div>
-                              <p className="text-sm font-medium">{league.name}</p>
-                              <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
-                            </div>
+                            <p className="text-xs text-muted-foreground pl-11">
+                              {grantedCount === 0
+                                ? "No Lieutenant permissions granted yet"
+                                : `${grantedCount} Lieutenant permission${grantedCount !== 1 ? "s" : ""} enabled`}
+                            </p>
                           </div>
-                          <Link href={`/leagues/${league.id}/settings`}>
-                            <Button size="sm" variant="outline" data-testid={`button-league-settings-${league.id}`}>
-                              Configure
-                            </Button>
-                          </Link>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </CardContent>
                   </Card>
 
-                  {/* Placeholder card — admin-specific global settings go here */}
+                  {/* Full permission framework reference */}
                   <Card className="bg-card/50 border-white/5">
                     <CardHeader>
-                      <CardTitle className="text-base">Global Admin Preferences</CardTitle>
+                      <CardTitle className="text-base">Permission Framework</CardTitle>
                       <CardDescription>
-                        Settings that apply across all leagues you administrate
+                        All league activities and who is authorized to perform them. Configure per-league Lieutenant access in each league's Settings.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <div
-                        className="flex items-center justify-center py-8 rounded-xl border border-dashed border-white/10 text-muted-foreground text-sm"
-                        data-testid="placeholder-admin-settings"
-                      >
-                        Admin preference settings coming in the next update
+                    <CardContent className="space-y-5">
+                      {/* Grantable to lieutenants */}
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Configurable — can be granted to Parlay Lieutenants</p>
+                        <div className="space-y-2">
+                          {[
+                            { label: "Approve / Reject Parlays", desc: "Approve or reject pending parlay submissions", icon: "✓" },
+                            { label: "Edit Parlays", desc: "Edit parlay picks and leg results for any member", icon: "✓" },
+                            { label: "Lock Weekly Parlay", desc: "Lock the week's parlay to prevent further submissions", icon: "✓" },
+                            { label: "Unlock Weekly Parlay", desc: "Unlock a previously locked parlay to re-open submissions", icon: "✓" },
+                            { label: "Remove a Member's Pick", desc: "Clear an individual pick from another member's parlay", icon: "✓" },
+                            { label: "Approve Member Invites", desc: "Approve pending invite requests from regular members", icon: "✓" },
+                            { label: "Import History", desc: "Import historical parlay data via CSV", icon: "✓" },
+                            { label: "Mark League as Demo", desc: "Toggle the league's demo / QA flag", icon: "✓" },
+                          ].map(({ label, desc, icon }) => (
+                            <div key={label} className="flex items-start gap-3 py-2 border-b border-white/5 last:border-0">
+                              <span className="text-green-400 text-xs font-bold mt-0.5 w-4 shrink-0">{icon}</span>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium">{label}</p>
+                                <p className="text-xs text-muted-foreground">{desc}</p>
+                              </div>
+                              <Badge variant="outline" className="text-[10px] shrink-0 text-muted-foreground">Lt. eligible</Badge>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <Separator className="border-white/5" />
+
+                      {/* Admin-only activities */}
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Admin-Only — never delegatable</p>
+                        <div className="space-y-2">
+                          {[
+                            { label: "Suspend Members", desc: "Remove or suspend a member from the league temporarily or permanently" },
+                            { label: "Set Parlay Lieutenant", desc: "Promote or demote members to/from the Parlay Lieutenant role" },
+                          ].map(({ label, desc }) => (
+                            <div key={label} className="flex items-start gap-3 py-2 border-b border-white/5 last:border-0">
+                              <span className="text-red-400 text-xs font-bold mt-0.5 w-4 shrink-0">✕</span>
+                              <div className="min-w-0">
+                                <p className="text-sm font-medium">{label}</p>
+                                <p className="text-xs text-muted-foreground">{desc}</p>
+                              </div>
+                              <Badge variant="outline" className="text-[10px] shrink-0 text-red-400 border-red-400/30">Admin only</Badge>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <Separator className="border-white/5" />
+
+                      {/* Open to all members */}
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">All Members</p>
+                        <div className="flex items-start gap-3 py-2">
+                          <span className="text-blue-400 text-xs font-bold mt-0.5 w-4 shrink-0">→</span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">Send League Invites</p>
+                            <p className="text-xs text-muted-foreground">Any member can send invites, but admin or Lieutenant approval is required before the invite goes through. Admin invites bypass the approval step.</p>
+                          </div>
+                          <Badge variant="outline" className="text-[10px] shrink-0 text-blue-400 border-blue-400/30">All members</Badge>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
                 </div>
               )}
 
-              <Separator className="border-white/5" />
+              {isAnyAdmin && isAnyLieutenant && <Separator className="border-white/5" />}
 
               {/* ── Parlay Lieutenant section ── */}
               {isAnyLieutenant && (
@@ -390,75 +457,66 @@ export default function Settings() {
                   <div className="flex items-center gap-2 px-1">
                     <Star className="w-4 h-4 text-blue-400" />
                     <h2 className="text-sm font-semibold text-blue-400 uppercase tracking-wider">
-                      Parlay Lieutenant Settings
+                      Parlay Lieutenant
                     </h2>
                   </div>
 
-                  {/* Leagues where user is lieutenant */}
+                  {/* Per-league permissions breakdown */}
                   <Card className="bg-card/50 border-white/5">
                     <CardHeader>
-                      <CardTitle className="text-base">Your Leagues (Parlay Lieutenant)</CardTitle>
+                      <CardTitle className="text-base">Your Granted Permissions</CardTitle>
                       <CardDescription>
-                        You have been granted Lieutenant permissions in the following leagues by the Parlay Maestro.
+                        Permissions granted to you by the Parlay Maestro in each league. Contact the Parlay Maestro to request changes.
                       </CardDescription>
                     </CardHeader>
-                    <CardContent className="space-y-2">
-                      {lieutenantLeagues.map(league => (
-                        <div
-                          key={league.id}
-                          className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/5"
-                          data-testid={`row-lieutenant-league-${league.id}`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                              <Star className="w-4 h-4 text-blue-400" />
-                            </div>
-                            <div>
-                              <p className="text-sm font-medium">{league.name}</p>
-                              <div className="flex items-center gap-1 mt-0.5">
-                                {league.lieutenantPermissions?.approveRejectParlays && (
-                                  <Badge className="text-[10px] px-1 py-0 h-4 bg-blue-500/20 text-blue-400 border-blue-500/30">
-                                    Approve/Reject
-                                  </Badge>
-                                )}
-                                {league.lieutenantPermissions?.editParlays && (
-                                  <Badge className="text-[10px] px-1 py-0 h-4 bg-blue-500/20 text-blue-400 border-blue-500/30">
-                                    Edit Parlays
-                                  </Badge>
-                                )}
-                                {league.lieutenantPermissions?.importHistory && (
-                                  <Badge className="text-[10px] px-1 py-0 h-4 bg-blue-500/20 text-blue-400 border-blue-500/30">
-                                    Import
-                                  </Badge>
-                                )}
+                    <CardContent className="space-y-4">
+                      {lieutenantLeagues.map(league => {
+                        const lp = league.lieutenantPermissions as Record<string, boolean> | null;
+                        const PERM_DISPLAY: { key: string; label: string }[] = [
+                          { key: "approveRejectParlays", label: "Approve / Reject Parlays" },
+                          { key: "editParlays", label: "Edit Parlays" },
+                          { key: "lockParlay", label: "Lock Weekly Parlay" },
+                          { key: "unlockParlay", label: "Unlock Weekly Parlay" },
+                          { key: "unselectUserPick", label: "Remove a Member's Pick" },
+                          { key: "approveMemberInvites", label: "Approve Member Invites" },
+                          { key: "importHistory", label: "Import History" },
+                          { key: "markLeagueDemo", label: "Mark League as Demo" },
+                        ];
+                        const granted = PERM_DISPLAY.filter(p => lp?.[p.key]);
+                        const denied = PERM_DISPLAY.filter(p => !lp?.[p.key]);
+                        return (
+                          <div key={league.id} data-testid={`row-lieutenant-league-${league.id}`}>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <Star className="w-4 h-4 text-blue-400 shrink-0" />
+                                <p className="text-sm font-semibold">{league.name}</p>
                               </div>
+                              <Link href={`/leagues/${league.id}`}>
+                                <Button size="sm" variant="outline" className="h-7 text-xs" data-testid={`button-lieutenant-league-${league.id}`}>
+                                  View League
+                                </Button>
+                              </Link>
                             </div>
+                            <div className="grid grid-cols-2 gap-1 pl-6">
+                              {granted.map(p => (
+                                <div key={p.key} className="flex items-center gap-1.5 text-xs text-green-400">
+                                  <span>✓</span>
+                                  <span>{p.label}</span>
+                                </div>
+                              ))}
+                              {denied.map(p => (
+                                <div key={p.key} className="flex items-center gap-1.5 text-xs text-muted-foreground/50">
+                                  <span>✕</span>
+                                  <span>{p.label}</span>
+                                </div>
+                              ))}
+                            </div>
+                            {league !== lieutenantLeagues[lieutenantLeagues.length - 1] && (
+                              <Separator className="border-white/5 mt-4" />
+                            )}
                           </div>
-                          <Link href={`/leagues/${league.id}`}>
-                            <Button size="sm" variant="outline" data-testid={`button-lieutenant-league-${league.id}`}>
-                              View League
-                            </Button>
-                          </Link>
-                        </div>
-                      ))}
-                    </CardContent>
-                  </Card>
-
-                  {/* Placeholder card — lieutenant-specific settings go here */}
-                  <Card className="bg-card/50 border-white/5">
-                    <CardHeader>
-                      <CardTitle className="text-base">Lieutenant Preferences</CardTitle>
-                      <CardDescription>
-                        Settings available to you based on permissions granted by your Parlay Maestro
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div
-                        className="flex items-center justify-center py-8 rounded-xl border border-dashed border-white/10 text-muted-foreground text-sm"
-                        data-testid="placeholder-lieutenant-settings"
-                      >
-                        Lieutenant preference settings coming in the next update
-                      </div>
+                        );
+                      })}
                     </CardContent>
                   </Card>
                 </div>
