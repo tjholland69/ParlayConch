@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useSetUserDemo, useUpdateUserSettings, useUpdateNotificationPreferences } from "@/hooks/use-bets";
+import { useSetUserDemo, useUpdateUserSettings, useUpdateNotificationPreferences, useLeagues } from "@/hooks/use-bets";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,8 +9,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone } from "lucide-react";
+import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Link } from "wouter";
 import type { UserNotificationPreferences } from "@shared/schema";
 
 const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
@@ -20,6 +21,7 @@ export default function Settings() {
   const setUserDemo = useSetUserDemo();
   const updateSettings = useUpdateUserSettings();
   const updateNotifPrefs = useUpdateNotificationPreferences();
+  const { data: leagues } = useLeagues();
 
   const [displayName, setDisplayName] = useState(user?.firstName || "");
   const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
@@ -32,6 +34,12 @@ export default function Settings() {
   const handleSaveProfile = () => {
     updateSettings.mutate({ displayName });
   };
+
+  // Determine the user's highest role across all their leagues
+  const adminLeagues = leagues?.filter(l => l.isAdmin) ?? [];
+  const lieutenantLeagues = leagues?.filter(l => l.isLieutenant) ?? [];
+  const isAnyAdmin = adminLeagues.length > 0;
+  const isAnyLieutenant = lieutenantLeagues.length > 0;
 
   return (
     <div className="max-w-3xl mx-auto space-y-6 pb-12">
@@ -62,6 +70,10 @@ export default function Settings() {
           <TabsTrigger value="notifications" data-testid="tab-settings-notifications">
             <Bell className="w-4 h-4 mr-2" />
             Notifications
+          </TabsTrigger>
+          <TabsTrigger value="admin" data-testid="tab-settings-admin">
+            <Crown className="w-4 h-4 mr-2" />
+            Admin Privileges
           </TabsTrigger>
           <TabsTrigger value="account" data-testid="tab-settings-account">
             <Shield className="w-4 h-4 mr-2" />
@@ -283,6 +295,176 @@ export default function Settings() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Admin Privileges Tab */}
+        <TabsContent value="admin" className="space-y-4">
+          {!isAnyAdmin && !isAnyLieutenant ? (
+            /* ── No elevated role in any league ── */
+            <Card className="bg-card/50 border-white/5">
+              <CardContent className="flex flex-col items-center gap-4 py-16 text-center">
+                <div className="w-14 h-14 rounded-2xl bg-muted flex items-center justify-center">
+                  <Shield className="w-7 h-7 text-muted-foreground" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-lg font-semibold" data-testid="text-no-admin-privileges">
+                    No Admin Privileges Available
+                  </p>
+                  <p className="text-sm text-muted-foreground max-w-sm">
+                    You are a standard member in all your leagues. Admin settings are only available to Parlay Maestros and Parlay Lieutenants.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* ── Parlay Maestro section ── */}
+              {isAnyAdmin && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 px-1">
+                    <Crown className="w-4 h-4 text-primary" />
+                    <h2 className="text-sm font-semibold text-primary uppercase tracking-wider">
+                      Parlay Maestro Settings
+                    </h2>
+                  </div>
+
+                  {/* Leagues where user is admin */}
+                  <Card className="bg-card/50 border-white/5">
+                    <CardHeader>
+                      <CardTitle className="text-base">Your Leagues (Parlay Maestro)</CardTitle>
+                      <CardDescription>
+                        You have full administrative control over the following leagues. Per-league settings can be configured from each league's Settings page.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {adminLeagues.map(league => (
+                        <div
+                          key={league.id}
+                          className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/5"
+                          data-testid={`row-admin-league-${league.id}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                              <Crown className="w-4 h-4 text-primary" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">{league.name}</p>
+                              <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
+                            </div>
+                          </div>
+                          <Link href={`/leagues/${league.id}/settings`}>
+                            <Button size="sm" variant="outline" data-testid={`button-league-settings-${league.id}`}>
+                              Configure
+                            </Button>
+                          </Link>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+
+                  {/* Placeholder card — admin-specific global settings go here */}
+                  <Card className="bg-card/50 border-white/5">
+                    <CardHeader>
+                      <CardTitle className="text-base">Global Admin Preferences</CardTitle>
+                      <CardDescription>
+                        Settings that apply across all leagues you administrate
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div
+                        className="flex items-center justify-center py-8 rounded-xl border border-dashed border-white/10 text-muted-foreground text-sm"
+                        data-testid="placeholder-admin-settings"
+                      >
+                        Admin preference settings coming in the next update
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+
+              <Separator className="border-white/5" />
+
+              {/* ── Parlay Lieutenant section ── */}
+              {isAnyLieutenant && (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 px-1">
+                    <Star className="w-4 h-4 text-blue-400" />
+                    <h2 className="text-sm font-semibold text-blue-400 uppercase tracking-wider">
+                      Parlay Lieutenant Settings
+                    </h2>
+                  </div>
+
+                  {/* Leagues where user is lieutenant */}
+                  <Card className="bg-card/50 border-white/5">
+                    <CardHeader>
+                      <CardTitle className="text-base">Your Leagues (Parlay Lieutenant)</CardTitle>
+                      <CardDescription>
+                        You have been granted Lieutenant permissions in the following leagues by the Parlay Maestro.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      {lieutenantLeagues.map(league => (
+                        <div
+                          key={league.id}
+                          className="flex items-center justify-between p-3 rounded-lg bg-white/5 border border-white/5"
+                          data-testid={`row-lieutenant-league-${league.id}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                              <Star className="w-4 h-4 text-blue-400" />
+                            </div>
+                            <div>
+                              <p className="text-sm font-medium">{league.name}</p>
+                              <div className="flex items-center gap-1 mt-0.5">
+                                {league.lieutenantPermissions?.approveRejectParlays && (
+                                  <Badge className="text-[10px] px-1 py-0 h-4 bg-blue-500/20 text-blue-400 border-blue-500/30">
+                                    Approve/Reject
+                                  </Badge>
+                                )}
+                                {league.lieutenantPermissions?.editParlays && (
+                                  <Badge className="text-[10px] px-1 py-0 h-4 bg-blue-500/20 text-blue-400 border-blue-500/30">
+                                    Edit Parlays
+                                  </Badge>
+                                )}
+                                {league.lieutenantPermissions?.importHistory && (
+                                  <Badge className="text-[10px] px-1 py-0 h-4 bg-blue-500/20 text-blue-400 border-blue-500/30">
+                                    Import
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <Link href={`/leagues/${league.id}`}>
+                            <Button size="sm" variant="outline" data-testid={`button-lieutenant-league-${league.id}`}>
+                              View League
+                            </Button>
+                          </Link>
+                        </div>
+                      ))}
+                    </CardContent>
+                  </Card>
+
+                  {/* Placeholder card — lieutenant-specific settings go here */}
+                  <Card className="bg-card/50 border-white/5">
+                    <CardHeader>
+                      <CardTitle className="text-base">Lieutenant Preferences</CardTitle>
+                      <CardDescription>
+                        Settings available to you based on permissions granted by your Parlay Maestro
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <div
+                        className="flex items-center justify-center py-8 rounded-xl border border-dashed border-white/10 text-muted-foreground text-sm"
+                        data-testid="placeholder-lieutenant-settings"
+                      >
+                        Lieutenant preference settings coming in the next update
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+              )}
+            </>
+          )}
         </TabsContent>
 
         {/* Account Tab */}
