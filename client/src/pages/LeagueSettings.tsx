@@ -38,11 +38,18 @@ import { Link } from "wouter";
 import type { LieutenantPermissions, LeagueMemberWithUser, LeagueNotificationSettings } from "@shared/schema";
 import { DEFAULT_LIEUTENANT_PERMISSIONS, DEFAULT_LEAGUE_NOTIFICATION_SETTINGS } from "@shared/schema";
 
-const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: string; description: string }[] = [
-  { key: "approveRejectParlays", label: "Approve / Reject Parlays", description: "Can approve or reject pending parlay submissions" },
-  { key: "editParlays", label: "Edit Parlays", description: "Can edit parlay picks and leg results" },
-  { key: "importHistory", label: "Import History", description: "Can import historical parlay data via CSV" },
-  { key: "markLeagueDemo", label: "Mark League as Demo", description: "Can toggle the league's demo/QA flag" },
+const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: string; description: string; group: string }[] = [
+  // Parlay management
+  { key: "approveRejectParlays", label: "Approve / Reject Parlays", description: "Can approve or reject pending parlay submissions", group: "Parlay Management" },
+  { key: "editParlays", label: "Edit Parlays", description: "Can edit parlay picks and leg results", group: "Parlay Management" },
+  { key: "lockParlay", label: "Lock Weekly Parlay", description: "Can lock the week's parlay to prevent further submissions", group: "Parlay Management" },
+  { key: "unlockParlay", label: "Unlock Weekly Parlay", description: "Can unlock a previously locked parlay to re-open submissions", group: "Parlay Management" },
+  { key: "unselectUserPick", label: "Remove a Member's Pick", description: "Can clear an individual pick from another member's parlay (secondary approvals will apply)", group: "Parlay Management" },
+  // Member management
+  { key: "approveMemberInvites", label: "Approve Member Invites", description: "Can approve pending invite requests submitted by regular members", group: "Member Management" },
+  // Data & admin
+  { key: "importHistory", label: "Import History", description: "Can import historical parlay data via CSV", group: "Data & Admin" },
+  { key: "markLeagueDemo", label: "Mark League as Demo", description: "Can toggle the league's demo/QA flag", group: "Data & Admin" },
 ];
 
 function MemberRow({
@@ -429,26 +436,47 @@ export default function LeagueSettings() {
                 Parlay Lieutenant Permissions
               </CardTitle>
               <CardDescription>
-                Choose which Parlay Maestro actions Parlay Lieutenants are allowed to perform in this league
+                Choose which Parlay Maestro actions Parlay Lieutenants are allowed to perform in this league. Some actions remain admin-only and cannot be delegated.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {PERMISSION_LABELS.map(({ key, label, description }) => (
-                <div
-                  key={key}
-                  className="flex items-center justify-between py-3 border-b border-white/5 last:border-0"
-                >
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-medium">{label}</p>
-                    <p className="text-xs text-muted-foreground">{description}</p>
+            <CardContent className="space-y-6">
+              {/* Grouped permission toggles */}
+              {["Parlay Management", "Member Management", "Data & Admin"].map((group) => {
+                const groupPerms = PERMISSION_LABELS.filter(p => p.group === group);
+                return (
+                  <div key={group} className="space-y-1">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">{group}</p>
+                    {groupPerms.map(({ key, label, description }) => (
+                      <div
+                        key={key}
+                        className="flex items-center justify-between py-3 border-b border-white/5 last:border-0"
+                      >
+                        <div className="space-y-0.5">
+                          <p className="text-sm font-medium">{label}</p>
+                          <p className="text-xs text-muted-foreground">{description}</p>
+                        </div>
+                        <Switch
+                          checked={perms[key] ?? false}
+                          onCheckedChange={(checked) => setPerms((prev) => ({ ...prev, [key]: checked }))}
+                          data-testid={`switch-perm-${key}`}
+                        />
+                      </div>
+                    ))}
                   </div>
-                  <Switch
-                    checked={perms[key]}
-                    onCheckedChange={(checked) => setPerms((prev) => ({ ...prev, [key]: checked }))}
-                    data-testid={`switch-perm-${key}`}
-                  />
+                );
+              })}
+
+              {/* Admin-only reminder */}
+              <div className="flex items-start gap-3 p-3 rounded-xl bg-white/5 border border-white/5">
+                <Crown className="w-4 h-4 text-primary shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <p className="text-xs font-medium">Admin-Only (never delegatable)</p>
+                  <p className="text-xs text-muted-foreground">
+                    <strong>Suspend Members</strong> and <strong>Set Lieutenant</strong> are permanently restricted to the Parlay Maestro and cannot be granted to Parlay Lieutenants.
+                  </p>
                 </div>
-              ))}
+              </div>
+
               <div className="flex justify-end pt-2">
                 <Button
                   onClick={handleSavePermissions}

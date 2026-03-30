@@ -7,15 +7,27 @@ import { users } from "./models/auth";
 export * from "./models/auth";
 
 export type LieutenantPermissions = {
+  // Parlay management
   approveRejectParlays: boolean;
   editParlays: boolean;
+  lockParlay: boolean;
+  unlockParlay: boolean;
+  unselectUserPick: boolean;
+  // Member management
+  approveMemberInvites: boolean;
+  // Data / admin
   importHistory: boolean;
   markLeagueDemo: boolean;
+  // NOTE: suspendMembers and setLieutenant are NEVER grantable to lieutenants — admin-only always
 };
 
 export const DEFAULT_LIEUTENANT_PERMISSIONS: LieutenantPermissions = {
   approveRejectParlays: true,
   editParlays: false,
+  lockParlay: false,
+  unlockParlay: false,
+  unselectUserPick: false,
+  approveMemberInvites: false,
   importHistory: false,
   markLeagueDemo: false,
 };
