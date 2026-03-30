@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, League } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, League, WeekLockStatus } from "@shared/schema";
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -486,6 +486,71 @@ export function useSetLeagueDemo(leagueId: number) {
       });
     },
     onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+// Parlay week locking
+export function useWeekLockStatus(leagueId: number, weekId: number) {
+  return useQuery<WeekLockStatus>({
+    queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/lock`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch lock status");
+      return res.json();
+    },
+    enabled: !!leagueId && !!weekId,
+  });
+}
+
+export function useLockWeekParlay(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (hadMissingBets: boolean) => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/lock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hadMissingBets }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to lock parlay");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'] });
+      toast({ title: "Parlay Locked", description: "No further submissions or edits are allowed for this week." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useUnlockWeekParlay(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/lock`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to unlock parlay");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'] });
+      toast({ title: "Parlay Unlocked", description: "Submissions are now open again for this week." });
+    },
+    onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });

@@ -61,6 +61,37 @@ The `shared/` directory contains code used by both frontend and backend:
 - Production: esbuild bundles server, Vite builds client to `dist/`
 - Database migrations: `drizzle-kit push` for schema synchronization
 
+## Parlay Week Locking
+
+### Concept
+The Parlay Maestro can "lock" the weekly parlay once all (or enough) members have submitted their picks. Locking signals that the Maestro is ready to place the bet with their sportsbook and prevents any further submissions or edits.
+
+### Lock Button Behavior (League Parlays tab, Parlay Maestro only)
+- **Grey** when one or more members haven't submitted yet
+- **Green** ("All in" badge appears) once every member has submitted
+- Clicking when all submitted locks immediately
+- Clicking when submissions are missing shows a confirmation dialog
+
+### Partial Lock (Missing Bets)
+- Dialog warns the Maestro and shows exactly how many members are missing
+- If confirmed, `hadMissingBets: true` is stored on the lock record
+- Missing members appear as greyed-out **Void** cards in the parlays list
+- A "Locked with missing bets" badge is shown in the header
+
+### Locked State
+- A red **Locked** badge + **Unlock** button replace the Lock button
+- Make Picks tab shows a lock icon and "Parlay Locked" message — no new picks or edits allowed
+- Maestro can unlock at any time to re-open submissions
+
+### Database
+- `league_week_locks` table: `id`, `leagueId`, `weekId`, `lockedBy`, `lockedAt`, `hadMissingBets`
+- One row per league+week; deleting it unlocks
+
+### API Routes
+- `GET /api/leagues/:id/weeks/:weekId/lock` — get lock status + submission count
+- `POST /api/leagues/:id/weeks/:weekId/lock` — lock (Parlay Maestro only), body: `{ hadMissingBets }`
+- `DELETE /api/leagues/:id/weeks/:weekId/lock` — unlock (Parlay Maestro only)
+
 ## Notification System
 
 ### In-App Notification Bell
