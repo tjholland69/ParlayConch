@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
 import { useRoute } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings } from "lucide-react";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
@@ -42,10 +43,15 @@ export default function LeagueDetail() {
   const approveParlay = useApproveParlay();
   const rejectParlay = useRejectParlay();
 
+  const { data: lockStatus } = useWeekLockStatus(leagueId, selectedWeekId || 0);
+  const lockParlay = useLockWeekParlay(leagueId, selectedWeekId || 0);
+  const unlockParlay = useUnlockWeekParlay(leagueId, selectedWeekId || 0);
+
   const [selectedLegs, setSelectedLegs] = useState<ParlayLeg[]>([]);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [editParlayOpen, setEditParlayOpen] = useState(false);
   const [selectedParlay, setSelectedParlay] = useState<ParlayWithLegs | null>(null);
+  const [showLockConfirm, setShowLockConfirm] = useState(false);
 
   const getLineForBet = (game: Game, betType: string, pick: string): string | undefined => {
     if (betType === 'spread') {
@@ -178,7 +184,20 @@ export default function LeagueDetail() {
 
         {/* Make Picks Tab */}
         <TabsContent value="picks" className="space-y-6">
-          {myParlay ? (
+          {lockStatus?.isLocked ? (
+            <Card className="bg-card/50 border-white/5">
+              <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+                <Lock className="w-10 h-10 text-muted-foreground" />
+                <p className="text-lg font-semibold">Parlay Locked</p>
+                <p className="text-sm text-muted-foreground max-w-xs">
+                  The Parlay Maestro has locked this week's parlay. No new submissions or edits are allowed.
+                </p>
+                {myParlay && (
+                  <Badge variant="secondary" className="mt-2">Your submission is locked in</Badge>
+                )}
+              </CardContent>
+            </Card>
+          ) : myParlay ? (
             <Card className="bg-primary/10 border-primary/20">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -388,12 +407,73 @@ export default function LeagueDetail() {
 
         {/* League Parlays Tab */}
         <TabsContent value="parlays" className="space-y-4">
-          {leagueParlays?.length === 0 ? (
+          {/* Lock header row — visible to Parlay Maestro */}
+          {league.isAdmin && (
+            <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-card/40 border border-white/5">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Users className="w-4 h-4" />
+                <span data-testid="text-submission-count">
+                  {lockStatus?.submittedCount ?? 0} / {lockStatus?.totalMembers ?? league.memberCount} submitted
+                </span>
+                {lockStatus?.allSubmitted && !lockStatus?.isLocked && (
+                  <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs ml-1">All in</Badge>
+                )}
+                {lockStatus?.isLocked && lockStatus?.hadMissingBets && (
+                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs ml-1">
+                    <AlertTriangle className="w-3 h-3 mr-1" />Locked with missing bets
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {lockStatus?.isLocked ? (
+                  <>
+                    <Badge className="bg-red-500/20 text-red-400 border-red-500/30" data-testid="badge-parlay-locked">
+                      <Lock className="w-3 h-3 mr-1" />Locked
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => unlockParlay.mutate()}
+                      disabled={unlockParlay.isPending}
+                      data-testid="button-unlock-parlay"
+                    >
+                      <LockOpen className="w-4 h-4 mr-1" />Unlock
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!lockStatus?.allSubmitted) {
+                        setShowLockConfirm(true);
+                      } else {
+                        lockParlay.mutate(false);
+                      }
+                    }}
+                    disabled={lockParlay.isPending}
+                    className={cn(
+                      "transition-all",
+                      lockStatus?.allSubmitted
+                        ? "bg-green-600 hover:bg-green-700 text-white border-green-600"
+                        : "bg-muted text-muted-foreground border-white/10 hover:bg-muted/80"
+                    )}
+                    data-testid="button-lock-parlay"
+                  >
+                    <Lock className="w-4 h-4 mr-1" />
+                    Lock Parlay
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {leagueParlays?.length === 0 && !lockStatus?.isLocked ? (
             <div className="text-center py-12 bg-card/20 rounded-2xl border border-dashed border-white/10">
               <p className="text-muted-foreground">No parlays submitted for this week yet.</p>
             </div>
           ) : (
-            leagueParlays?.map((parlay) => (
+            <>
+            {leagueParlays?.map((parlay) => (
               <ContextMenu key={parlay.id}>
                 <ContextMenuTrigger asChild>
                   <Card className="bg-card/50 border-white/5" data-testid={`card-parlay-${parlay.id}`}>
@@ -495,7 +575,30 @@ export default function LeagueDetail() {
                   </ContextMenuContent>
                 )}
               </ContextMenu>
-            ))
+            ))}
+            {/* Void cards — members who didn't submit when parlay is locked */}
+            {lockStatus?.isLocked && league.members
+              ?.filter(m => !leagueParlays?.some(p => p.userId === m.userId))
+              .map(m => (
+                <Card key={m.userId} className="bg-card/30 border-white/10 opacity-60" data-testid={`card-void-${m.userId}`}>
+                  <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground font-bold text-sm">
+                        {m.user?.firstName?.[0] || '?'}
+                      </div>
+                      <div>
+                        <p className="font-bold text-muted-foreground">{m.user?.firstName || m.user?.email || 'Unknown'}</p>
+                        <p className="text-xs text-muted-foreground">No submission</p>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="text-muted-foreground border-white/10">
+                      Void
+                    </Badge>
+                  </CardHeader>
+                </Card>
+              ))
+            }
+            </>
           )}
         </TabsContent>
 
@@ -580,6 +683,42 @@ export default function LeagueDetail() {
         leagueId={leagueId}
         weekId={selectedWeekId || 0}
       />
+
+      {/* Lock confirmation dialog — shown when not all bets are in */}
+      <AlertDialog open={showLockConfirm} onOpenChange={setShowLockConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-yellow-400" />
+              Lock with missing bets?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">
+                Only <strong>{lockStatus?.submittedCount ?? 0} of {lockStatus?.totalMembers ?? 0} members</strong> have submitted their picks for this week.
+              </span>
+              <span className="block">
+                Members who haven't submitted will be marked as <strong>Void</strong> for this week and will not be included in the parlay. This cannot be undone without unlocking.
+              </span>
+              <span className="block text-yellow-400 font-medium">
+                Are you sure you want to lock the parlay now?
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-lock">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-yellow-600 hover:bg-yellow-700 text-white"
+              onClick={() => {
+                setShowLockConfirm(false);
+                lockParlay.mutate(true);
+              }}
+              data-testid="button-confirm-lock"
+            >
+              Lock Anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

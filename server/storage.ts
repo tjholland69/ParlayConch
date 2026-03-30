@@ -1,12 +1,13 @@
 import { db } from "./db";
 import {
-  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications,
+  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
   type ImportBatch, type InsertImportBatch, type ImportParlayLeg,
   type LieutenantPermissions, type LeagueMemberWithUser, DEFAULT_LIEUTENANT_PERMISSIONS,
-  type Notification, type LeagueNotificationSettings
+  type Notification, type LeagueNotificationSettings,
+  type LeagueWeekLock, type WeekLockStatus
 } from "@shared/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 
@@ -78,6 +79,11 @@ export interface IStorage {
   createNotification(data: { userId: string; leagueId?: number; type: string; title: string; message?: string }): Promise<Notification>;
   createLeagueAnnouncement(leagueId: number, title: string, message: string): Promise<void>;
   updateLeagueNotificationSettings(leagueId: number, settings: LeagueNotificationSettings): Promise<League>;
+
+  // Parlay week locking
+  getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus>;
+  lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock>;
+  unlockWeekParlay(leagueId: number, weekId: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -627,6 +633,44 @@ export class DatabaseStorage implements IStorage {
       .where(eq(leagues.id, leagueId))
       .returning();
     return updated;
+  }
+
+  async getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus> {
+    // Get all league members (excluding admin for "submitted" check — all members must submit)
+    const members = await db.select().from(leagueMembers)
+      .where(eq(leagueMembers.leagueId, leagueId));
+    const totalMembers = members.length;
+
+    // Count how many have a parlay for this week
+    const submitted = await db.select().from(parlays)
+      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
+    const submittedCount = submitted.length;
+
+    // Check for existing lock
+    const [lock] = await db.select().from(leagueWeekLocks)
+      .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
+
+    return {
+      isLocked: !!lock,
+      lockedAt: lock?.lockedAt,
+      lockedBy: lock?.lockedBy,
+      hadMissingBets: lock?.hadMissingBets,
+      submittedCount,
+      totalMembers,
+      allSubmitted: submittedCount >= totalMembers && totalMembers > 0,
+    };
+  }
+
+  async lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock> {
+    const [lock] = await db.insert(leagueWeekLocks)
+      .values({ leagueId, weekId, lockedBy: userId, hadMissingBets })
+      .returning();
+    return lock;
+  }
+
+  async unlockWeekParlay(leagueId: number, weekId: number): Promise<void> {
+    await db.delete(leagueWeekLocks)
+      .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
   }
 }
 

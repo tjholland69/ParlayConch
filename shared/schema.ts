@@ -134,6 +134,16 @@ export const parlayLegs = pgTable("parlay_legs", {
   result: text("result"), // 'win', 'loss', 'push', null
 });
 
+// Parlay week locks — tracks when a Parlay Maestro locks a week's submissions
+export const leagueWeekLocks = pgTable("league_week_locks", {
+  id: serial("id").primaryKey(),
+  leagueId: integer("league_id").notNull(),
+  weekId: integer("week_id").notNull(),
+  lockedBy: varchar("locked_by").notNull(),
+  lockedAt: timestamp("locked_at").notNull().defaultNow(),
+  hadMissingBets: boolean("had_missing_bets").notNull().default(false),
+});
+
 // In-app notifications
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),
@@ -157,6 +167,7 @@ export const bets = pgTable("bets", {
 });
 
 // Schemas
+export const insertLeagueWeekLockSchema = createInsertSchema(leagueWeekLocks).omit({ id: true, lockedAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, isRead: true, createdAt: true });
 export const insertWeekSchema = createInsertSchema(weeks).omit({ id: true });
 export const insertGameSchema = createInsertSchema(games).omit({ id: true });
@@ -179,6 +190,19 @@ export type LeagueMember = typeof leagueMembers.$inferSelect;
 export type Parlay = typeof parlays.$inferSelect;
 export type ParlayLeg = typeof parlayLegs.$inferSelect;
 export type ImportBatch = typeof importBatches.$inferSelect;
+
+export type LeagueWeekLock = typeof leagueWeekLocks.$inferSelect;
+export type InsertLeagueWeekLock = z.infer<typeof insertLeagueWeekLockSchema>;
+
+export type WeekLockStatus = {
+  isLocked: boolean;
+  lockedAt?: Date;
+  lockedBy?: string;
+  hadMissingBets?: boolean;
+  submittedCount: number;
+  totalMembers: number;
+  allSubmitted: boolean;
+};
 
 export type InsertBet = z.infer<typeof insertBetSchema>;
 export type InsertLeague = z.infer<typeof insertLeagueSchema>;
