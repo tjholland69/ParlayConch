@@ -651,5 +651,55 @@ export async function registerRoutes(
     }
   });
 
+  // Parlay week lock: get status
+  app.get("/api/leagues/:id/weeks/:weekId/lock", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const weekId = Number(req.params.weekId);
+      const status = await storage.getWeekLockStatus(leagueId, weekId);
+      res.json(status);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // Parlay week lock: lock the week
+  app.post("/api/leagues/:id/weeks/:weekId/lock", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const leagueId = Number(req.params.id);
+      const weekId = Number(req.params.weekId);
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can lock the parlay." });
+
+      const current = await storage.getWeekLockStatus(leagueId, weekId);
+      if (current.isLocked) return res.status(409).json({ message: "This week's parlay is already locked." });
+
+      const { hadMissingBets } = z.object({ hadMissingBets: z.boolean() }).parse(req.body);
+      const lock = await storage.lockWeekParlay(leagueId, weekId, userId, hadMissingBets);
+      res.json(lock);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // Parlay week lock: unlock
+  app.delete("/api/leagues/:id/weeks/:weekId/lock", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const leagueId = Number(req.params.id);
+      const weekId = Number(req.params.weekId);
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can unlock the parlay." });
+
+      await storage.unlockWeekParlay(leagueId, weekId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }
