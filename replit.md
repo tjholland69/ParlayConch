@@ -206,3 +206,52 @@ Each row represents one parlay leg. Required columns: `week_id`, `member_email`,
 - **Vite**: Frontend build tool with React plugin
 - **esbuild**: Server bundling for production
 - **TypeScript**: Type checking across the codebase
+
+## Mobile App (iOS — React Native / Expo)
+
+A parallel React Native project lives in `/mobile`. It shares schema types and API patterns with the web app but has its own UI layer built for native iOS.
+
+### Mobile Architecture
+- **Framework**: Expo SDK 51 / React Native 0.74
+- **Routing**: Expo Router v3 (file-based, similar to web app's Wouter)
+- **State Management**: TanStack Query v5 (same version as web)
+- **Styling**: NativeWind 4 (Tailwind CSS for React Native) with matching dark palette
+- **Auth**: `expo-web-browser` for OAuth flow + `expo-secure-store` for token storage
+- **Icons**: `@expo/vector-icons` (Ionicons)
+
+### Mobile Directory Structure
+```
+mobile/
+├── src/app/           # Expo Router screens
+│   ├── _layout.tsx    # Root layout with QueryClient + auth guard
+│   ├── login.tsx      # OAuth login screen
+│   ├── (tabs)/        # Bottom tab navigator (Leagues, Picks, Settings)
+│   └── leagues/[id].tsx  # League detail (parlays / members / stats tabs)
+├── src/components/    # React Native UI components (Card, Badge, Button, Avatar)
+├── src/hooks/         # Data hooks mirroring web (use-auth, use-leagues, use-parlays, use-weeks)
+├── src/lib/           # API client + QueryClient setup
+└── app.json           # Expo config — set extra.apiUrl to the server URL
+```
+
+### Shared Code Between Web and Mobile
+- **Schema types** (`shared/schema.ts`) — imported via metro resolver alias
+- **REST API endpoints** — identical routes, same payloads
+- **Hook patterns** — separate files, identical TanStack Query logic
+- **UI components** — NOT shared (web = shadcn/HTML; mobile = React Native primitives)
+
+### Running Mobile (requires Mac + Xcode)
+```bash
+cd mobile && npm install
+EXPO_PUBLIC_API_URL=https://your-app.replit.app npx expo start
+# Press 'i' for iOS Simulator
+```
+
+### Building for App Store
+```bash
+cd mobile
+eas build --platform ios --profile production
+eas submit --platform ios
+```
+
+### Auth Bridge (TODO)
+The server currently uses HTTP session cookies for web. The mobile app needs the server to return a session token as a query param on the OAuth redirect URI. This bridge is not yet implemented in `server/routes.ts`.
