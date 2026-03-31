@@ -316,6 +316,28 @@ export function useSetMemberRole(leagueId: number) {
   });
 }
 
+export function useInviteByEmail(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (emails: string[]) => {
+      const res = await fetch(`/api/leagues/${leagueId}/invite-by-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emails }),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json() as Promise<{ results: { email: string; status: "added" | "not_found" | "already_member"; username?: string }[] }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
 export function useUpdateLieutenantPermissions(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useRoute } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,7 +8,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
@@ -52,6 +55,13 @@ export default function LeagueDetail() {
   const [editParlayOpen, setEditParlayOpen] = useState(false);
   const [selectedParlay, setSelectedParlay] = useState<ParlayWithLegs | null>(null);
   const [showLockConfirm, setShowLockConfirm] = useState(false);
+
+  // Members tab state
+  const { data: members, isLoading: loadingMembers } = useLeagueMembersWithUsers(leagueId);
+  const inviteByEmail = useInviteByEmail(leagueId);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmails, setInviteEmails] = useState<string[]>(['']);
+  const [inviteResults, setInviteResults] = useState<{ email: string; status: string; username?: string }[] | null>(null);
 
   const getLineForBet = (game: Game, betType: string, pick: string): string | undefined => {
     if (betType === 'spread') {
@@ -180,6 +190,7 @@ export default function LeagueDetail() {
           <TabsTrigger value="picks" data-testid="tab-picks">Make Picks</TabsTrigger>
           <TabsTrigger value="parlays" data-testid="tab-parlays">League Parlays</TabsTrigger>
           <TabsTrigger value="standings" data-testid="tab-standings">Standings</TabsTrigger>
+          <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
         </TabsList>
 
         {/* Make Picks Tab */}
@@ -668,7 +679,196 @@ export default function LeagueDetail() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Members Tab */}
+        <TabsContent value="members" className="space-y-4">
+          <Card className="bg-card/50 border-white/5">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <Users className="w-5 h-5 text-primary" />
+                League Members
+              </CardTitle>
+              {league.isAdmin && (
+                <Button
+                  size="sm"
+                  onClick={() => { setInviteEmails(['']); setInviteResults(null); setInviteOpen(true); }}
+                  data-testid="button-invite-members"
+                >
+                  <UserPlus className="w-4 h-4 mr-1" />
+                  Invite Members
+                </Button>
+              )}
+            </CardHeader>
+            <CardContent>
+              {loadingMembers ? (
+                <div className="space-y-2">
+                  {[1, 2, 3].map(i => <div key={i} className="h-14 bg-white/5 rounded animate-pulse" />)}
+                </div>
+              ) : !members?.length ? (
+                <p className="text-muted-foreground text-center py-8">No members found.</p>
+              ) : (
+                <div className="space-y-2">
+                  {/* Sort: admin first, then lieutenants, then members */}
+                  {[...members]
+                    .sort((a, b) => {
+                      const order = { admin: 0, lieutenant: 1, member: 2 };
+                      return (order[a.role as keyof typeof order] ?? 2) - (order[b.role as keyof typeof order] ?? 2);
+                    })
+                    .map((m) => (
+                      <div
+                        key={m.userId}
+                        className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/5"
+                        data-testid={`row-member-${m.userId}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          {m.user.profileImageUrl ? (
+                            <img src={m.user.profileImageUrl} alt="" className="w-9 h-9 rounded-full" />
+                          ) : (
+                            <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
+                              {(m.user.firstName || m.user.email || '?')[0].toUpperCase()}
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-sm font-medium">{m.user.firstName || m.user.email}</p>
+                            <p className="text-xs text-muted-foreground">{m.user.email}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {m.user.isDemo && (
+                            <Badge className="text-[10px] px-1 py-0 h-4 bg-yellow-500/20 text-yellow-400 border-yellow-500/30">DEMO</Badge>
+                          )}
+                          {m.role === 'admin' ? (
+                            <Badge className="flex items-center gap-1 bg-primary/20 text-primary border-primary/30">
+                              <Crown className="w-3 h-3" />
+                              Parlay Maestro
+                            </Badge>
+                          ) : m.role === 'lieutenant' ? (
+                            <Badge className="flex items-center gap-1 bg-blue-500/20 text-blue-400 border-blue-500/30">
+                              <Star className="w-3 h-3" />
+                              Parlay Lieutenant
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-muted-foreground">Member</Badge>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
+
+      {/* Invite Members Dialog */}
+      <Dialog open={inviteOpen} onOpenChange={(open) => { setInviteOpen(open); if (!open) setInviteResults(null); }}>
+        <DialogContent className="sm:max-w-md" data-testid="dialog-invite-members">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="w-5 h-5 text-primary" />
+              Invite Members
+            </DialogTitle>
+            <DialogDescription>
+              Enter the email addresses of people you'd like to add to this league. You can invite up to 5 at once.
+            </DialogDescription>
+          </DialogHeader>
+
+          {inviteResults ? (
+            /* Results view */
+            <div className="space-y-3 py-2">
+              {inviteResults.map((r) => (
+                <div key={r.email} className="flex items-center gap-3 p-3 rounded-lg bg-white/5 border border-white/5">
+                  <div className={cn("w-6 h-6 rounded-full flex items-center justify-center shrink-0",
+                    r.status === 'added' ? "bg-green-500/20" : r.status === 'already_member' ? "bg-yellow-500/20" : "bg-red-500/20"
+                  )}>
+                    {r.status === 'added' ? <Check className="w-3.5 h-3.5 text-green-400" /> :
+                     r.status === 'already_member' ? <Users className="w-3.5 h-3.5 text-yellow-400" /> :
+                     <X className="w-3.5 h-3.5 text-red-400" />}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{r.email}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {r.status === 'added' ? `Added as ${r.username}` :
+                       r.status === 'already_member' ? 'Already a member' :
+                       'No account found with this email'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            /* Email input view */
+            <div className="space-y-3 py-2">
+              {inviteEmails.map((email, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <div className="flex-1 space-y-1">
+                    <Label htmlFor={`invite-email-${idx}`} className="sr-only">Email {idx + 1}</Label>
+                    <Input
+                      id={`invite-email-${idx}`}
+                      type="email"
+                      placeholder={`Email address ${idx + 1}`}
+                      value={email}
+                      onChange={(e) => {
+                        const updated = [...inviteEmails];
+                        updated[idx] = e.target.value;
+                        setInviteEmails(updated);
+                      }}
+                      className="bg-background border-white/10"
+                      data-testid={`input-invite-email-${idx}`}
+                    />
+                  </div>
+                  {inviteEmails.length > 1 && (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => setInviteEmails(inviteEmails.filter((_, i) => i !== idx))}
+                      data-testid={`button-remove-email-${idx}`}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+              ))}
+
+              {inviteEmails.length < 5 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full border-dashed border-white/20 text-muted-foreground hover:text-foreground"
+                  onClick={() => setInviteEmails([...inviteEmails, ''])}
+                  data-testid="button-add-email"
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  Add another email
+                </Button>
+              )}
+            </div>
+          )}
+
+          <DialogFooter>
+            {inviteResults ? (
+              <Button onClick={() => setInviteOpen(false)} data-testid="button-invite-done">Done</Button>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => setInviteOpen(false)}>Cancel</Button>
+                <Button
+                  onClick={async () => {
+                    const validEmails = inviteEmails.filter(e => e.trim() !== '');
+                    if (!validEmails.length) return;
+                    const data = await inviteByEmail.mutateAsync(validEmails);
+                    setInviteResults(data.results);
+                  }}
+                  disabled={inviteByEmail.isPending || inviteEmails.every(e => !e.trim())}
+                  data-testid="button-send-invites"
+                >
+                  {inviteByEmail.isPending ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" />Sending…</> : "Send Invites"}
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Modals */}
       <ImportHistoryModal 

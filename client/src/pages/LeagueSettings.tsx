@@ -328,7 +328,7 @@ export default function LeagueSettings() {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-3 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="min-legs">Min Legs</Label>
+                  <Label htmlFor="min-legs">Min Required Legs</Label>
                   <Input
                     id="min-legs"
                     type="number"
@@ -341,7 +341,7 @@ export default function LeagueSettings() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="max-legs">Max Legs</Label>
+                  <Label htmlFor="max-legs">Default Legs</Label>
                   <Input
                     id="max-legs"
                     type="number"
@@ -367,7 +367,7 @@ export default function LeagueSettings() {
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Members must submit between {minLegs} and {maxLegs} game picks per parlay, up to {maxParlays} parlay{maxParlays !== 1 ? "s" : ""} per week.
+                Members must include at least {minLegs} game picks per parlay. The default leg count is {maxLegs}, up to {maxParlays} parlay{maxParlays !== 1 ? "s" : ""} per week.
               </p>
             </CardContent>
           </Card>
