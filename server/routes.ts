@@ -436,6 +436,34 @@ export async function registerRoutes(
     }
   });
 
+  // Invite members by email
+  app.post("/api/leagues/:id/invite-by-email", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+
+      const { emails } = z.object({
+        emails: z.array(z.string().email()).min(1).max(5),
+      }).parse(req.body);
+
+      const results = await Promise.all(emails.map(async (email) => {
+        const user = await storage.getUserByEmail(email);
+        if (!user) return { email, status: "not_found" as const };
+        const existing = await storage.getLeagueMemberByEmail(leagueId, email);
+        if (existing) return { email, status: "already_member" as const };
+        await storage.addMemberToLeague(leagueId, user.id);
+        return { email, status: "added" as const, username: user.firstName || user.email };
+      }));
+
+      res.json({ results });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   app.patch("/api/leagues/:id/settings", isAuthenticated, async (req, res) => {
     try {
       const leagueId = Number(req.params.id);

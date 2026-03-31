@@ -63,6 +63,8 @@ export interface IStorage {
   createImportedParlay(userId: string, parlay: InsertParlay, legs: ImportParlayLeg[], batchId: number, status: string): Promise<Parlay>;
   getLeagueImportHistory(leagueId: number): Promise<ImportBatch[]>;
   getLeagueMemberByEmail(leagueId: number, email: string): Promise<LeagueMember | null>;
+  getUserByEmail(email: string): Promise<typeof users.$inferSelect | null>;
+  addMemberToLeague(leagueId: number, userId: string): Promise<LeagueMember>;
 
   // Demo flags
   setUserDemoFlag(userId: string, isDemo: boolean): Promise<void>;
@@ -562,6 +564,21 @@ export class DatabaseStorage implements IStorage {
     .where(and(eq(leagueMembers.leagueId, leagueId), eq(users.email, email.toLowerCase())));
     
     return result.length > 0 ? result[0].member : null;
+  }
+
+  async getUserByEmail(email: string): Promise<typeof users.$inferSelect | null> {
+    const [user] = await db.select().from(users).where(eq(users.email, email.toLowerCase()));
+    return user || null;
+  }
+
+  async addMemberToLeague(leagueId: number, userId: string): Promise<LeagueMember> {
+    const existing = await db.select().from(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+    if (existing.length > 0) return existing[0];
+    const [member] = await db.insert(leagueMembers)
+      .values({ leagueId, userId, role: 'member' })
+      .returning();
+    return member;
   }
 
   async getLeagueImportHistory(leagueId: number): Promise<ImportBatch[]> {
