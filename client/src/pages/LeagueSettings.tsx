@@ -48,7 +48,6 @@ const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: string; desc
   // Member management
   { key: "approveMemberInvites", label: "Approve Member Invites", description: "Can approve pending invite requests submitted by regular members", group: "Member Management" },
   // Data & admin
-  { key: "importHistory", label: "Import History", description: "Can import historical parlay data via CSV", group: "Data & Admin" },
   { key: "markLeagueDemo", label: "Mark League as Demo", description: "Can toggle the league's demo/QA flag", group: "Data & Admin" },
 ];
 

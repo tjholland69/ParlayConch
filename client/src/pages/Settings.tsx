@@ -393,7 +393,6 @@ export default function Settings() {
                             { label: "Unlock Weekly Parlay", desc: "Unlock a previously locked parlay to re-open submissions", icon: "✓" },
                             { label: "Remove a Member's Pick", desc: "Clear an individual pick from another member's parlay", icon: "✓" },
                             { label: "Approve Member Invites", desc: "Approve pending invite requests from regular members", icon: "✓" },
-                            { label: "Import History", desc: "Import historical parlay data via CSV", icon: "✓" },
                             { label: "Mark League as Demo", desc: "Toggle the league's demo / QA flag", icon: "✓" },
                           ].map(({ label, desc, icon }) => (
                             <div key={label} className="flex items-start gap-3 py-2 border-b border-white/5 last:border-0">
@@ -415,6 +414,7 @@ export default function Settings() {
                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Admin-Only — never delegatable</p>
                         <div className="space-y-2">
                           {[
+                            { label: "Backload Historical Data", desc: "Import historical parlay records via CSV — restricted to Parlay Maestro only" },
                             { label: "Suspend Members", desc: "Remove or suspend a member from the league temporarily or permanently" },
                             { label: "Set Parlay Lieutenant", desc: "Promote or demote members to/from the Parlay Lieutenant role" },
                           ].map(({ label, desc }) => (
@@ -479,7 +479,6 @@ export default function Settings() {
                           { key: "unlockParlay", label: "Unlock Weekly Parlay" },
                           { key: "unselectUserPick", label: "Remove a Member's Pick" },
                           { key: "approveMemberInvites", label: "Approve Member Invites" },
-                          { key: "importHistory", label: "Import History" },
                           { key: "markLeagueDemo", label: "Mark League as Demo" },
                         ];
                         const granted = PERM_DISPLAY.filter(p => lp?.[p.key]);
