@@ -167,6 +167,23 @@ The app supports tagging records as demo/QA data to distinguish test entries fro
 - Schema: `users.is_demo` (boolean) and `leagues.is_demo` (boolean) columns
 - API: `PATCH /api/users/me/demo` (self-service) and `PATCH /api/leagues/:id/demo` (league admin only)
 
+## Import History (Backloading Data)
+
+### Access Control
+- Restricted exclusively to the **Parlay Maestro** (league admin) — not configurable for Parlay Lieutenants
+- The "Import History" button in the league header is only visible to admins
+- The backend `POST /api/leagues/:leagueId/import` route enforces admin-only via `isLeagueAdmin` check
+
+### Instructions Dialog (First-Time Experience)
+- When the Parlay Maestro clicks "Import History", an instructions dialog appears first (unless opted out)
+- The dialog covers: required/optional CSV columns with descriptions and examples, tips, and a CSV template download
+- A "Don't show this again" checkbox lets the user opt out of the instructions for future sessions
+- The opt-out preference is stored in `users.settings.skipImportInstructions` (JSONB field)
+- On next click, if `skipImportInstructions` is `true`, the import dialog opens directly, skipping instructions
+
+### CSV Format
+Each row represents one parlay leg. Required columns: `week_id`, `member_email`, `game_id`, `pick`. Optional: `bet_type`, `line`, `result`, `status`.
+
 ## External Dependencies
 
 ### Database
