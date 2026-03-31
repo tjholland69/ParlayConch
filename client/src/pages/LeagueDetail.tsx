@@ -15,8 +15,10 @@ import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
+import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { EditParlayDialog } from "@/components/EditParlayDialog";
 import { Link } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 import type { Game, ParlayWithLegs } from "@shared/schema";
 
 type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
@@ -24,6 +26,7 @@ type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string 
 export default function LeagueDetail() {
   const [, params] = useRoute("/leagues/:id");
   const leagueId = Number(params?.id);
+  const { user } = useAuth();
   
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
@@ -51,6 +54,7 @@ export default function LeagueDetail() {
   const unlockParlay = useUnlockWeekParlay(leagueId, selectedWeekId || 0);
 
   const [selectedLegs, setSelectedLegs] = useState<ParlayLeg[]>([]);
+  const [importInstructionsOpen, setImportInstructionsOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [editParlayOpen, setEditParlayOpen] = useState(false);
   const [selectedParlay, setSelectedParlay] = useState<ParlayWithLegs | null>(null);
@@ -152,9 +156,16 @@ export default function LeagueDetail() {
           <div className="flex items-center gap-2 flex-wrap">
             {league.isAdmin && (
               <>
-                <Button 
-                  variant="outline" 
-                  onClick={() => setImportModalOpen(true)}
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    const skip = (user?.settings as any)?.skipImportInstructions;
+                    if (skip) {
+                      setImportModalOpen(true);
+                    } else {
+                      setImportInstructionsOpen(true);
+                    }
+                  }}
                   data-testid="button-import-history"
                 >
                   <Upload className="w-4 h-4 mr-2" />
@@ -871,6 +882,11 @@ export default function LeagueDetail() {
       </Dialog>
 
       {/* Modals */}
+      <ImportInstructionsDialog
+        open={importInstructionsOpen}
+        onOpenChange={setImportInstructionsOpen}
+        onContinue={() => setImportModalOpen(true)}
+      />
       <ImportHistoryModal 
         open={importModalOpen} 
         onOpenChange={setImportModalOpen} 
