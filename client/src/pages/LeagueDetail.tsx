@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star } from "lucide-react";
+import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
@@ -788,62 +788,46 @@ export default function LeagueDetail() {
             /* Results view */
             <div className="space-y-3 py-2">
               {inviteResults.map((r) => {
-                const isNotFound = r.status === 'not_found';
-                const mailtoBody = encodeURIComponent(
-                  `Hi there!\n\nYou've been invited to join "${league?.name}" on Parlay.Club — where we track our NFL parlay picks together.\n\nHere's how to join in 2 easy steps:\n1. Sign up at: ${window.location.origin}\n2. Enter the invite code: ${league?.inviteCode}\n\nSee you inside!`
-                );
-                const mailtoSubject = encodeURIComponent(`You're invited to join ${league?.name} on Parlay.Club`);
-                const mailtoHref = `mailto:${r.email}?subject=${mailtoSubject}&body=${mailtoBody}`;
+                const isInvited = r.status === 'invited';
+                const isAdded = r.status === 'added';
+                const isMember = r.status === 'already_member';
 
                 return (
-                  <div key={r.email} className={cn("p-3 rounded-lg border", isNotFound ? "bg-orange-500/5 border-orange-500/20" : "bg-white/5 border-white/5")}>
+                  <div key={r.email} className={cn(
+                    "p-3 rounded-lg border",
+                    isInvited ? "bg-blue-500/5 border-blue-500/20" :
+                    isAdded ? "bg-green-500/5 border-green-500/20" :
+                    "bg-white/5 border-white/5"
+                  )}>
                     <div className="flex items-center gap-3">
                       <div className={cn("w-6 h-6 rounded-full flex items-center justify-center shrink-0",
-                        r.status === 'added' ? "bg-green-500/20" : r.status === 'already_member' ? "bg-yellow-500/20" : "bg-orange-500/20"
+                        isAdded ? "bg-green-500/20" :
+                        isMember ? "bg-yellow-500/20" :
+                        "bg-blue-500/20"
                       )}>
-                        {r.status === 'added' ? <Check className="w-3.5 h-3.5 text-green-400" /> :
-                         r.status === 'already_member' ? <Users className="w-3.5 h-3.5 text-yellow-400" /> :
-                         <X className="w-3.5 h-3.5 text-orange-400" />}
+                        {isAdded ? <Check className="w-3.5 h-3.5 text-green-400" /> :
+                         isMember ? <Users className="w-3.5 h-3.5 text-yellow-400" /> :
+                         <Mail className="w-3.5 h-3.5 text-blue-400" />}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium truncate">{r.email}</p>
                         <p className="text-xs text-muted-foreground">
-                          {r.status === 'added' ? `Added as ${r.username}` :
-                           r.status === 'already_member' ? 'Already a member' :
-                           'No Parlay.Club account found'}
+                          {isAdded ? `Added to league as ${r.username}` :
+                           isMember ? 'Already a member' :
+                           'Invite email sent — they\'ll get instructions to join'}
                         </p>
                       </div>
                     </div>
-                    {isNotFound && (
-                      <div className="mt-2 pl-9">
-                        <p className="text-xs text-muted-foreground mb-1.5">
-                          Send them a personal email invite with your league code so they can sign up and join.
-                        </p>
-                        <a href={mailtoHref} target="_blank" rel="noreferrer">
-                          <Button size="sm" variant="outline" className="h-7 text-xs border-orange-500/30 text-orange-400 hover:text-orange-300 hover:border-orange-400/50" data-testid={`button-email-invite-${r.email}`}>
-                            <UserPlus className="w-3 h-3 mr-1" />
-                            Send Email Invite
-                          </Button>
-                        </a>
-                      </div>
-                    )}
                   </div>
                 );
               })}
 
-              {/* Bulk action if multiple not-found */}
-              {inviteResults.filter(r => r.status === 'not_found').length > 1 && (
-                <div className="pt-1">
-                  <a
-                    href={`mailto:${inviteResults.filter(r => r.status === 'not_found').map(r => r.email).join(',')}?subject=${encodeURIComponent(`You're invited to join ${league?.name} on Parlay.Club`)}&body=${encodeURIComponent(`Hi everyone!\n\nYou've been invited to join "${league?.name}" on Parlay.Club — where we track our NFL parlay picks together.\n\nHere's how to join in 2 easy steps:\n1. Sign up at: ${window.location.origin}\n2. Enter the invite code: ${league?.inviteCode}\n\nSee you inside!`)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <Button variant="outline" size="sm" className="w-full border-dashed border-orange-500/30 text-orange-400 hover:text-orange-300" data-testid="button-email-invite-all">
-                      <UserPlus className="w-3.5 h-3.5 mr-1.5" />
-                      Send Email Invite to All {inviteResults.filter(r => r.status === 'not_found').length} Not Found
-                    </Button>
-                  </a>
+              {/* Summary note if any invites were sent to non-members */}
+              {inviteResults.some(r => r.status === 'invited') && (
+                <div className="pt-1 px-1">
+                  <p className="text-xs text-muted-foreground">
+                    Invite emails were sent automatically from <span className="text-foreground font-medium">invites@parlayconch.com</span> with your league's join code.
+                  </p>
                 </div>
               )}
             </div>

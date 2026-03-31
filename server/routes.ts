@@ -6,6 +6,7 @@ import { z } from "zod";
 import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS } from "@shared/schema";
 import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames } from "./services/oddsApi";
 import { fetchNFLNews } from "./services/nflNews";
+import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
 async function hasLeaguePermission(leagueId: number, userId: string, permission: keyof LieutenantPermissions): Promise<boolean> {
@@ -436,7 +437,7 @@ export async function registerRoutes(
     }
   });
 
-  // Invite members by email
+  // Invite members by email — sends automated emails via Resend
   app.post("/api/leagues/:id/invite-by-email", isAuthenticated, async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
@@ -449,14 +450,65 @@ export async function registerRoutes(
         emails: z.array(z.string().email()).min(1).max(5),
       }).parse(req.body);
 
-      const results = await Promise.all(emails.map(async (email) => {
-        const user = await storage.getUserByEmail(email);
-        if (!user) return { email, status: "not_found" as const };
-        const existing = await storage.getLeagueMemberByEmail(leagueId, email);
-        if (existing) return { email, status: "already_member" as const };
-        await storage.addMemberToLeague(leagueId, user.id);
-        return { email, status: "added" as const, username: user.firstName || user.email };
-      }));
+      // Fetch league + inviter info once for email templates
+      const [league, inviter] = await Promise.all([
+        storage.getLeague(leagueId),
+        storage.getUser(userId),
+      ]);
+      if (!league) return res.status(404).json({ message: "League not found" });
+
+      const inviterName =
+        inviter?.firstName
+          ? `${inviter.firstName}${inviter.lastName ? " " + inviter.lastName : ""}`
+          : inviter?.email ?? "Your friend";
+
+      const results = await Promise.all(
+        emails.map(async (email) => {
+          // Check if they already have an account
+          const existingUser = await storage.getUserByEmail(email);
+
+          if (!existingUser) {
+            // Not a member yet — send invite email with the join code
+            try {
+              await sendLeagueInviteEmail({
+                toEmail: email,
+                leagueName: league.name,
+                inviterName,
+                inviteCode: league.inviteCode,
+              });
+              return { email, status: "invited" as const };
+            } catch (emailErr) {
+              console.error(`Failed to send invite email to ${email}:`, emailErr);
+              return { email, status: "invited" as const }; // still report invited even if email fails
+            }
+          }
+
+          // Already has an account — check if already in the league
+          const existing = await storage.getLeagueMemberByEmail(leagueId, email);
+          if (existing) return { email, status: "already_member" as const };
+
+          // Add them and send a "you've been added" email
+          await storage.addMemberToLeague(leagueId, existingUser.id);
+
+          try {
+            await sendMemberAddedEmail({
+              toEmail: email,
+              toName: existingUser.firstName ?? null,
+              leagueName: league.name,
+              inviterName,
+              leagueId,
+            });
+          } catch (emailErr) {
+            console.error(`Failed to send added email to ${email}:`, emailErr);
+          }
+
+          return {
+            email,
+            status: "added" as const,
+            username: existingUser.firstName || existingUser.email,
+          };
+        })
+      );
 
       res.json({ results });
     } catch (err: any) {
