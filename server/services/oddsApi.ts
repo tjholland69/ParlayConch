@@ -188,3 +188,70 @@ export async function getApiUsage(): Promise<{ remaining: number; used: number }
 
   return { remaining, used };
 }
+
+interface ScoreGame {
+  id: string;
+  sport_key: string;
+  commence_time: string;
+  completed: boolean;
+  home_team: string;
+  away_team: string;
+  scores: { name: string; score: string }[] | null;
+}
+
+/**
+ * Fetch completed game scores from The Odds API and update game records in the DB.
+ * The free plan covers the last 3 days. Pass daysFrom to request older data (paid plans only).
+ *
+ * Returns { updated, notFound } counts.
+ */
+export async function syncGameScores(
+  weekId: number,
+  daysFrom: number = 3
+): Promise<{ updated: number; notFound: number }> {
+  if (!ODDS_API_KEY) {
+    throw new Error("ODDS_API_KEY not configured");
+  }
+
+  const url = `${BASE_URL}/sports/${SPORT}/scores?apiKey=${ODDS_API_KEY}&daysFrom=${daysFrom}`;
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Scores API error: ${response.status} - ${text}`);
+  }
+
+  const scoreGames: ScoreGame[] = await response.json();
+
+  let updated = 0;
+  let notFound = 0;
+
+  const { storage } = await import("../storage");
+
+  for (const sg of scoreGames) {
+    if (!sg.completed || !sg.scores) continue;
+
+    const homeTeam = shortenTeamName(sg.home_team);
+    const awayTeam = shortenTeamName(sg.away_team);
+
+    const homeScoreEntry = sg.scores.find(s => s.name === sg.home_team);
+    const awayScoreEntry = sg.scores.find(s => s.name === sg.away_team);
+
+    if (!homeScoreEntry || !awayScoreEntry) continue;
+
+    const homeScore = parseInt(homeScoreEntry.score, 10);
+    const awayScore = parseInt(awayScoreEntry.score, 10);
+    if (isNaN(homeScore) || isNaN(awayScore)) continue;
+
+    const game = await storage.findGameByTeams(weekId, homeTeam, awayTeam);
+    if (!game) {
+      notFound++;
+      continue;
+    }
+
+    await storage.updateGameScores(game.id, homeScore, awayScore, true);
+    updated++;
+  }
+
+  return { updated, notFound };
+}
