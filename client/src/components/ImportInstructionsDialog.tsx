@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { FileSpreadsheet, Download, ChevronRight, Info } from "lucide-react";
+import { FileSpreadsheet, Download, ChevronRight, Info, Sparkles } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -28,17 +28,24 @@ const FIELDS = [
     example: "player@example.com",
   },
   {
-    column: "game_id",
+    column: "home_team",
     required: true,
-    type: "number",
-    description: "The numeric ID of the game being bet on (one row per leg of the parlay).",
-    example: "101",
+    type: "text",
+    description: "The home team's name or short name (e.g. \"Chiefs\" or \"Kansas City Chiefs\"). Use this or game_id.",
+    example: "Chiefs",
+  },
+  {
+    column: "away_team",
+    required: true,
+    type: "text",
+    description: "The away team's name or short name (e.g. \"Bills\" or \"Buffalo Bills\"). Use this or game_id.",
+    example: "Bills",
   },
   {
     column: "pick",
     required: true,
     type: "text",
-    description: "Which side the member picked. Use \"home\" or \"away\" for spread/moneyline, or \"over\"/\"under\" for totals.",
+    description: "Which side the member picked: \"home\" or \"away\" for spread/moneyline, or \"over\"/\"under\" for totals.",
     example: "home",
   },
   {
@@ -52,14 +59,14 @@ const FIELDS = [
     column: "line",
     required: false,
     type: "text",
-    description: "The line or odds at the time the bet was placed.",
+    description: "The line or odds at the time the bet was placed. Leave blank — it will be auto-filled from game data.",
     example: "-3.5",
   },
   {
     column: "result",
     required: false,
     type: "text",
-    description: "The outcome of the leg. Accepts: win, loss, push. Leave blank for pending.",
+    description: "The outcome of the leg. Accepts: win, loss, push. Leave blank — it will be auto-calculated from game scores.",
     example: "win",
   },
   {
@@ -69,20 +76,27 @@ const FIELDS = [
     description: "The overall parlay status. Accepts: pending, approved, rejected. Defaults to \"approved\" if omitted.",
     example: "approved",
   },
+  {
+    column: "game_id",
+    required: false,
+    type: "number",
+    description: "Alternative to home_team + away_team. Use the internal game ID if you have it (advanced / power-user).",
+    example: "101",
+  },
 ];
 
 const TEMPLATE_ROWS = [
-  "1,player@example.com,101,spread,home,-3.5,win,approved",
-  "1,player@example.com,102,spread,away,+7,loss,approved",
-  "1,player@example.com,103,moneyline,home,,win,approved",
-  "2,other@example.com,104,spread,away,+3,,pending",
+  "1,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved",
+  "1,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved",
+  "2,other@example.com,Eagles,Cowboys,spread,away,+3,,pending",
+  "3,fan@example.com,49ers,Seahawks,over,over,47.5,,approved",
 ];
 
 export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Props) {
   const [dontShow, setDontShow] = useState(false);
 
   const downloadTemplate = () => {
-    const header = "week_id,member_email,game_id,bet_type,pick,line,result,status";
+    const header = "week_id,member_email,home_team,away_team,bet_type,pick,line,result,status";
     const content = [header, ...TEMPLATE_ROWS].join("\n");
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -124,6 +138,17 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
         </DialogHeader>
 
         <div className="space-y-5 py-2">
+          {/* Auto-enrichment callout */}
+          <div className="flex items-start gap-3 rounded-xl bg-primary/10 border border-primary/20 px-4 py-3">
+            <Sparkles className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+            <div className="text-sm">
+              <p className="font-semibold text-foreground mb-0.5">Results & odds auto-filled</p>
+              <p className="text-muted-foreground leading-snug">
+                You don't need to manually enter <code className="font-mono text-xs">line</code> or <code className="font-mono text-xs">result</code>. After import, the system automatically calculates win/loss from game scores and fills in approximate odds from the game record.
+              </p>
+            </div>
+          </div>
+
           {/* Download template */}
           <Button
             variant="outline"
@@ -180,8 +205,10 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
             <p className="font-medium text-foreground text-xs uppercase tracking-wider mb-2">Tips</p>
             <p>• One row per parlay leg. Multiple legs for the same member + week are automatically combined into one parlay.</p>
             <p>• The member's email must match their Parlay.Club account email exactly.</p>
-            <p>• <code className="font-mono text-xs">game_id</code> must match a game that exists in the system for that week.</p>
-            <p>• Leave <code className="font-mono text-xs">result</code> and <code className="font-mono text-xs">status</code> blank to import as pending.</p>
+            <p>• Use either team name shorthand ("Chiefs") or the full name ("Kansas City Chiefs") — both work.</p>
+            <p>• <code className="font-mono text-xs">home_team</code> + <code className="font-mono text-xs">away_team</code> are matched to games in your league. If no match is found, a placeholder game is created.</p>
+            <p>• Leave <code className="font-mono text-xs">result</code> and <code className="font-mono text-xs">line</code> blank — they'll be auto-filled from game data after import.</p>
+            <p>• Leave <code className="font-mono text-xs">status</code> blank to import as "approved".</p>
           </div>
 
           {/* Opt-out */}

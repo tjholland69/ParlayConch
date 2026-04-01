@@ -143,8 +143,9 @@ export const parlayLegs = pgTable("parlay_legs", {
   gameId: integer("game_id").notNull(),
   betType: text("bet_type").notNull(), // 'spread', 'moneyline', 'over', 'under'
   pick: text("pick").notNull(), // 'home', 'away', 'over', 'under'
-  line: text("line"), // The line at time of pick
+  line: text("line"), // The line at time of pick (approximate if auto-filled)
   result: text("result"), // 'win', 'loss', 'push', null
+  oddsEnriched: boolean("odds_enriched").default(false), // true once odds/result have been auto-resolved
 });
 
 // Parlay week locks — tracks when a Parlay Maestro locks a week's submissions

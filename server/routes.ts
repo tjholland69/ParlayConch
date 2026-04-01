@@ -4,9 +4,10 @@ import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { z } from "zod";
 import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS } from "@shared/schema";
-import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames } from "./services/oddsApi";
+import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { fetchNFLNews } from "./services/nflNews";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
+import { enrichLeagueParlayLegs } from "./services/enrichment";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
 async function hasLeaguePermission(leagueId: number, userId: string, permission: keyof LieutenantPermissions): Promise<boolean> {
@@ -368,39 +369,126 @@ export async function registerRoutes(
       });
 
       let imported = 0;
+      const skippedRows: string[] = [];
+
       for (const record of records) {
         try {
           const { weekId, memberEmail, status, legs } = record;
           
           if (!weekId || !memberEmail || !legs || !Array.isArray(legs) || legs.length === 0) {
+            skippedRows.push(`${memberEmail || "?"} week ${weekId}: missing required fields`);
             continue;
           }
 
           const member = await storage.getLeagueMemberByEmail(leagueId, memberEmail);
-          if (!member) continue;
+          if (!member) {
+            skippedRows.push(`${memberEmail}: not a member of this league`);
+            continue;
+          }
 
-          const parlayLegs = legs.map((leg: any) => ({
-            gameId: leg.gameId,
-            betType: leg.betType || 'spread',
-            pick: leg.pick,
-            line: leg.line || null,
-            result: leg.result || null
-          }));
+          // Resolve legs — support both gameId (old) and homeTeam+awayTeam (new)
+          const resolvedLegs: { gameId: number; betType: string; pick: string; line?: string; result?: string }[] = [];
+          for (const leg of legs as any[]) {
+            let gameId: number | null = leg.gameId ?? null;
+
+            if (!gameId && leg.homeTeam && leg.awayTeam) {
+              const game = await storage.upsertGameForImport(weekId, leg.homeTeam, leg.awayTeam);
+              gameId = game.id;
+            }
+
+            if (!gameId) {
+              skippedRows.push(`${memberEmail} week ${weekId}: could not resolve game for leg`);
+              continue;
+            }
+
+            resolvedLegs.push({
+              gameId,
+              betType: leg.betType || 'spread',
+              pick: leg.pick,
+              line: leg.line || null,
+              result: leg.result || null,
+            });
+          }
+
+          if (resolvedLegs.length === 0) continue;
 
           await storage.createImportedParlay(
             member.userId,
             { leagueId, weekId },
-            parlayLegs,
+            resolvedLegs as any,
             batch.id,
             status || 'approved'
           );
           imported++;
         } catch (e) {
           console.error("Import record error:", e);
+          skippedRows.push(`Error processing a record: ${(e as Error).message}`);
         }
       }
 
-      res.json({ message: `Imported ${imported} of ${records.length} records`, batchId: batch.id });
+      // Trigger enrichment in the background (don't block the response)
+      enrichLeagueParlayLegs(leagueId).then(result => {
+        console.log(`[Enrichment] league ${leagueId}: enriched=${result.enriched} resultsFilled=${result.resultsFilled} linesFilled=${result.linesFilled} skipped=${result.skipped}`);
+      }).catch(err => {
+        console.error("[Enrichment] background error:", err);
+      });
+
+      res.json({
+        message: `Imported ${imported} of ${records.length} records`,
+        batchId: batch.id,
+        skipped: skippedRows.length,
+        skippedDetails: skippedRows.slice(0, 10),
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ===== MANUAL ENRICHMENT (Admin only) =====
+  app.post("/api/leagues/:leagueId/enrich", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const userId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Parlay Maestro access required" });
+      }
+
+      const result = await enrichLeagueParlayLegs(leagueId);
+      res.json({
+        message: `Enrichment complete: ${result.enriched} legs processed, ${result.resultsFilled} results filled, ${result.linesFilled} lines filled`,
+        ...result,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ===== SYNC GAME SCORES (Admin only) =====
+  app.post("/api/leagues/:leagueId/sync-scores", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const userId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Parlay Maestro access required" });
+      }
+
+      const { weekId, daysFrom = 3 } = req.body;
+      if (!weekId) {
+        return res.status(400).json({ message: "weekId is required" });
+      }
+
+      const scoreResult = await syncGameScores(Number(weekId), Number(daysFrom));
+      const enrichResult = await enrichLeagueParlayLegs(leagueId);
+
+      res.json({
+        message: `Scores synced: ${scoreResult.updated} games updated. Enrichment: ${enrichResult.enriched} legs processed, ${enrichResult.resultsFilled} results filled.`,
+        scores: scoreResult,
+        enrichment: enrichResult,
+      });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
