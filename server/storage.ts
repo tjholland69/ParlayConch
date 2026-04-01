@@ -86,6 +86,14 @@ export interface IStorage {
   getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus>;
   lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock>;
   unlockWeekParlay(leagueId: number, weekId: number): Promise<void>;
+
+  // Enrichment
+  findGameByTeams(weekId: number, homeTeam: string, awayTeam: string): Promise<Game | null>;
+  upsertGameForImport(weekId: number, homeTeam: string, awayTeam: string, gameDate?: Date): Promise<Game>;
+  getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game })[]>;
+  enrichParlayLeg(legId: number, updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
+  updateGameScores(gameId: number, homeScore: number, awayScore: number, isFinished: boolean, winner?: string): Promise<void>;
+  getUser(userId: string): Promise<typeof users.$inferSelect | null>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -688,6 +696,92 @@ export class DatabaseStorage implements IStorage {
   async unlockWeekParlay(leagueId: number, weekId: number): Promise<void> {
     await db.delete(leagueWeekLocks)
       .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
+  }
+
+  // ─── Enrichment ────────────────────────────────────────────────────────────
+
+  async getUser(userId: string): Promise<typeof users.$inferSelect | null> {
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    return user ?? null;
+  }
+
+  async findGameByTeams(weekId: number, homeTeam: string, awayTeam: string): Promise<Game | null> {
+    const allGames = await db.select().from(games).where(eq(games.weekId, weekId));
+    const normalize = (s: string) => s.toLowerCase().trim();
+    const h = normalize(homeTeam);
+    const a = normalize(awayTeam);
+
+    // Exact match first
+    const exact = allGames.find(
+      g => normalize(g.homeTeam) === h && normalize(g.awayTeam) === a
+    );
+    if (exact) return exact;
+
+    // Partial match — e.g. "Chiefs" matches "Kansas City Chiefs"
+    const partial = allGames.find(
+      g =>
+        (normalize(g.homeTeam).includes(h) || h.includes(normalize(g.homeTeam))) &&
+        (normalize(g.awayTeam).includes(a) || a.includes(normalize(g.awayTeam)))
+    );
+    return partial ?? null;
+  }
+
+  async upsertGameForImport(weekId: number, homeTeam: string, awayTeam: string, gameDate?: Date): Promise<Game> {
+    const existing = await this.findGameByTeams(weekId, homeTeam, awayTeam);
+    if (existing) return existing;
+
+    const [created] = await db.insert(games).values({
+      weekId,
+      homeTeam: homeTeam.trim(),
+      awayTeam: awayTeam.trim(),
+      gameTime: gameDate ?? new Date(),
+      isFinished: false,
+    }).returning();
+    return created;
+  }
+
+  async getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game })[]> {
+    // Get legs where oddsEnriched = false, joining on game
+    const rows = await db.select().from(parlayLegs);
+    const unenriched = rows.filter(l => !l.oddsEnriched);
+
+    const results: (ParlayLeg & { game: Game })[] = [];
+    for (const leg of unenriched) {
+      const [game] = await db.select().from(games).where(eq(games.id, leg.gameId));
+      if (!game) continue;
+
+      if (leagueId !== undefined) {
+        // Filter by league — need to check parlay -> league
+        const [parlay] = await db.select().from(parlays).where(eq(parlays.id, leg.parlayId));
+        if (!parlay || parlay.leagueId !== leagueId) continue;
+      }
+
+      results.push({ ...leg, game });
+    }
+    return results;
+  }
+
+  async enrichParlayLeg(
+    legId: number,
+    updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }
+  ): Promise<void> {
+    const set: Record<string, unknown> = { oddsEnriched: updates.oddsEnriched };
+    if (updates.result !== undefined) set.result = updates.result;
+    if (updates.line !== undefined) set.line = updates.line;
+    await db.update(parlayLegs).set(set as any).where(eq(parlayLegs.id, legId));
+  }
+
+  async updateGameScores(
+    gameId: number,
+    homeScore: number,
+    awayScore: number,
+    isFinished: boolean,
+    winner?: string
+  ): Promise<void> {
+    const w = winner ?? (homeScore > awayScore ? "home" : awayScore > homeScore ? "away" : "tie");
+    await db.update(games)
+      .set({ homeScore, awayScore, isFinished, winner: w })
+      .where(eq(games.id, gameId));
   }
 }
 
