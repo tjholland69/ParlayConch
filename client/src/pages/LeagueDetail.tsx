@@ -194,7 +194,7 @@ export default function LeagueDetail() {
               data-testid="button-leave-league"
             >
               <LogOut className="w-4 h-4 mr-2" />
-              Leave League
+              Leave League 😢
             </Button>
             <Select value={selectedWeekId?.toString()} onValueChange={(v) => setSelectedWeekId(Number(v))}>
               <SelectTrigger className="w-48 bg-background border-white/10">
