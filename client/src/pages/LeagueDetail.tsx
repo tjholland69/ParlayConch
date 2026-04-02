@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { useRoute } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail } from "@/hooks/use-bets";
+import { useRoute, useLocation } from "wouter";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail } from "lucide-react";
+import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
@@ -66,6 +66,14 @@ export default function LeagueDetail() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmails, setInviteEmails] = useState<string[]>(['']);
   const [inviteResults, setInviteResults] = useState<{ email: string; status: string; username?: string }[] | null>(null);
+
+  // Leave league state
+  const [, navigate] = useLocation();
+  const leaveLeague = useLeaveLeague(leagueId);
+  const transferAndLeave = useTransferAndLeave(leagueId);
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  const [showTransferDialog, setShowTransferDialog] = useState(false);
+  const [transferTargetId, setTransferTargetId] = useState<string>("");
 
   const getLineForBet = (game: Game, betType: string, pick: string): string | undefined => {
     if (betType === 'spread') {
@@ -179,6 +187,15 @@ export default function LeagueDetail() {
                 </Link>
               </>
             )}
+            <Button
+              variant="ghost"
+              className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+              onClick={() => league.isAdmin ? setShowTransferDialog(true) : setShowLeaveConfirm(true)}
+              data-testid="button-leave-league"
+            >
+              <LogOut className="w-4 h-4 mr-2" />
+              Leave League
+            </Button>
             <Select value={selectedWeekId?.toString()} onValueChange={(v) => setSelectedWeekId(Number(v))}>
               <SelectTrigger className="w-48 bg-background border-white/10">
                 <Calendar className="w-4 h-4 text-primary mr-2" />
@@ -959,6 +976,117 @@ export default function LeagueDetail() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Leave League — confirmation for regular members / lieutenants */}
+      <AlertDialog open={showLeaveConfirm} onOpenChange={setShowLeaveConfirm}>
+        <AlertDialogContent data-testid="dialog-leave-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <LogOut className="w-5 h-5 text-destructive" />
+              Leave {league.name}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              You'll be removed from this league immediately. You can rejoin later using the league's invite code, but your history will remain intact.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-cancel-leave">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+              onClick={() => {
+                leaveLeague.mutate(undefined, {
+                  onSuccess: () => navigate("/leagues"),
+                });
+              }}
+              disabled={leaveLeague.isPending}
+              data-testid="button-confirm-leave"
+            >
+              {leaveLeague.isPending ? "Leaving…" : "Leave League"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Transfer & Leave — Parlay Maestro must pick a successor */}
+      <Dialog open={showTransferDialog} onOpenChange={(open) => { setShowTransferDialog(open); if (!open) setTransferTargetId(""); }}>
+        <DialogContent className="sm:max-w-md" data-testid="dialog-transfer-admin">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Crown className="w-5 h-5 text-primary" />
+              Transfer Parlay Maestro &amp; Leave
+            </DialogTitle>
+            <DialogDescription>
+              As the Parlay Maestro, you must hand the role to another member before you can leave. Lieutenants are listed first. Current lieutenants will remain in their roles — the new Maestro can adjust the structure at any time.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 max-h-72 overflow-y-auto py-1">
+            {members
+              ?.filter(m => m.userId !== user?.id)
+              .sort((a, b) => {
+                const order = { lieutenant: 0, member: 1, admin: 2 };
+                return (order[a.role as keyof typeof order] ?? 1) - (order[b.role as keyof typeof order] ?? 1);
+              })
+              .map(m => (
+                <button
+                  key={m.userId}
+                  type="button"
+                  onClick={() => setTransferTargetId(m.userId)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-colors",
+                    transferTargetId === m.userId
+                      ? "border-primary bg-primary/10"
+                      : "border-white/5 bg-white/5 hover:bg-white/8"
+                  )}
+                  data-testid={`button-select-successor-${m.userId}`}
+                >
+                  {m.user.profileImageUrl ? (
+                    <img src={m.user.profileImageUrl} alt="" className="w-8 h-8 rounded-full shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm shrink-0">
+                      {(m.user.firstName || m.user.email || '?')[0].toUpperCase()}
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{m.user.firstName || m.user.email}</p>
+                    {m.user.email && <p className="text-xs text-muted-foreground truncate">{m.user.email}</p>}
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {m.role === 'lieutenant' && (
+                      <Badge className="text-[10px] px-1.5 py-0 h-5 bg-blue-500/20 text-blue-400 border-blue-500/30">
+                        <Star className="w-2.5 h-2.5 mr-0.5" />Lieutenant
+                      </Badge>
+                    )}
+                    {m.user.isDemo && (
+                      <Badge className="text-[10px] px-1 py-0 h-4 bg-yellow-500/20 text-yellow-400 border-yellow-500/30">DEMO</Badge>
+                    )}
+                    {transferTargetId === m.userId && (
+                      <Check className="w-4 h-4 text-primary" />
+                    )}
+                  </div>
+                </button>
+              ))}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => { setShowTransferDialog(false); setTransferTargetId(""); }} data-testid="button-cancel-transfer">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!transferTargetId || transferAndLeave.isPending}
+              onClick={() => {
+                transferAndLeave.mutate(transferTargetId, {
+                  onSuccess: () => navigate("/leagues"),
+                });
+              }}
+              data-testid="button-confirm-transfer-leave"
+            >
+              {transferAndLeave.isPending ? "Transferring…" : "Transfer & Leave"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -338,6 +338,50 @@ export function useInviteByEmail(leagueId: number) {
   });
 }
 
+export function useLeaveLeague(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/members/me`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      toast({ title: "You've left the league" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useTransferAndLeave(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (newAdminUserId: string) => {
+      const res = await fetch(`/api/leagues/${leagueId}/transfer-and-leave`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newAdminUserId }),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      toast({ title: "Admin rights transferred. You've left the league." });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
 export function useUpdateLieutenantPermissions(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
