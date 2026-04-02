@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, League } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, League, WeekLockStatus } from "@shared/schema";
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -224,6 +224,399 @@ export function useRejectParlay() {
       toast({ title: "Rejected", description: "Parlay has been rejected." });
     },
     onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useSetUserDemo() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (isDemo: boolean) => {
+      const res = await fetch("/api/users/me/demo", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isDemo }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to update demo status");
+      return res.json();
+    },
+    onSuccess: (_, isDemo) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({
+        title: isDemo ? "Account marked as Demo" : "Demo flag removed",
+        description: isDemo
+          ? "Your account is now flagged as a demo/QA account."
+          : "Your account is now flagged as a live account.",
+      });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useLeagueMembersWithUsers(leagueId: number) {
+  return useQuery({
+    queryKey: ['/api/leagues', leagueId, 'members'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/members`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch members");
+      return res.json() as Promise<import('@shared/schema').LeagueMemberWithUser[]>;
+    },
+    enabled: !!leagueId,
+  });
+}
+
+export function useUpdateLeagueSettings(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (updates: Record<string, unknown>) => {
+      const res = await fetch(`/api/leagues/${leagueId}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      toast({ title: "League settings saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useSetMemberRole(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ userId, role }: { userId: string; role: string }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/members/${userId}/role`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ role }),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      toast({ title: "Role updated" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useInviteByEmail(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (emails: string[]) => {
+      const res = await fetch(`/api/leagues/${leagueId}/invite-by-email`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ emails }),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json() as Promise<{ results: { email: string; status: "added" | "not_found" | "already_member"; username?: string }[] }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useLeaveLeague(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/members/me`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      toast({ title: "You've left the league" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useTransferAndLeave(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (newAdminUserId: string) => {
+      const res = await fetch(`/api/leagues/${leagueId}/transfer-and-leave`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newAdminUserId }),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      toast({ title: "Admin rights transferred. You've left the league." });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useUpdateLieutenantPermissions(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (permissions: import('@shared/schema').LieutenantPermissions) => {
+      const res = await fetch(`/api/leagues/${leagueId}/lieutenant-permissions`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(permissions),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      toast({ title: "Parlay Lieutenant permissions saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useUpdateUserSettings() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (settings: Record<string, unknown>) => {
+      const res = await fetch("/api/users/me/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to save settings");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({ title: "Settings saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useNotifications() {
+  return useQuery<import('@shared/schema').Notification[]>({
+    queryKey: ['/api/notifications'],
+    refetchInterval: 30000,
+  });
+}
+
+export function useMarkNotificationRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/notifications/${id}/read`, {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/notifications'] }),
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/notifications/read-all", {
+        method: "POST", credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/notifications'] }),
+  });
+}
+
+export function useSendLeagueAnnouncement(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { title: string; message?: string }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/notifications/announce`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/notifications'] });
+      toast({ title: "Announcement sent to all league members" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useUpdateLeagueNotificationSettings(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (settings: import('@shared/schema').LeagueNotificationSettings) => {
+      const res = await fetch(`/api/leagues/${leagueId}/notification-settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      toast({ title: "Notification settings saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useUpdateNotificationPreferences() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (prefs: import('@shared/schema').UserNotificationPreferences) => {
+      const res = await fetch("/api/users/me/notification-preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(prefs),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to save preferences");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
+      toast({ title: "Notification preferences saved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useSetLeagueDemo(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (isDemo: boolean) => {
+      const res = await fetch(`/api/leagues/${leagueId}/demo`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isDemo }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to update league demo status");
+      return res.json();
+    },
+    onSuccess: (_, isDemo) => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      toast({
+        title: isDemo ? "League marked as Demo" : "League demo flag removed",
+        description: isDemo
+          ? "This league is now flagged as demo/QA data."
+          : "This league is now flagged as live data.",
+      });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+// Parlay week locking
+export function useWeekLockStatus(leagueId: number, weekId: number) {
+  return useQuery<WeekLockStatus>({
+    queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/lock`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch lock status");
+      return res.json();
+    },
+    enabled: !!leagueId && !!weekId,
+  });
+}
+
+export function useLockWeekParlay(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (hadMissingBets: boolean) => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/lock`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hadMissingBets }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to lock parlay");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'] });
+      toast({ title: "Parlay Locked", description: "No further submissions or edits are allowed for this week." });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useUnlockWeekParlay(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/lock`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || "Failed to unlock parlay");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'] });
+      toast({ title: "Parlay Unlocked", description: "Submissions are now open again for this week." });
+    },
+    onError: (error: Error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     },
   });

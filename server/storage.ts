@@ -1,12 +1,17 @@
 import { db } from "./db";
 import {
-  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches,
+  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
+  players, playerWeekStats,
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
-  type ImportBatch, type InsertImportBatch, type ImportParlayLeg
+  type ImportBatch, type InsertImportBatch, type ImportParlayLeg,
+  type LieutenantPermissions, type LeagueMemberWithUser, DEFAULT_LIEUTENANT_PERMISSIONS,
+  type Notification, type LeagueNotificationSettings,
+  type LeagueWeekLock, type WeekLockStatus,
+  type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
 } from "@shared/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 
 function generateInviteCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -37,7 +42,15 @@ export interface IStorage {
   getUserLeagues(userId: string): Promise<LeagueWithMembers[]>;
   joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null>;
   getLeagueMembers(leagueId: number): Promise<LeagueMember[]>;
+  getLeagueMembersWithUsers(leagueId: number): Promise<LeagueMemberWithUser[]>;
   isLeagueAdmin(leagueId: number, userId: string): Promise<boolean>;
+  isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean>;
+  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay'>>): Promise<League>;
+  updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League>;
+  setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember>;
+  getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]>;
+  removeLeagueMember(leagueId: number, userId: string): Promise<void>;
+  transferLeagueAdmin(leagueId: number, fromUserId: string, toUserId: string): Promise<void>;
 
   // Parlays
   getParlay(id: number): Promise<Parlay | undefined>;
@@ -54,6 +67,45 @@ export interface IStorage {
   createImportedParlay(userId: string, parlay: InsertParlay, legs: ImportParlayLeg[], batchId: number, status: string): Promise<Parlay>;
   getLeagueImportHistory(leagueId: number): Promise<ImportBatch[]>;
   getLeagueMemberByEmail(leagueId: number, email: string): Promise<LeagueMember | null>;
+  getUserByEmail(email: string): Promise<typeof users.$inferSelect | null>;
+  addMemberToLeague(leagueId: number, userId: string): Promise<LeagueMember>;
+
+  // Demo flags
+  setUserDemoFlag(userId: string, isDemo: boolean): Promise<void>;
+  setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void>;
+
+  // User settings
+  updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void>;
+
+  // Notifications
+  getNotifications(userId: string): Promise<Notification[]>;
+  getUnreadNotificationCount(userId: string): Promise<number>;
+  markNotificationRead(id: number, userId: string): Promise<void>;
+  markAllNotificationsRead(userId: string): Promise<void>;
+  createNotification(data: { userId: string; leagueId?: number; type: string; title: string; message?: string }): Promise<Notification>;
+  createLeagueAnnouncement(leagueId: number, title: string, message: string): Promise<void>;
+  updateLeagueNotificationSettings(leagueId: number, settings: LeagueNotificationSettings): Promise<League>;
+
+  // Parlay week locking
+  getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus>;
+  lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock>;
+  unlockWeekParlay(leagueId: number, weekId: number): Promise<void>;
+
+  // Enrichment
+  findGameByTeams(weekId: number, homeTeam: string, awayTeam: string): Promise<Game | null>;
+  upsertGameForImport(weekId: number, homeTeam: string, awayTeam: string, gameDate?: Date): Promise<Game>;
+  getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game })[]>;
+  enrichParlayLeg(legId: number, updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
+  updateGameScores(gameId: number, homeScore: number, awayScore: number, isFinished: boolean, winner?: string): Promise<void>;
+  patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
+  getUser(userId: string): Promise<typeof users.$inferSelect | null>;
+
+  // nflverse / Players
+  getWeekBySeasonAndNumber(season: number, weekNumber: number): Promise<Week | null>;
+  getGamesForSeasonWeek(season: number, weekNumber: number): Promise<Game[]>;
+  upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player>;
+  upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
+  getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -235,11 +287,13 @@ export class DatabaseStorage implements IStorage {
             id: m.user.id,
             firstName: m.user.firstName,
             email: m.user.email,
-            profileImageUrl: m.user.profileImageUrl
+            profileImageUrl: m.user.profileImageUrl,
+            isDemo: m.user.isDemo
           }
         })),
         memberCount: allMembers.length,
-        isAdmin: userMembership?.role === 'admin'
+        isAdmin: userMembership?.role === 'admin',
+        isLieutenant: userMembership?.role === 'lieutenant'
       });
     }
 
@@ -269,6 +323,79 @@ export class DatabaseStorage implements IStorage {
     const [member] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
     return member?.role === 'admin';
+  }
+
+  async isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean> {
+    const [member] = await db.select().from(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+    return member?.role === 'lieutenant';
+  }
+
+  async getLeagueMembersWithUsers(leagueId: number): Promise<LeagueMemberWithUser[]> {
+    const result = await db.select({
+      member: leagueMembers,
+      user: users
+    })
+    .from(leagueMembers)
+    .innerJoin(users, eq(leagueMembers.userId, users.id))
+    .where(eq(leagueMembers.leagueId, leagueId));
+
+    return result.map(r => ({
+      ...r.member,
+      user: {
+        id: r.user.id,
+        firstName: r.user.firstName,
+        email: r.user.email,
+        profileImageUrl: r.user.profileImageUrl,
+        isDemo: r.user.isDemo
+      }
+    }));
+  }
+
+  async getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]> {
+    const all = await this.getLeagueMembersWithUsers(leagueId);
+    return all.filter(m => m.role === 'lieutenant');
+  }
+
+  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay'>>): Promise<League> {
+    const [updated] = await db.update(leagues)
+      .set(updates)
+      .where(eq(leagues.id, leagueId))
+      .returning();
+    return updated;
+  }
+
+  async updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League> {
+    const [updated] = await db.update(leagues)
+      .set({ lieutenantPermissions: permissions })
+      .where(eq(leagues.id, leagueId))
+      .returning();
+    return updated;
+  }
+
+  async setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember> {
+    const [updated] = await db.update(leagueMembers)
+      .set({ role })
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async removeLeagueMember(leagueId: number, userId: string): Promise<void> {
+    await db.delete(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+  }
+
+  async transferLeagueAdmin(leagueId: number, fromUserId: string, toUserId: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Promote the new admin
+      await tx.update(leagueMembers)
+        .set({ role: 'admin' })
+        .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, toUserId)));
+      // Remove the outgoing admin from the league
+      await tx.delete(leagueMembers)
+        .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, fromUserId)));
+    });
   }
 
   // Parlays
@@ -363,7 +490,7 @@ export class DatabaseStorage implements IStorage {
         ...parlay,
         legs: legs.map(l => ({ ...l.leg, game: l.game })),
         week,
-        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl }
+        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo }
       });
     }
 
@@ -476,10 +603,315 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0 ? result[0].member : null;
   }
 
+  async getUserByEmail(email: string): Promise<typeof users.$inferSelect | null> {
+    const [user] = await db.select().from(users).where(eq(users.email, email.toLowerCase()));
+    return user || null;
+  }
+
+  async addMemberToLeague(leagueId: number, userId: string): Promise<LeagueMember> {
+    const existing = await db.select().from(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+    if (existing.length > 0) return existing[0];
+    const [member] = await db.insert(leagueMembers)
+      .values({ leagueId, userId, role: 'member' })
+      .returning();
+    return member;
+  }
+
   async getLeagueImportHistory(leagueId: number): Promise<ImportBatch[]> {
     return await db.select().from(importBatches)
       .where(eq(importBatches.leagueId, leagueId))
       .orderBy(desc(importBatches.uploadedAt));
+  }
+
+  async setUserDemoFlag(userId: string, isDemo: boolean): Promise<void> {
+    await db.update(users).set({ isDemo }).where(eq(users.id, userId));
+  }
+
+  async setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void> {
+    await db.update(leagues).set({ isDemo }).where(eq(leagues.id, leagueId));
+  }
+
+  async updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void> {
+    const [current] = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId));
+    const merged = { ...(current?.settings as Record<string, unknown> || {}), ...settings };
+    await db.update(users).set({ settings: merged }).where(eq(users.id, userId));
+  }
+
+  // Notifications
+  async getNotifications(userId: string): Promise<Notification[]> {
+    return await db.select().from(notifications)
+      .where(eq(notifications.userId, userId))
+      .orderBy(desc(notifications.createdAt));
+  }
+
+  async getUnreadNotificationCount(userId: string): Promise<number> {
+    const rows = await db.select().from(notifications)
+      .where(and(eq(notifications.userId, userId), eq(notifications.isRead, false)));
+    return rows.length;
+  }
+
+  async markNotificationRead(id: number, userId: string): Promise<void> {
+    await db.update(notifications)
+      .set({ isRead: true })
+      .where(and(eq(notifications.id, id), eq(notifications.userId, userId)));
+  }
+
+  async markAllNotificationsRead(userId: string): Promise<void> {
+    await db.update(notifications)
+      .set({ isRead: true })
+      .where(eq(notifications.userId, userId));
+  }
+
+  async createNotification(data: { userId: string; leagueId?: number; type: string; title: string; message?: string }): Promise<Notification> {
+    const [notif] = await db.insert(notifications).values(data).returning();
+    return notif;
+  }
+
+  async createLeagueAnnouncement(leagueId: number, title: string, message: string): Promise<void> {
+    const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
+    for (const member of members) {
+      await db.insert(notifications).values({
+        userId: member.userId,
+        leagueId,
+        type: 'announcement',
+        title,
+        message,
+      });
+    }
+  }
+
+  async updateLeagueNotificationSettings(leagueId: number, settings: LeagueNotificationSettings): Promise<League> {
+    const [updated] = await db.update(leagues)
+      .set({ notificationSettings: settings })
+      .where(eq(leagues.id, leagueId))
+      .returning();
+    return updated;
+  }
+
+  async getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus> {
+    // Get all league members (excluding admin for "submitted" check — all members must submit)
+    const members = await db.select().from(leagueMembers)
+      .where(eq(leagueMembers.leagueId, leagueId));
+    const totalMembers = members.length;
+
+    // Count how many have a parlay for this week
+    const submitted = await db.select().from(parlays)
+      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
+    const submittedCount = submitted.length;
+
+    // Check for existing lock
+    const [lock] = await db.select().from(leagueWeekLocks)
+      .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
+
+    return {
+      isLocked: !!lock,
+      lockedAt: lock?.lockedAt,
+      lockedBy: lock?.lockedBy,
+      hadMissingBets: lock?.hadMissingBets,
+      submittedCount,
+      totalMembers,
+      allSubmitted: submittedCount >= totalMembers && totalMembers > 0,
+    };
+  }
+
+  async lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock> {
+    const [lock] = await db.insert(leagueWeekLocks)
+      .values({ leagueId, weekId, lockedBy: userId, hadMissingBets })
+      .returning();
+    return lock;
+  }
+
+  async unlockWeekParlay(leagueId: number, weekId: number): Promise<void> {
+    await db.delete(leagueWeekLocks)
+      .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
+  }
+
+  // ─── Enrichment ────────────────────────────────────────────────────────────
+
+  async getUser(userId: string): Promise<typeof users.$inferSelect | null> {
+    const [user] = await db.select().from(users).where(eq(users.id, userId));
+    return user ?? null;
+  }
+
+  async findGameByTeams(weekId: number, homeTeam: string, awayTeam: string): Promise<Game | null> {
+    const allGames = await db.select().from(games).where(eq(games.weekId, weekId));
+    const normalize = (s: string) => s.toLowerCase().trim();
+    const h = normalize(homeTeam);
+    const a = normalize(awayTeam);
+
+    // Exact match first
+    const exact = allGames.find(
+      g => normalize(g.homeTeam) === h && normalize(g.awayTeam) === a
+    );
+    if (exact) return exact;
+
+    // Partial match — e.g. "Chiefs" matches "Kansas City Chiefs"
+    const partial = allGames.find(
+      g =>
+        (normalize(g.homeTeam).includes(h) || h.includes(normalize(g.homeTeam))) &&
+        (normalize(g.awayTeam).includes(a) || a.includes(normalize(g.awayTeam)))
+    );
+    return partial ?? null;
+  }
+
+  async upsertGameForImport(weekId: number, homeTeam: string, awayTeam: string, gameDate?: Date): Promise<Game> {
+    const existing = await this.findGameByTeams(weekId, homeTeam, awayTeam);
+    if (existing) return existing;
+
+    const [created] = await db.insert(games).values({
+      weekId,
+      homeTeam: homeTeam.trim(),
+      awayTeam: awayTeam.trim(),
+      gameTime: gameDate ?? new Date(),
+      isFinished: false,
+    }).returning();
+    return created;
+  }
+
+  async getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game })[]> {
+    // Get legs where oddsEnriched = false, joining on game
+    const rows = await db.select().from(parlayLegs);
+    const unenriched = rows.filter(l => !l.oddsEnriched);
+
+    const results: (ParlayLeg & { game: Game })[] = [];
+    for (const leg of unenriched) {
+      const [game] = await db.select().from(games).where(eq(games.id, leg.gameId));
+      if (!game) continue;
+
+      if (leagueId !== undefined) {
+        // Filter by league — need to check parlay -> league
+        const [parlay] = await db.select().from(parlays).where(eq(parlays.id, leg.parlayId));
+        if (!parlay || parlay.leagueId !== leagueId) continue;
+      }
+
+      results.push({ ...leg, game });
+    }
+    return results;
+  }
+
+  async enrichParlayLeg(
+    legId: number,
+    updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }
+  ): Promise<void> {
+    const set: Record<string, unknown> = { oddsEnriched: updates.oddsEnriched };
+    if (updates.result !== undefined) set.result = updates.result;
+    if (updates.line !== undefined) set.line = updates.line;
+    await db.update(parlayLegs).set(set as any).where(eq(parlayLegs.id, legId));
+  }
+
+  async updateGameScores(
+    gameId: number,
+    homeScore: number,
+    awayScore: number,
+    isFinished: boolean,
+    winner?: string
+  ): Promise<void> {
+    const w = winner ?? (homeScore > awayScore ? "home" : awayScore > homeScore ? "away" : "tie");
+    await db.update(games)
+      .set({ homeScore, awayScore, isFinished, winner: w })
+      .where(eq(games.id, gameId));
+  }
+
+  async patchGameOdds(
+    gameId: number,
+    odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }
+  ): Promise<void> {
+    const set: Record<string, unknown> = {};
+    if (odds.spread) set.spread = odds.spread;
+    if (odds.overUnder) set.overUnder = odds.overUnder;
+    if (odds.moneylineHome) set.moneylineHome = odds.moneylineHome;
+    if (odds.moneylineAway) set.moneylineAway = odds.moneylineAway;
+    if (Object.keys(set).length === 0) return;
+    await db.update(games).set(set as any).where(eq(games.id, gameId));
+  }
+
+  // ─── nflverse / Players ─────────────────────────────────────────────────────
+
+  async getWeekBySeasonAndNumber(season: number, weekNumber: number): Promise<Week | null> {
+    const [week] = await db.select().from(weeks)
+      .where(and(eq(weeks.season, season), eq(weeks.weekNumber, weekNumber)));
+    return week ?? null;
+  }
+
+  async getGamesForSeasonWeek(season: number, weekNumber: number): Promise<Game[]> {
+    const week = await this.getWeekBySeasonAndNumber(season, weekNumber);
+    if (!week) return [];
+    return db.select().from(games).where(eq(games.weekId, week.id));
+  }
+
+  async upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player> {
+    if (data.nflverseId) {
+      const [existing] = await db.select().from(players)
+        .where(eq(players.nflverseId, data.nflverseId));
+      if (existing) {
+        const [updated] = await db.update(players)
+          .set({ ...data, updatedAt: new Date() })
+          .where(eq(players.id, existing.id))
+          .returning();
+        return updated;
+      }
+    }
+    const [created] = await db.insert(players)
+      .values({ ...data, updatedAt: new Date() })
+      .returning();
+    return created;
+  }
+
+  async upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat> {
+    // Check for existing stat row for this player/season/week
+    const [existing] = await db.select().from(playerWeekStats)
+      .where(
+        and(
+          eq(playerWeekStats.playerId, data.playerId),
+          eq(playerWeekStats.season, data.season),
+          eq(playerWeekStats.week, data.week)
+        )
+      );
+
+    if (existing) {
+      const [updated] = await db.update(playerWeekStats)
+        .set(data)
+        .where(eq(playerWeekStats.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(playerWeekStats).values(data).returning();
+    return created;
+  }
+
+  async getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]> {
+    // Find the game to get season/week + team names
+    const [game] = await db.select().from(games).where(eq(games.id, gameId));
+    if (!game) return [];
+
+    // Get the week to know season + week number
+    const [week] = await db.select().from(weeks).where(eq(weeks.id, game.weekId));
+    if (!week) return [];
+
+    // Get all player stats for that season/week
+    const stats = await db.select().from(playerWeekStats)
+      .where(
+        and(
+          eq(playerWeekStats.season, week.season),
+          eq(playerWeekStats.week, week.weekNumber)
+        )
+      );
+
+    // Filter to players on the two teams in this game (by team abbreviation stored on stat)
+    // We need to know the team abbreviations for homeTeam and awayTeam
+    // The nflverse service stores team as abbreviation ("KC", "BUF") on playerWeekStats
+    // The game stores short names ("Chiefs", "Bills") — we match via a lookup
+    // For simplicity: join on playerId and fetch player records
+    const results: (PlayerWeekStat & { player: Player })[] = [];
+    for (const stat of stats) {
+      const [player] = await db.select().from(players).where(eq(players.id, stat.playerId));
+      if (!player) continue;
+      results.push({ ...stat, player });
+    }
+
+    return results;
   }
 }
 

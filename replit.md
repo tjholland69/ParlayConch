@@ -2,7 +2,7 @@
 
 ## Overview
 
-Parlay.Club is a full-stack NFL parlay betting tracker application that allows users to create and join leagues, submit weekly parlay picks, and track their betting performance against friends. The application features a modern dark-themed UI built with React and a Node.js/Express backend with PostgreSQL database storage.
+Parlay.Club is a full-stack NFL parlay betting tracker application designed for users to create and join leagues, submit weekly parlay picks, and track their betting performance against friends. The project aims to provide a modern, engaging platform for social sports betting, leveraging a dark-themed UI and robust backend capabilities.
 
 ## User Preferences
 
@@ -12,74 +12,99 @@ Preferred communication style: Simple, everyday language.
 
 ### Frontend Architecture
 - **Framework**: React 18 with TypeScript
-- **Routing**: Wouter for lightweight client-side routing
-- **State Management**: TanStack Query (React Query) for server state management
-- **UI Components**: shadcn/ui component library built on Radix UI primitives
-- **Styling**: Tailwind CSS with custom dark theme (NFL/sports analytics aesthetic)
-- **Charts**: Recharts for data visualization (win rates, stats)
-- **Build Tool**: Vite with HMR support
+- **Routing**: Wouter
+- **State Management**: TanStack Query (React Query)
+- **UI Components**: shadcn/ui built on Radix UI primitives
+- **Styling**: Tailwind CSS with a custom dark theme
+- **Charts**: Recharts for data visualization
+- **Build Tool**: Vite
 
-The frontend follows a component-based architecture with:
-- Pages in `client/src/pages/` for route components
-- Reusable components in `client/src/components/`
-- Custom hooks in `client/src/hooks/` for data fetching and auth
-- shadcn/ui components in `client/src/components/ui/`
+The frontend uses a component-based architecture with clear separation for pages, reusable components, and custom hooks.
 
 ### Backend Architecture
 - **Framework**: Express.js with TypeScript
 - **Database**: PostgreSQL with Drizzle ORM
 - **Authentication**: Replit Auth (OpenID Connect) with Passport.js
-- **Session Storage**: connect-pg-simple for PostgreSQL-backed sessions
-- **API Style**: REST API with typed routes defined in `shared/routes.ts`
+- **Session Storage**: connect-pg-simple (PostgreSQL-backed)
+- **API Style**: REST API with typed routes
 
-The backend follows a layered architecture:
-- `server/routes.ts` - API endpoint definitions
-- `server/storage.ts` - Data access layer with IStorage interface
-- `server/db.ts` - Database connection setup
-- `server/replit_integrations/auth/` - Authentication module
+The backend employs a layered architecture separating API definitions, data access, and database setup.
 
 ### Database Schema
-Defined in `shared/schema.ts` using Drizzle ORM:
-- **users** - User accounts (Replit Auth)
-- **sessions** - Session storage for auth
-- **weeks** - NFL season weeks
-- **games** - Individual NFL games with spreads/odds
-- **leagues** - User-created betting leagues
-- **leagueMembers** - League membership associations
-- **parlays** - User parlay submissions
-- **parlayLegs** - Individual legs of each parlay
-- **bets** - Legacy single-game bets
+The database schema, defined using Drizzle ORM, includes tables for users, sessions, NFL weeks and games, leagues, league memberships, parlay submissions, and parlay legs.
 
 ### Shared Code
-The `shared/` directory contains code used by both frontend and backend:
-- `schema.ts` - Drizzle ORM table definitions and types
-- `routes.ts` - API route definitions for type-safe client-server communication
-- `models/auth.ts` - User and session model definitions
+A `shared/` directory centralizes common code like Drizzle ORM schema definitions, API route definitions for type-safe communication, and authentication model definitions, used by both frontend and backend.
 
-### Build System
-- Development: Vite dev server with Express backend proxy
-- Production: esbuild bundles server, Vite builds client to `dist/`
-- Database migrations: `drizzle-kit push` for schema synchronization
+### Key Features
+
+#### Parlay Week Locking
+A mechanism for the Parlay Maestro (league admin) to "lock" weekly parlay submissions, preventing further changes and signaling readiness for bet placement. This includes states for partial locks and an unlock option.
+
+#### Notification System
+An in-app notification system with a bell icon, unread count, and dropdown list. It supports ad-hoc announcements by the Parlay Maestro and scheduled reminders. Users can configure delivery preferences (Email, SMS, Push) for various notification types.
+
+#### Configuration Management
+- **User Settings**: Profile management, notification preferences, and account actions.
+- **League Settings**: Admin-only controls for league name, description, parlay constraints, and assignment of Parlay Lieutenants with configurable permissions.
+
+#### Demo / QA Flagging
+A system to tag users and leagues as "demo" or "QA" for distinguishing test data from live production records, visible via badges and banners in the UI.
+
+#### Import History (Backloading Data)
+Allows the Parlay Maestro to import historical parlay data via CSV. The system includes an instructional dialog, CSV format requirements, and an auto-enrichment service to calculate results and fill in missing odds post-import.
 
 ## External Dependencies
 
 ### Database
-- **PostgreSQL**: Primary database via `DATABASE_URL` environment variable
-- **Drizzle ORM**: Type-safe database queries and schema management
+- **PostgreSQL**: Primary data store.
+- **Drizzle ORM**: For database interactions and schema management.
 
 ### Authentication
-- **Replit Auth**: OpenID Connect authentication provider
-- **Passport.js**: Authentication middleware
-- Required env vars: `ISSUER_URL`, `REPL_ID`, `SESSION_SECRET`
+- **Replit Auth**: OpenID Connect provider.
+- **Passport.js**: Authentication middleware.
 
 ### UI Libraries
-- **Radix UI**: Accessible component primitives (dialogs, dropdowns, etc.)
-- **Tailwind CSS**: Utility-first styling
-- **Lucide React**: Icon library
-- **Recharts**: Charting library for statistics visualization
-- **date-fns**: Date formatting utilities
+- **Radix UI**: Accessible UI component primitives.
+- **Tailwind CSS**: Utility-first CSS framework.
+- **Lucide React**: Icon library.
+- **Recharts**: Data visualization library.
+- **date-fns**: Date utility library.
 
 ### Development Tools
-- **Vite**: Frontend build tool with React plugin
-- **esbuild**: Server bundling for production
-- **TypeScript**: Type checking across the codebase
+- **Vite**: Frontend build tool.
+- **esbuild**: Server bundling.
+- **TypeScript**: Language for type-safe development.
+
+### Mobile App (iOS)
+- **Expo SDK / React Native**: Framework for the mobile application.
+- **Expo Router**: File-based routing for mobile.
+- **NativeWind**: Tailwind CSS for React Native.
+- **TanStack Query v5**: State management for mobile.
+- **@expo/vector-icons**: Icon library for mobile.
+
+## nflverse Data Integration
+
+### Overview
+Game scores and player stats are synced from the **nflverse open data project** (https://github.com/nflverse/nflverse-data). No API key required. Data updates ~24 hours after each game. Only games already in the `games` table (i.e., games that were actually bet on) are enriched — no storage bloat.
+
+### Data Sources
+| Dataset | URL | Coverage |
+|---|---|---|
+| Schedules (scores + lines) | `…/schedules/schedules.csv` | All seasons back to 1999 |
+| Player stats (per season) | `…/player_stats/player_stats_{season}.csv` | ~2 MB per year |
+
+### Database Tables
+- **`players`** — one row per NFL player; keyed by `nflverse_id` (GSIS ID); upserted on each sync
+- **`player_week_stats`** — one row per player per season/week; upserted idempotently; only stored for players on teams in bet-on games
+
+### Service: `server/services/nflverse.ts`
+- `syncGameScoresFromNflverse(season, weekNumbers?)` — fetches schedules CSV, matches games to our DB by team name, updates scores + backfills missing odds
+- `syncPlayerStatsForGames(season, week)` — fetches per-season player stats CSV, filters to teams in bet-on games for that week, upserts players + weekly stats
+
+### API Routes
+- `POST /api/admin/sync-nflverse` — body: `{ season, week?, mode: "scores"|"players"|"all" }`
+- `GET /api/games/:gameId/player-stats` — returns `(PlayerWeekStat & { player: Player })[]`
+
+### Post-Score-Sync Enrichment
+After syncing scores, the enrichment service automatically re-runs to fill in win/loss results on parlay legs using the newly-updated game scores.

@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
+import { NotificationBell } from "@/components/NotificationBell";
 
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
@@ -13,6 +14,8 @@ import Picks from "@/pages/Picks";
 import History from "@/pages/History";
 import Leagues from "@/pages/Leagues";
 import LeagueDetail from "@/pages/LeagueDetail";
+import LeagueSettings from "@/pages/LeagueSettings";
+import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -41,16 +44,24 @@ function Router() {
   return (
     <div className="flex min-h-screen bg-background text-foreground font-body selection:bg-primary/30 selection:text-primary-foreground">
       <Sidebar />
-      <main className="flex-1 md:ml-72 p-4 md:p-8 pt-20 md:pt-8 overflow-y-auto">
-        <Switch>
-          <Route path="/" component={Dashboard} />
-          <Route path="/picks" component={Picks} />
-          <Route path="/history" component={History} />
-          <Route path="/leagues" component={Leagues} />
-          <Route path="/leagues/:id" component={LeagueDetail} />
-          <Route component={NotFound} />
-        </Switch>
-      </main>
+      <div className="flex-1 md:ml-72 flex flex-col min-h-screen">
+        {/* Desktop top bar with notification bell */}
+        <div className="hidden md:flex items-center justify-end px-8 py-3 sticky top-0 z-30 bg-background/80 backdrop-blur-md border-b border-white/5">
+          <NotificationBell />
+        </div>
+        <main className="flex-1 p-4 md:px-8 md:py-6 pt-20 md:pt-6 overflow-y-auto">
+          <Switch>
+            <Route path="/" component={Dashboard} />
+            <Route path="/picks" component={Picks} />
+            <Route path="/history" component={History} />
+            <Route path="/leagues" component={Leagues} />
+            <Route path="/leagues/:id/settings" component={LeagueSettings} />
+            <Route path="/leagues/:id" component={LeagueDetail} />
+            <Route path="/settings" component={Settings} />
+            <Route component={NotFound} />
+          </Switch>
+        </main>
+      </div>
     </div>
   );
 }

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Upload, FileSpreadsheet, Download, AlertCircle, Check } from "lucide-react";
+import { Upload, FileSpreadsheet, Download, AlertCircle, Check, Sparkles } from "lucide-react";
 
 interface Props {
   open: boolean;
@@ -14,17 +14,21 @@ interface Props {
   leagueId: number;
 }
 
+interface CSVLeg {
+  gameId?: number;
+  homeTeam?: string;
+  awayTeam?: string;
+  betType: string;
+  pick: string;
+  line?: string;
+  result?: string;
+}
+
 interface CSVRecord {
   weekId: number;
   memberEmail: string;
   status: string;
-  legs: {
-    gameId: number;
-    betType: string;
-    pick: string;
-    line?: string;
-    result?: string;
-  }[];
+  legs: CSVLeg[];
 }
 
 export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
@@ -41,7 +45,11 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
       return res.json();
     },
     onSuccess: (data: any) => {
-      toast({ title: "Import Successful", description: data.message });
+      const skipped = data.skipped ? ` (${data.skipped} skipped)` : "";
+      toast({
+        title: "Import Successful",
+        description: `${data.message}${skipped}. Results & odds are being auto-filled in the background.`,
+      });
       queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "parlays"] });
       onOpenChange(false);
       setParsedRecords([]);
@@ -69,10 +77,19 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
     }
 
     const firstRow = rows[0];
-    const requiredFields = ["week_id", "member_email", "game_id", "pick"];
-    const missingFields = requiredFields.filter(f => !(f in firstRow));
-    if (missingFields.length > 0) {
-      throw new Error(`CSV must include: ${missingFields.join(", ")} columns`);
+    const hasGameId = "game_id" in firstRow;
+    const hasTeamNames = "home_team" in firstRow && "away_team" in firstRow;
+
+    if (!hasGameId && !hasTeamNames) {
+      throw new Error(
+        "CSV must include either 'game_id' or both 'home_team' + 'away_team' columns to identify each game."
+      );
+    }
+
+    const requiredBase = ["week_id", "member_email", "pick"];
+    const missingBase = requiredBase.filter(f => !(f in firstRow));
+    if (missingBase.length > 0) {
+      throw new Error(`CSV is missing required columns: ${missingBase.join(", ")}`);
     }
 
     const recordMap = new Map<string, CSVRecord>();
@@ -80,20 +97,33 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
     for (const row of rows) {
       const weekId = parseInt(row.week_id);
       const email = row.member_email?.trim();
-      const gameId = parseInt(row.game_id);
       const pick = row.pick?.trim();
       const betType = row.bet_type?.trim() || "spread";
       const status = row.status?.trim() || "approved";
       const line = row.line?.trim() || undefined;
       const legResult = row.result?.trim() || undefined;
 
-      if (!weekId || !email || !gameId || !pick) continue;
+      if (!weekId || !email || !pick) continue;
+
+      const leg: CSVLeg = { betType, pick, line, result: legResult };
+
+      if (hasGameId && row.game_id) {
+        const gameId = parseInt(row.game_id);
+        if (!isNaN(gameId)) leg.gameId = gameId;
+      }
+
+      if (hasTeamNames && row.home_team && row.away_team) {
+        leg.homeTeam = row.home_team.trim();
+        leg.awayTeam = row.away_team.trim();
+      }
+
+      if (!leg.gameId && !leg.homeTeam) continue;
 
       const key = `${weekId}-${email}`;
       if (!recordMap.has(key)) {
         recordMap.set(key, { weekId, memberEmail: email, status, legs: [] });
       }
-      recordMap.get(key)!.legs.push({ gameId, betType, pick, line, result: legResult });
+      recordMap.get(key)!.legs.push(leg);
     }
 
     return Array.from(recordMap.values());
@@ -121,10 +151,10 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
   };
 
   const downloadTemplate = () => {
-    const template = `week_id,member_email,game_id,bet_type,pick,line,result,status
-1,user@example.com,101,spread,home,-3.5,win,approved
-1,user@example.com,102,spread,away,+7,loss,approved
-1,user@example.com,103,moneyline,home,,win,approved`;
+    const template = `week_id,member_email,home_team,away_team,bet_type,pick,line,result,status
+1,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved
+1,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved
+2,other@example.com,Eagles,Cowboys,spread,away,+3,,pending`;
     const blob = new Blob([template], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -143,7 +173,7 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
             Import Historical Data
           </DialogTitle>
           <DialogDescription>
-            Upload a CSV file to import historical betting data for your league.
+            Upload a CSV file to import historical betting data for your league. Results and odds are auto-filled from game data after import.
           </DialogDescription>
         </DialogHeader>
 
@@ -179,14 +209,18 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
           )}
 
           {parsedRecords.length > 0 && (
-            <div className="bg-muted/30 rounded-lg p-4">
-              <div className="flex items-center gap-2 mb-2">
+            <div className="bg-muted/30 rounded-lg p-4 space-y-2">
+              <div className="flex items-center gap-2 mb-1">
                 <Check className="w-4 h-4 text-green-500" />
                 <span className="font-medium">Ready to import</span>
               </div>
               <div className="space-y-1 text-sm text-muted-foreground">
                 <p>{parsedRecords.length} parlays found</p>
                 <p>{parsedRecords.reduce((sum, r) => sum + r.legs.length, 0)} total legs</p>
+              </div>
+              <div className="flex items-start gap-2 mt-2 p-2 bg-primary/10 rounded text-xs text-primary">
+                <Sparkles className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
+                <span>After import, results and approximate odds will be auto-filled from game data where available.</span>
               </div>
             </div>
           )}
