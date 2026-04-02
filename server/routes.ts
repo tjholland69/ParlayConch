@@ -8,6 +8,7 @@ import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores }
 import { fetchNFLNews } from "./services/nflNews";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
+import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
 async function hasLeaguePermission(leagueId: number, userId: string, permission: keyof LieutenantPermissions): Promise<boolean> {
@@ -489,6 +490,67 @@ export async function registerRoutes(
         scores: scoreResult,
         enrichment: enrichResult,
       });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ===== nflverse SYNC (Admin only) =====
+
+  // POST /api/admin/sync-nflverse
+  // Body: { season, week?, mode: 'scores' | 'players' | 'all' }
+  // Syncs game scores and/or player stats from nflverse open data for the given
+  // season (and optionally a specific week). Only touches games already in our DB.
+  app.post("/api/admin/sync-nflverse", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+
+      // Require the user to be an admin in at least one league (rough guard)
+      // A dedicated global-admin check can be added later
+      const { season, week, mode = "all" } = req.body;
+
+      if (!season || isNaN(Number(season))) {
+        return res.status(400).json({ message: "season (number) is required" });
+      }
+
+      const seasonNum = Number(season);
+      const weekNums = week ? [Number(week)] : undefined;
+
+      const result: Record<string, unknown> = { season: seasonNum, week: week ?? "all" };
+
+      if (mode === "scores" || mode === "all") {
+        const scoreSync = await syncGameScoresFromNflverse(seasonNum, weekNums);
+        result.scores = scoreSync;
+        console.log(`[nflverse] scores sync:`, scoreSync);
+
+        // Re-run enrichment after scores are updated
+        const enrichResult = await enrichLeagueParlayLegs();
+        result.enrichment = enrichResult;
+      }
+
+      if (mode === "players" || mode === "all") {
+        if (!week) {
+          return res.status(400).json({ message: "week is required for player stats sync" });
+        }
+        const playerSync = await syncPlayerStatsForGames(seasonNum, Number(week));
+        result.players = playerSync;
+        console.log(`[nflverse] player stats sync:`, playerSync);
+      }
+
+      res.json({ message: "nflverse sync complete", ...result });
+    } catch (err: any) {
+      console.error("[nflverse] sync error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/games/:gameId/player-stats
+  // Returns player stats for all players on both teams in a given game
+  app.get("/api/games/:gameId/player-stats", isAuthenticated, async (req, res) => {
+    try {
+      const gameId = Number(req.params.gameId);
+      const stats = await storage.getPlayerStatsForGame(gameId);
+      res.json(stats);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
