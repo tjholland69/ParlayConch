@@ -49,6 +49,8 @@ export interface IStorage {
   updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League>;
   setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember>;
   getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]>;
+  removeLeagueMember(leagueId: number, userId: string): Promise<void>;
+  transferLeagueAdmin(leagueId: number, fromUserId: string, toUserId: string): Promise<void>;
 
   // Parlays
   getParlay(id: number): Promise<Parlay | undefined>;
@@ -377,6 +379,23 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)))
       .returning();
     return updated;
+  }
+
+  async removeLeagueMember(leagueId: number, userId: string): Promise<void> {
+    await db.delete(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+  }
+
+  async transferLeagueAdmin(leagueId: number, fromUserId: string, toUserId: string): Promise<void> {
+    await db.transaction(async (tx) => {
+      // Promote the new admin
+      await tx.update(leagueMembers)
+        .set({ role: 'admin' })
+        .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, toUserId)));
+      // Remove the outgoing admin from the league
+      await tx.delete(leagueMembers)
+        .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, fromUserId)));
+    });
   }
 
   // Parlays
