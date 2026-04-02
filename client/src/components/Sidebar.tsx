@@ -38,7 +38,7 @@ export function Sidebar() {
       <div className="p-6">
         <h1 className="text-2xl font-bold tracking-tighter text-primary flex items-center gap-2">
           <Trophy className="w-8 h-8" />
-          <span className="text-glow">PARLAY.CLUB</span>
+          <span className="text-glow">PARLAYCONCH</span>
         </h1>
         <p className="text-xs text-muted-foreground mt-1 font-mono uppercase tracking-widest">
           NFL Parlay Tracker

@@ -204,7 +204,7 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
           <div className="rounded-xl bg-white/5 border border-white/5 p-4 space-y-1.5 text-sm text-muted-foreground">
             <p className="font-medium text-foreground text-xs uppercase tracking-wider mb-2">Tips</p>
             <p>• One row per parlay leg. Multiple legs for the same member + week are automatically combined into one parlay.</p>
-            <p>• The member's email must match their Parlay.Club account email exactly.</p>
+            <p>• The member's email must match their Parlayconch account email exactly.</p>
             <p>• Use either team name shorthand ("Chiefs") or the full name ("Kansas City Chiefs") — both work.</p>
             <p>• <code className="font-mono text-xs">home_team</code> + <code className="font-mono text-xs">away_team</code> are matched to games in your league. If no match is found, a placeholder game is created.</p>
             <p>• Leave <code className="font-mono text-xs">result</code> and <code className="font-mono text-xs">line</code> blank — they'll be auto-filled from game data after import.</p>
