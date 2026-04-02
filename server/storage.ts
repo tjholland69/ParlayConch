@@ -1,15 +1,17 @@
 import { db } from "./db";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
+  players, playerWeekStats,
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
   type ImportBatch, type InsertImportBatch, type ImportParlayLeg,
   type LieutenantPermissions, type LeagueMemberWithUser, DEFAULT_LIEUTENANT_PERMISSIONS,
   type Notification, type LeagueNotificationSettings,
-  type LeagueWeekLock, type WeekLockStatus
+  type LeagueWeekLock, type WeekLockStatus,
+  type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
 } from "@shared/schema";
-import { eq, and, desc, inArray } from "drizzle-orm";
+import { eq, and, desc, inArray, sql } from "drizzle-orm";
 
 function generateInviteCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -93,7 +95,15 @@ export interface IStorage {
   getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game })[]>;
   enrichParlayLeg(legId: number, updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
   updateGameScores(gameId: number, homeScore: number, awayScore: number, isFinished: boolean, winner?: string): Promise<void>;
+  patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
   getUser(userId: string): Promise<typeof users.$inferSelect | null>;
+
+  // nflverse / Players
+  getWeekBySeasonAndNumber(season: number, weekNumber: number): Promise<Week | null>;
+  getGamesForSeasonWeek(season: number, weekNumber: number): Promise<Game[]>;
+  upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player>;
+  upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
+  getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -782,6 +792,107 @@ export class DatabaseStorage implements IStorage {
     await db.update(games)
       .set({ homeScore, awayScore, isFinished, winner: w })
       .where(eq(games.id, gameId));
+  }
+
+  async patchGameOdds(
+    gameId: number,
+    odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }
+  ): Promise<void> {
+    const set: Record<string, unknown> = {};
+    if (odds.spread) set.spread = odds.spread;
+    if (odds.overUnder) set.overUnder = odds.overUnder;
+    if (odds.moneylineHome) set.moneylineHome = odds.moneylineHome;
+    if (odds.moneylineAway) set.moneylineAway = odds.moneylineAway;
+    if (Object.keys(set).length === 0) return;
+    await db.update(games).set(set as any).where(eq(games.id, gameId));
+  }
+
+  // ─── nflverse / Players ─────────────────────────────────────────────────────
+
+  async getWeekBySeasonAndNumber(season: number, weekNumber: number): Promise<Week | null> {
+    const [week] = await db.select().from(weeks)
+      .where(and(eq(weeks.season, season), eq(weeks.weekNumber, weekNumber)));
+    return week ?? null;
+  }
+
+  async getGamesForSeasonWeek(season: number, weekNumber: number): Promise<Game[]> {
+    const week = await this.getWeekBySeasonAndNumber(season, weekNumber);
+    if (!week) return [];
+    return db.select().from(games).where(eq(games.weekId, week.id));
+  }
+
+  async upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player> {
+    if (data.nflverseId) {
+      const [existing] = await db.select().from(players)
+        .where(eq(players.nflverseId, data.nflverseId));
+      if (existing) {
+        const [updated] = await db.update(players)
+          .set({ ...data, updatedAt: new Date() })
+          .where(eq(players.id, existing.id))
+          .returning();
+        return updated;
+      }
+    }
+    const [created] = await db.insert(players)
+      .values({ ...data, updatedAt: new Date() })
+      .returning();
+    return created;
+  }
+
+  async upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat> {
+    // Check for existing stat row for this player/season/week
+    const [existing] = await db.select().from(playerWeekStats)
+      .where(
+        and(
+          eq(playerWeekStats.playerId, data.playerId),
+          eq(playerWeekStats.season, data.season),
+          eq(playerWeekStats.week, data.week)
+        )
+      );
+
+    if (existing) {
+      const [updated] = await db.update(playerWeekStats)
+        .set(data)
+        .where(eq(playerWeekStats.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(playerWeekStats).values(data).returning();
+    return created;
+  }
+
+  async getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]> {
+    // Find the game to get season/week + team names
+    const [game] = await db.select().from(games).where(eq(games.id, gameId));
+    if (!game) return [];
+
+    // Get the week to know season + week number
+    const [week] = await db.select().from(weeks).where(eq(weeks.id, game.weekId));
+    if (!week) return [];
+
+    // Get all player stats for that season/week
+    const stats = await db.select().from(playerWeekStats)
+      .where(
+        and(
+          eq(playerWeekStats.season, week.season),
+          eq(playerWeekStats.week, week.weekNumber)
+        )
+      );
+
+    // Filter to players on the two teams in this game (by team abbreviation stored on stat)
+    // We need to know the team abbreviations for homeTeam and awayTeam
+    // The nflverse service stores team as abbreviation ("KC", "BUF") on playerWeekStats
+    // The game stores short names ("Chiefs", "Bills") — we match via a lookup
+    // For simplicity: join on playerId and fetch player records
+    const results: (PlayerWeekStat & { player: Player })[] = [];
+    for (const stat of stats) {
+      const [player] = await db.select().from(players).where(eq(players.id, stat.playerId));
+      if (!player) continue;
+      results.push({ ...stat, player });
+    }
+
+    return results;
   }
 }
 

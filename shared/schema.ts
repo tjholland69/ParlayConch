@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb, real, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { users } from "./models/auth";
@@ -192,6 +192,57 @@ export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({
 export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true, source: true, importBatchId: true });
 export const insertParlayLegSchema = createInsertSchema(parlayLegs).omit({ id: true, result: true });
 export const insertImportBatchSchema = createInsertSchema(importBatches).omit({ id: true, uploadedAt: true });
+
+// ─── nflverse / Player data ────────────────────────────────────────────────
+
+// NFL players referenced in bets (populated by nflverse sync)
+export const players = pgTable("players", {
+  id: serial("id").primaryKey(),
+  nflverseId: text("nflverse_id").unique(), // e.g. "00-0023459" (GSIS ID)
+  name: text("name").notNull(),
+  displayName: text("display_name"),
+  position: text("position"), // QB, WR, RB, TE, K, DEF, etc.
+  team: text("team"), // current team abbreviation (e.g. "KC")
+  headshot: text("headshot"), // URL from nflverse
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Weekly player stats — only stored for players in games that were bet on
+export const playerWeekStats = pgTable("player_week_stats", {
+  id: serial("id").primaryKey(),
+  playerId: integer("player_id").notNull(),
+  season: integer("season").notNull(),
+  week: integer("week").notNull(),
+  seasonType: text("season_type").default("REG"), // REG, POST, PRE
+  team: text("team"),
+  // Passing
+  completions: integer("completions"),
+  attempts: integer("attempts"),
+  passingYards: integer("passing_yards"),
+  passingTds: integer("passing_tds"),
+  interceptions: integer("interceptions"),
+  passerRating: real("passer_rating"),
+  // Rushing
+  carries: integer("carries"),
+  rushingYards: integer("rushing_yards"),
+  rushingTds: integer("rushing_tds"),
+  // Receiving
+  receptions: integer("receptions"),
+  targets: integer("targets"),
+  receivingYards: integer("receiving_yards"),
+  receivingTds: integer("receiving_tds"),
+  // Scoring / Fantasy
+  fantasyPoints: real("fantasy_points"),
+  fantasyPointsPpr: real("fantasy_points_ppr"),
+});
+
+export const insertPlayerSchema = createInsertSchema(players).omit({ id: true, updatedAt: true });
+export const insertPlayerWeekStatSchema = createInsertSchema(playerWeekStats).omit({ id: true });
+
+export type Player = typeof players.$inferSelect;
+export type PlayerWeekStat = typeof playerWeekStats.$inferSelect;
+export type InsertPlayer = z.infer<typeof insertPlayerSchema>;
+export type InsertPlayerWeekStat = z.infer<typeof insertPlayerWeekStatSchema>;
 
 // Types
 export type Week = typeof weeks.$inferSelect;

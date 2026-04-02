@@ -82,3 +82,29 @@ Allows the Parlay Maestro to import historical parlay data via CSV. The system i
 - **NativeWind**: Tailwind CSS for React Native.
 - **TanStack Query v5**: State management for mobile.
 - **@expo/vector-icons**: Icon library for mobile.
+
+## nflverse Data Integration
+
+### Overview
+Game scores and player stats are synced from the **nflverse open data project** (https://github.com/nflverse/nflverse-data). No API key required. Data updates ~24 hours after each game. Only games already in the `games` table (i.e., games that were actually bet on) are enriched — no storage bloat.
+
+### Data Sources
+| Dataset | URL | Coverage |
+|---|---|---|
+| Schedules (scores + lines) | `…/schedules/schedules.csv` | All seasons back to 1999 |
+| Player stats (per season) | `…/player_stats/player_stats_{season}.csv` | ~2 MB per year |
+
+### Database Tables
+- **`players`** — one row per NFL player; keyed by `nflverse_id` (GSIS ID); upserted on each sync
+- **`player_week_stats`** — one row per player per season/week; upserted idempotently; only stored for players on teams in bet-on games
+
+### Service: `server/services/nflverse.ts`
+- `syncGameScoresFromNflverse(season, weekNumbers?)` — fetches schedules CSV, matches games to our DB by team name, updates scores + backfills missing odds
+- `syncPlayerStatsForGames(season, week)` — fetches per-season player stats CSV, filters to teams in bet-on games for that week, upserts players + weekly stats
+
+### API Routes
+- `POST /api/admin/sync-nflverse` — body: `{ season, week?, mode: "scores"|"players"|"all" }`
+- `GET /api/games/:gameId/player-stats` — returns `(PlayerWeekStat & { player: Player })[]`
+
+### Post-Score-Sync Enrichment
+After syncing scores, the enrichment service automatically re-runs to fill in win/loss results on parlay legs using the newly-updated game scores.
