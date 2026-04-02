@@ -1,10 +1,43 @@
 import { Button } from "@/components/ui/button";
 import { Shell, Shield, Coins, ArrowRight, Trophy } from "lucide-react";
 
+/**
+ * Returns the current NFL season context.
+ *
+ * "In season" = Opening Day (early September) through the Super Bowl (~Feb 15).
+ * Season year = the calendar year in which Opening Day falls:
+ *   - Sept–Dec  → current year
+ *   - Jan–Feb 15 → previous year (season started last September)
+ * Off-season year = current year (the next season will start in September of this year).
+ */
+function getNflSeasonInfo(): { inSeason: boolean; year: number } {
+  const now = new Date();
+  const month = now.getMonth() + 1; // 1-indexed
+  const day = now.getDate();
+  const year = now.getFullYear();
+
+  if (month >= 9) {
+    // September – December: regular season / playoffs in progress
+    return { inSeason: true, year };
+  }
+  if (month === 1) {
+    // January: playoffs still running; season started previous September
+    return { inSeason: true, year: year - 1 };
+  }
+  if (month === 2 && day <= 15) {
+    // Early February: Super Bowl window; season started previous September
+    return { inSeason: true, year: year - 1 };
+  }
+  // Late February – August: off-season; next season starts this September
+  return { inSeason: false, year };
+}
+
 export default function Landing() {
   const handleLogin = () => {
     window.location.href = "/api/login";
   };
+
+  const { inSeason, year } = getNflSeasonInfo();
 
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col relative overflow-hidden field-gradient">
@@ -29,8 +62,10 @@ export default function Landing() {
       {/* Hero Section */}
       <main className="relative z-10 flex-1 container mx-auto px-6 flex flex-col justify-center items-center text-center pb-20">
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-white/10 mb-8 backdrop-blur-sm animate-fade-in">
-          <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-          <span className="text-sm font-medium text-foreground">2024 Season Live</span>
+          <span className={`w-2 h-2 rounded-full ${inSeason ? "bg-blue-500 animate-pulse" : "bg-muted-foreground"}`} />
+          <span className="text-sm font-medium text-foreground">
+            {inSeason ? `${year} Season Live` : `Get Ready for the ${year} Season!`}
+          </span>
         </div>
         
         <h1 className="text-5xl md:text-7xl lg:text-8xl font-display font-bold tracking-tight mb-12 leading-[0.9]">
