@@ -942,5 +942,57 @@ export async function registerRoutes(
     }
   });
 
+  // Leave league — available to members and lieutenants; blocked for the admin
+  app.delete("/api/leagues/:id/members/me", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (isAdmin) {
+        return res.status(400).json({
+          message: "Parlay Maestros must transfer admin rights before leaving. Use the transfer-and-leave endpoint.",
+        });
+      }
+
+      const members = await storage.getLeagueMembers(leagueId);
+      const isMember = members.some(m => m.userId === userId);
+      if (!isMember) return res.status(404).json({ message: "You are not a member of this league" });
+
+      await storage.removeLeagueMember(leagueId, userId);
+      res.json({ message: "You have left the league" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Transfer admin rights to another member and leave — Parlay Maestro only
+  app.post("/api/leagues/:id/transfer-and-leave", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can transfer admin rights" });
+
+      const { newAdminUserId } = z.object({ newAdminUserId: z.string().min(1) }).parse(req.body);
+
+      if (newAdminUserId === userId) {
+        return res.status(400).json({ message: "You cannot transfer admin rights to yourself" });
+      }
+
+      const members = await storage.getLeagueMembers(leagueId);
+      const targetIsMember = members.some(m => m.userId === newAdminUserId);
+      if (!targetIsMember) {
+        return res.status(400).json({ message: "The selected user is not a member of this league" });
+      }
+
+      await storage.transferLeagueAdmin(leagueId, userId, newAdminUserId);
+      res.json({ message: "Admin rights transferred and you have left the league" });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
   return httpServer;
 }
