@@ -579,7 +579,8 @@ export async function registerRoutes(
     try {
       const leagueId = Number(req.params.id);
       const userId = (req.user as any).claims.sub;
-      const isMember = (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+      const superUser = await storage.isSuperUser(userId);
+      const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
       const members = await storage.getLeagueMembersWithUsers(leagueId);
       res.json(members);

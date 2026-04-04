@@ -43,6 +43,7 @@ export interface IStorage {
   joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null>;
   getLeagueMembers(leagueId: number): Promise<LeagueMember[]>;
   getLeagueMembersWithUsers(leagueId: number): Promise<LeagueMemberWithUser[]>;
+  isSuperUser(userId: string): Promise<boolean>;
   isLeagueAdmin(leagueId: number, userId: string): Promise<boolean>;
   isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean>;
   updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay'>>): Promise<League>;
@@ -319,13 +320,20 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
   }
 
+  async isSuperUser(userId: string): Promise<boolean> {
+    const [user] = await db.select({ isSuperUser: users.isSuperUser }).from(users).where(eq(users.id, userId));
+    return user?.isSuperUser === true;
+  }
+
   async isLeagueAdmin(leagueId: number, userId: string): Promise<boolean> {
+    if (await this.isSuperUser(userId)) return true;
     const [member] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
     return member?.role === 'admin';
   }
 
   async isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean> {
+    if (await this.isSuperUser(userId)) return true;
     const [member] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
     return member?.role === 'lieutenant';

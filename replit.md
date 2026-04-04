@@ -83,6 +83,12 @@ Allows the Parlay Maestro to import historical parlay data via CSV. The system i
 - **TanStack Query v5**: State management for mobile.
 - **@expo/vector-icons**: Icon library for mobile.
 
+## Super User (Application-Wide Admin)
+
+A `is_super_user` boolean column exists on the `users` table (default `false`). Any user with this flag set to `true` automatically passes all league-level permission checks (admin and lieutenant gates) across every league in the application. This role is intended for a very small set of trusted users (e.g., support staff) who need to act on behalf of any user in any league.
+
+**How to grant super user access:** Set `is_super_user = true` on the target row in the `users` table. This is intentionally a manual database operation — there is no UI or API for it.
+
 ## nflverse Data Integration
 
 ### Overview
