@@ -36,6 +36,12 @@ The database schema, defined using Drizzle ORM, includes tables for users, sessi
 ### Shared Code
 A `shared/` directory centralizes common code like Drizzle ORM schema definitions, API route definitions for type-safe communication, and authentication model definitions, used by both frontend and backend.
 
+### Integrations
+- **Replit Auth**: OpenID Connect authentication (primary)
+- **Email/Password**: Local auth via bcryptjs + passport-local
+- **Resend**: Transactional emails (member invites, notifications)
+- **OpenAI (Replit AI Integration)**: Powers the AI Betting Insights feature via Replit's managed model farm — no user API key required, billed to Replit credits. Uses `gpt-5-mini` for cost-efficient commentary generation.
+
 ### Key Features
 
 #### Parlay Week Locking

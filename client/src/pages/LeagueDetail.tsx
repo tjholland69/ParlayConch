@@ -17,6 +17,7 @@ import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { EditParlayDialog } from "@/components/EditParlayDialog";
+import { BettingInsights } from "@/components/BettingInsights";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import type { Game, ParlayWithLegs } from "@shared/schema";
@@ -219,6 +220,7 @@ export default function LeagueDetail() {
           <TabsTrigger value="parlays" data-testid="tab-parlays">League Parlays</TabsTrigger>
           <TabsTrigger value="standings" data-testid="tab-standings">Standings</TabsTrigger>
           <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
+          <TabsTrigger value="insights" data-testid="tab-insights">Insights</TabsTrigger>
         </TabsList>
 
         {/* Make Picks Tab */}
@@ -802,6 +804,12 @@ export default function LeagueDetail() {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Insights Tab */}
+        <TabsContent value="insights" className="space-y-6">
+          <BettingInsights scope="league" leagueId={leagueId} />
+          <BettingInsights scope="user" leagueId={leagueId} />
         </TabsContent>
       </Tabs>
 
