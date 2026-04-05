@@ -35,6 +35,24 @@ export default function History() {
     ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1) 
     : '0.0';
 
+  // Leg-level breakdown: game outcomes vs player props
+  const allLegs = parlays?.flatMap(p => p.legs) ?? [];
+  const gameLegs = allLegs.filter(l => l.betType !== 'player_prop');
+  const propLegs = allLegs.filter(l => l.betType === 'player_prop');
+  const totalLegs = allLegs.length;
+
+  const gameLegsWithResult = gameLegs.filter(l => l.result === 'win' || l.result === 'loss');
+  const propLegsWithResult = propLegs.filter(l => l.result === 'win' || l.result === 'loss');
+
+  const gamePct = totalLegs > 0 ? ((gameLegs.length / totalLegs) * 100).toFixed(0) : '—';
+  const propPct = totalLegs > 0 ? ((propLegs.length / totalLegs) * 100).toFixed(0) : '—';
+  const gameWinRate = gameLegsWithResult.length > 0
+    ? ((gameLegs.filter(l => l.result === 'win').length / gameLegsWithResult.length) * 100).toFixed(1)
+    : '—';
+  const propWinRate = propLegsWithResult.length > 0
+    ? ((propLegs.filter(l => l.result === 'win').length / propLegsWithResult.length) * 100).toFixed(1)
+    : '—';
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[50vh]">
@@ -100,6 +118,58 @@ export default function History() {
               {winRate}%
             </p>
             <p className="text-xs text-muted-foreground uppercase">Win Rate</p>
+          </CardContent>
+        </Card>
+
+        {/* Game Outcome vs Player Prop breakdown */}
+        <Card className="bg-card/50 border-white/5">
+          <CardContent className="p-4 text-center">
+            <p className="text-2xl font-bold font-mono text-blue-400">
+              {gamePct === '—' ? '—' : `${gamePct}%`}
+            </p>
+            <p className="text-xs text-muted-foreground uppercase">Game Outcome Legs</p>
+            <p className="text-xs text-blue-400/60 mt-0.5">
+              {gameLegs.length} leg{gameLegs.length !== 1 ? 's' : ''}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/50 border-white/5">
+          <CardContent className="p-4 text-center">
+            <p className={cn(
+              "text-2xl font-bold font-mono",
+              gameWinRate !== '—' && parseFloat(gameWinRate) >= 50 ? "text-primary" : "text-muted-foreground"
+            )}>
+              {gameWinRate === '—' ? '—' : `${gameWinRate}%`}
+            </p>
+            <p className="text-xs text-muted-foreground uppercase">Game Outcome Win %</p>
+            <p className="text-xs text-muted-foreground/50 mt-0.5">
+              {gameLegsWithResult.length > 0 ? `${gameLegs.filter(l => l.result === 'win').length}W / ${gameLegsWithResult.length} settled` : 'no results yet'}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/50 border-white/5">
+          <CardContent className="p-4 text-center">
+            <p className="text-2xl font-bold font-mono text-violet-400">
+              {propPct === '—' ? '—' : `${propPct}%`}
+            </p>
+            <p className="text-xs text-muted-foreground uppercase">Player Prop Legs</p>
+            <p className="text-xs text-violet-400/60 mt-0.5">
+              {propLegs.length} leg{propLegs.length !== 1 ? 's' : ''}
+            </p>
+          </CardContent>
+        </Card>
+        <Card className="bg-card/50 border-white/5">
+          <CardContent className="p-4 text-center">
+            <p className={cn(
+              "text-2xl font-bold font-mono",
+              propWinRate !== '—' && parseFloat(propWinRate) >= 50 ? "text-primary" : "text-muted-foreground"
+            )}>
+              {propWinRate === '—' ? '—' : `${propWinRate}%`}
+            </p>
+            <p className="text-xs text-muted-foreground uppercase">Player Prop Win %</p>
+            <p className="text-xs text-muted-foreground/50 mt-0.5">
+              {propLegsWithResult.length > 0 ? `${propLegs.filter(l => l.result === 'win').length}W / ${propLegsWithResult.length} settled` : 'no results yet'}
+            </p>
           </CardContent>
         </Card>
       </div>
