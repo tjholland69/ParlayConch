@@ -99,9 +99,12 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
       const pick = row.pick?.trim();
       const betType = row.bet_type?.trim() || "spread";
       const status = row.status?.trim() || "approved";
-      const line = row.line?.trim() || undefined;
-      const legResult = row.result?.trim() || undefined;
       const isPlayerProp = betType === "player_prop";
+      // For prop bets: prop_line holds the numeric threshold (e.g. 250.5 yards).
+      // For game bets: line holds the spread/odds. prop_line takes precedence for props.
+      const propLine = row.prop_line?.trim() || undefined;
+      const line = isPlayerProp ? (propLine || row.line?.trim() || undefined) : (row.line?.trim() || undefined);
+      const legResult = row.result?.trim() || undefined;
 
       if (!weekNumber || !year || !email || !pick) continue;
 
@@ -156,13 +159,13 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
   };
 
   const downloadTemplate = () => {
-    const template = `week_id,year,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type
-1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,
-1,2024,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,
-2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,
-3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,
-4,2024,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards
-4,2024,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td`;
+    const template = `week_id,year,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type,prop_line
+1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,,
+1,2024,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,,
+2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,,
+3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,,
+4,2024,player@example.com,,,player_prop,over,,,approved,Travis Kelce,rec_yards,72.5
+4,2024,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td,`;
     const blob = new Blob([template], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
