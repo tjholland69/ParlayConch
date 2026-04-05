@@ -17,8 +17,15 @@ const FIELDS = [
     column: "week_id",
     required: true,
     type: "number",
-    description: "The numeric ID of the NFL week the parlay belongs to.",
-    example: "1",
+    description: "The NFL week number (1–18 for regular season, 19–22 for playoffs). Combined with year to identify the correct week.",
+    example: "3",
+  },
+  {
+    column: "year",
+    required: true,
+    type: "number",
+    description: "The NFL season year the parlay belongs to. Use the year the season started (e.g. 2024 for the 2024–25 season).",
+    example: "2024",
   },
   {
     column: "member_email",
@@ -100,19 +107,19 @@ const FIELDS = [
 ];
 
 const TEMPLATE_ROWS = [
-  "1,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,",
-  "1,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,",
-  "2,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,",
-  "3,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,",
-  "4,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards",
-  "4,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td",
+  "1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,",
+  "1,2024,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,",
+  "2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,",
+  "3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,",
+  "4,2024,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards",
+  "4,2024,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td",
 ];
 
 export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Props) {
   const [dontShow, setDontShow] = useState(false);
 
   const downloadTemplate = () => {
-    const header = "week_id,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type";
+    const header = "week_id,year,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type";
     const content = [header, ...TEMPLATE_ROWS].join("\n");
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -219,7 +226,8 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
           {/* Tips */}
           <div className="rounded-xl bg-white/5 border border-white/5 p-4 space-y-1.5 text-sm text-muted-foreground">
             <p className="font-medium text-foreground text-xs uppercase tracking-wider mb-2">Tips</p>
-            <p>• One row per parlay leg. Multiple legs for the same member + week are automatically combined into one parlay.</p>
+            <p>• One row per parlay leg. Multiple legs for the same member + week + year are automatically combined into one parlay.</p>
+            <p>• Use the year the NFL season <em>started</em> — the 2024–25 season is year <code className="font-mono text-xs">2024</code>.</p>
             <p>• The member's email must match their Parlayconch account email exactly.</p>
             <p>• Use either team name shorthand ("Chiefs") or the full name ("Kansas City Chiefs") — both work.</p>
             <p>• <code className="font-mono text-xs">home_team</code> + <code className="font-mono text-xs">away_team</code> are matched to games in your league. If no match is found, a placeholder game is created.</p>

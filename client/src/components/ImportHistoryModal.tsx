@@ -27,7 +27,8 @@ interface CSVLeg {
 }
 
 interface CSVRecord {
-  weekId: number;
+  weekNumber: number;
+  year: number;
   memberEmail: string;
   status: string;
   legs: CSVLeg[];
@@ -83,7 +84,7 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
     const hasTeamNames = "home_team" in firstRow && "away_team" in firstRow;
     const hasGameIdentifier = hasGameId || hasTeamNames;
 
-    const requiredBase = ["week_id", "member_email", "pick"];
+    const requiredBase = ["week_id", "year", "member_email", "pick"];
     const missingBase = requiredBase.filter(f => !(f in firstRow));
     if (missingBase.length > 0) {
       throw new Error(`CSV is missing required columns: ${missingBase.join(", ")}`);
@@ -92,7 +93,8 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
     const recordMap = new Map<string, CSVRecord>();
 
     for (const row of rows) {
-      const weekId = parseInt(row.week_id);
+      const weekNumber = parseInt(row.week_id);
+      const year = parseInt(row.year);
       const email = row.member_email?.trim();
       const pick = row.pick?.trim();
       const betType = row.bet_type?.trim() || "spread";
@@ -101,7 +103,7 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
       const legResult = row.result?.trim() || undefined;
       const isPlayerProp = betType === "player_prop";
 
-      if (!weekId || !email || !pick) continue;
+      if (!weekNumber || !year || !email || !pick) continue;
 
       const leg: CSVLeg = { betType, pick, line, result: legResult };
 
@@ -122,9 +124,9 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
       // Game identification required for non-prop bets; prop bets can stand alone
       if (!leg.gameId && !leg.homeTeam && !isPlayerProp) continue;
 
-      const key = `${weekId}-${email}`;
+      const key = `${year}-${weekNumber}-${email}`;
       if (!recordMap.has(key)) {
-        recordMap.set(key, { weekId, memberEmail: email, status, legs: [] });
+        recordMap.set(key, { weekNumber, year, memberEmail: email, status, legs: [] });
       }
       recordMap.get(key)!.legs.push(leg);
     }
@@ -154,13 +156,13 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
   };
 
   const downloadTemplate = () => {
-    const template = `week_id,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type
-1,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,
-1,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,
-2,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,
-3,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,
-4,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards
-4,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td`;
+    const template = `week_id,year,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type
+1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,
+1,2024,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,
+2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,
+3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,
+4,2024,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards
+4,2024,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td`;
     const blob = new Blob([template], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
