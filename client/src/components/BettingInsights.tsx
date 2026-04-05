@@ -11,7 +11,9 @@ import {
   TrendingDown,
   Minus,
   ChevronRight,
+  LockKeyhole,
 } from "lucide-react";
+import { Link } from "wouter";
 
 type InsightFocus = "general" | "bet_types" | "teams" | "props" | "trends";
 
@@ -41,6 +43,12 @@ interface BettingStats {
 interface InsightResult {
   stats: BettingStats;
   commentary: string;
+  disabled?: false;
+}
+
+interface InsightDisabled {
+  disabled: true;
+  leagueName?: string;
 }
 
 const FOCUS_OPTIONS: { value: InsightFocus; label: string }[] = [
@@ -144,7 +152,7 @@ export function BettingInsights({ scope, leagueId, className }: BettingInsightsP
       ? `/api/leagues/${leagueId}/insights?focus=${focus}&_r=${refreshKey}`
       : `/api/users/me/insights?focus=${focus}${leagueId ? `&leagueId=${leagueId}` : ""}&_r=${refreshKey}`;
 
-  const { data, isLoading, isError } = useQuery<InsightResult>({
+  const { data, isLoading, isError } = useQuery<InsightResult | InsightDisabled>({
     queryKey: ["betting-insights", scope, leagueId, focus, refreshKey],
     queryFn: async () => {
       const res = await fetch(endpoint);
@@ -155,7 +163,9 @@ export function BettingInsights({ scope, leagueId, className }: BettingInsightsP
     retry: 1,
   });
 
-  const stats = data?.stats;
+  const isDisabled = data && "disabled" in data && data.disabled === true;
+  const result = isDisabled ? null : (data as InsightResult | undefined);
+  const stats = result?.stats;
 
   return (
     <Card className={className}>
@@ -196,7 +206,26 @@ export function BettingInsights({ scope, leagueId, className }: BettingInsightsP
       </CardHeader>
 
       <CardContent className="space-y-4">
-        {isLoading ? (
+        {isDisabled ? (
+          <div className="flex flex-col items-center justify-center gap-3 py-8 text-center">
+            <div className="rounded-full bg-muted/40 p-3">
+              <LockKeyhole className="w-6 h-6 text-muted-foreground" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-muted-foreground">AI Insights Not Enabled</p>
+              <p className="text-xs text-muted-foreground/70 mt-1">
+                The Parlay Maestro has not enabled AI Insights for this league.
+              </p>
+            </div>
+            {leagueId && (
+              <Link href={`/leagues/${leagueId}/settings`}>
+                <Button variant="outline" size="sm" className="text-xs">
+                  Go to League Settings
+                </Button>
+              </Link>
+            )}
+          </div>
+        ) : isLoading ? (
           <div className="space-y-3">
             <Skeleton className="h-4 w-full" />
             <Skeleton className="h-4 w-5/6" />
@@ -215,7 +244,7 @@ export function BettingInsights({ scope, leagueId, className }: BettingInsightsP
             <div className="relative">
               <div className="absolute left-0 top-0 bottom-0 w-0.5 rounded-full bg-gradient-to-b from-violet-500/60 to-violet-500/10" />
               <p className="pl-3 text-sm leading-relaxed text-muted-foreground italic">
-                {data?.commentary}
+                {result?.commentary}
               </p>
             </div>
 

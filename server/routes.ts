@@ -475,6 +475,16 @@ export async function registerRoutes(
         ? req.query.focus
         : "general") as InsightFocus;
       const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+
+      // If a specific league is requested, gate by that league's insightsEnabled flag
+      if (leagueId) {
+        const league = await storage.getLeague(leagueId);
+        if (!league) return res.status(404).json({ message: "League not found" });
+        if (!league.insightsEnabled) {
+          return res.json({ disabled: true, leagueName: league.name });
+        }
+      }
+
       const displayName =
         (user?.settings as any)?.displayName || user?.firstName || user?.email || "You";
       const result = await getUserInsights(user.id, displayName, focus, leagueId);
@@ -493,6 +503,9 @@ export async function registerRoutes(
         : "general") as InsightFocus;
       const league = await storage.getLeague(leagueId);
       if (!league) return res.status(404).json({ message: "League not found" });
+      if (!league.insightsEnabled) {
+        return res.json({ disabled: true, leagueName: league.name });
+      }
       const result = await getLeagueInsights(leagueId, league.name, focus);
       res.json(result);
     } catch (err: any) {
@@ -853,6 +866,7 @@ export async function registerRoutes(
         maxParlaysPerWeek: z.number().int().positive().optional(),
         minLegsPerParlay: z.number().int().min(1).optional(),
         maxLegsPerParlay: z.number().int().min(1).optional(),
+        insightsEnabled: z.boolean().optional(),
       });
       const updates = schema.parse(req.body);
       const league = await storage.updateLeagueSettings(leagueId, updates);
