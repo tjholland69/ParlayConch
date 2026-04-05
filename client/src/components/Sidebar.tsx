@@ -10,7 +10,8 @@ import {
   User,
   Users,
   FlaskConical,
-  Settings
+  Settings,
+  Shell
 } from "lucide-react";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -38,7 +39,7 @@ export function Sidebar() {
     <div className="flex flex-col h-full">
       <div className="p-6">
         <h1 className="text-2xl font-bold tracking-tighter text-primary flex items-center gap-2">
-          <Trophy className="w-8 h-8" />
+          <Shell className="w-8 h-8 text-blue-500" />
           <span className="text-glow">PARLAYCONCH</span>
         </h1>
         <p className="text-xs text-muted-foreground mt-1 font-mono uppercase tracking-widest">
@@ -130,7 +131,7 @@ export function Sidebar() {
       {/* Mobile Trigger */}
       <div className="md:hidden fixed top-0 left-0 right-0 z-50 p-4 bg-background/80 backdrop-blur-md border-b border-white/5 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Trophy className="w-6 h-6 text-primary" />
+          <Shell className="w-6 h-6 text-blue-500" />
           <span className="font-bold font-display text-lg tracking-tight">PARLAY.CLUB</span>
         </div>
         <div className="flex items-center gap-1">
