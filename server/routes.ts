@@ -7,7 +7,7 @@ import { z } from "zod";
 import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers } from "@shared/schema";
 import { ilike, eq, and } from "drizzle-orm";
 import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
-import { fetchNFLNews } from "./services/nflNews";
+import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
@@ -445,8 +445,18 @@ export async function registerRoutes(
   // ===== NFL NEWS =====
   app.get("/api/news", async (req, res) => {
     try {
-      const limit = Math.min(Number(req.query.limit) || 10, 20);
-      const news = await fetchNFLNews(limit);
+      const feed = (req.query.feed as string) || "headlines";
+      const limit = Math.min(Number(req.query.limit) || 12, 30);
+
+      let news;
+      if (feed === "injuries") {
+        news = await fetchNFLInjuries();
+      } else if (feed === "scores") {
+        news = await fetchNFLScores();
+      } else {
+        news = await fetchNFLNews(limit);
+      }
+
       res.json(news);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
