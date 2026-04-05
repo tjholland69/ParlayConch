@@ -481,12 +481,24 @@ export async function registerRoutes(
 
       for (const record of records) {
         try {
-          const { weekId, memberEmail, status, legs } = record;
+          const { weekNumber, year, memberEmail, status, legs } = record;
           
-          if (!weekId || !memberEmail || !legs || !Array.isArray(legs) || legs.length === 0) {
-            skippedRows.push(`${memberEmail || "?"} week ${weekId}: missing required fields`);
+          if (!weekNumber || !year || !memberEmail || !legs || !Array.isArray(legs) || legs.length === 0) {
+            skippedRows.push(`${memberEmail || "?"} week ${weekNumber} (${year}): missing required fields`);
             continue;
           }
+
+          // Resolve or auto-create the week row for this season + week number
+          let week = await storage.getWeekBySeasonAndNumber(year, weekNumber);
+          if (!week) {
+            week = await storage.createWeek({
+              season: year,
+              weekNumber,
+              label: `${year} Week ${weekNumber}`,
+              isActive: false,
+            });
+          }
+          const weekId = week.id;
 
           const member = await storage.getLeagueMemberByEmail(leagueId, memberEmail);
           if (!member) {
