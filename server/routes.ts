@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { pool, db } from "./db";
-import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
 import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers } from "@shared/schema";
 import { ilike, eq, and } from "drizzle-orm";
@@ -30,6 +30,7 @@ export async function registerRoutes(
   // Auth setup
   await setupAuth(app);
   registerAuthRoutes(app);
+  registerLocalAuthRoutes(app);
 
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
