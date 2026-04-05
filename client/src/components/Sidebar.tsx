@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "@/components/NotificationBell";
+import { ActForBar } from "@/components/ActForBar";
 
 const NAV_ITEMS = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -133,6 +134,7 @@ export function Sidebar() {
           <span className="font-bold font-display text-lg tracking-tight">PARLAY.CLUB</span>
         </div>
         <div className="flex items-center gap-1">
+          <ActForBar />
           <NotificationBell />
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>

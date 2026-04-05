@@ -1,10 +1,11 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { pool } from "./db";
+import { pool, db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { z } from "zod";
-import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS } from "@shared/schema";
+import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers } from "@shared/schema";
+import { ilike, eq, and } from "drizzle-orm";
 import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { fetchNFLNews } from "./services/nflNews";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
@@ -29,6 +30,109 @@ export async function registerRoutes(
   // Auth setup
   await setupAuth(app);
   registerAuthRoutes(app);
+
+  // === Act-As middleware for super users ===
+  // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
+  // The override is only applied when a super user has set an active act-as session.
+  app.use((req, _res, next) => {
+    const session = req.session as any;
+    if (
+      session?.actingAsUserId &&
+      req.user &&
+      !req.path.startsWith("/api/superuser") &&
+      req.path !== "/api/auth/user"
+    ) {
+      (req.user as any).claims.sub = session.actingAsUserId;
+    }
+    next();
+  });
+
+  // === Super User endpoints ===
+  // All of these intentionally bypass the act-as override (path starts with /api/superuser).
+
+  app.get("/api/superuser/acting-as", isAuthenticated, async (req, res) => {
+    try {
+      const realUserId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(realUserId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const actingAsUserId = (req.session as any).actingAsUserId as string | undefined;
+      if (!actingAsUserId) return res.json({ actingAs: null });
+      const [actingAsUser] = await db
+        .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName })
+        .from(users)
+        .where(eq(users.id, actingAsUserId));
+      res.json({ actingAs: actingAsUser || null });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/superuser/users", isAuthenticated, async (req, res) => {
+    try {
+      const realUserId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(realUserId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const q = (req.query.q as string || "").trim();
+      const userFields = {
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+      };
+      let results;
+      if (q) {
+        results = await db
+          .select(userFields)
+          .from(users)
+          .where(ilike(users.email, `%${q}%`))
+          .limit(10);
+      } else {
+        // Default: return users who are admins in at least one league
+        results = await db
+          .selectDistinct(userFields)
+          .from(users)
+          .innerJoin(leagueMembers, and(eq(leagueMembers.userId, users.id), eq(leagueMembers.role, "admin")))
+          .limit(20);
+      }
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/superuser/act-as", isAuthenticated, async (req, res) => {
+    try {
+      const realUserId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(realUserId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const { userId } = z.object({ userId: z.string() }).parse(req.body);
+      const [targetUser] = await db
+        .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName })
+        .from(users)
+        .where(eq(users.id, userId));
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      (req.session as any).actingAsUserId = userId;
+      res.json({ actingAs: targetUser });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/superuser/act-as", isAuthenticated, async (req, res) => {
+    try {
+      const realUserId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(realUserId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      delete (req.session as any).actingAsUserId;
+      res.json({ actingAs: null });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
 
   // Weeks
   app.get("/api/weeks", async (req, res) => {
