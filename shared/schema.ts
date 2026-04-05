@@ -322,7 +322,7 @@ export type UserStat = {
 };
 
 export type LeagueMemberWithUser = LeagueMember & {
-  user: { id: string; firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null };
+  user: { id: string; firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null; settings?: UserSettings | null };
 };
 
 export type LeagueWithMembers = League & {
@@ -335,7 +335,7 @@ export type LeagueWithMembers = League & {
 export type ParlayWithLegs = Parlay & {
   legs: (ParlayLeg & { game: Game | null })[];
   week: Week;
-  user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null };
+  user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null; settings?: UserSettings | null };
 };
 
 export type LeagueStats = {

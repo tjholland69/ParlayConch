@@ -529,11 +529,11 @@ export default function LeagueDetail() {
                     <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
-                          {parlay.user?.firstName?.[0] || '?'}
+                          {((parlay.user?.settings as any)?.displayName || parlay.user?.firstName || '?')[0]}
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <p className="font-bold">{parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
+                            <p className="font-bold">{(parlay.user?.settings as any)?.displayName || parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
                             {parlay.user?.isDemo && (
                               <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4" data-testid={`badge-demo-user-${parlay.id}`}>
                                 DEMO
@@ -640,10 +640,10 @@ export default function LeagueDetail() {
                   <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground font-bold text-sm">
-                        {m.user?.firstName?.[0] || '?'}
+                        {((m.user?.settings as any)?.displayName || m.user?.firstName || '?')[0]}
                       </div>
                       <div>
-                        <p className="font-bold text-muted-foreground">{m.user?.firstName || m.user?.email || 'Unknown'}</p>
+                        <p className="font-bold text-muted-foreground">{(m.user?.settings as any)?.displayName || m.user?.firstName || m.user?.email || 'Unknown'}</p>
                         <p className="text-xs text-muted-foreground">No submission</p>
                       </div>
                     </div>
@@ -770,11 +770,11 @@ export default function LeagueDetail() {
                             <img src={m.user.profileImageUrl} alt="" className="w-9 h-9 rounded-full" />
                           ) : (
                             <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
-                              {(m.user.firstName || m.user.email || '?')[0].toUpperCase()}
+                              {((m.user.settings as any)?.displayName || m.user.firstName || m.user.email || '?')[0].toUpperCase()}
                             </div>
                           )}
                           <div>
-                            <p className="text-sm font-medium">{m.user.firstName || m.user.email}</p>
+                            <p className="text-sm font-medium">{(m.user.settings as any)?.displayName || m.user.firstName || m.user.email}</p>
                             <p className="text-xs text-muted-foreground">{m.user.email}</p>
                           </div>
                         </div>
@@ -1061,11 +1061,11 @@ export default function LeagueDetail() {
                     <img src={m.user.profileImageUrl} alt="" className="w-8 h-8 rounded-full shrink-0" />
                   ) : (
                     <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm shrink-0">
-                      {(m.user.firstName || m.user.email || '?')[0].toUpperCase()}
+                      {((m.user.settings as any)?.displayName || m.user.firstName || m.user.email || '?')[0].toUpperCase()}
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{m.user.firstName || m.user.email}</p>
+                    <p className="text-sm font-medium truncate">{(m.user.settings as any)?.displayName || m.user.firstName || m.user.email}</p>
                     {m.user.email && <p className="text-xs text-muted-foreground truncate">{m.user.email}</p>}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
