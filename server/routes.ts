@@ -8,6 +8,7 @@ import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type Lie
 import { ilike, eq, and } from "drizzle-orm";
 import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
+import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
@@ -459,6 +460,43 @@ export async function registerRoutes(
 
       res.json(news);
     } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ===== BETTING INSIGHTS =====
+
+  const VALID_FOCUSES: InsightFocus[] = ["general", "bet_types", "teams", "props", "trends"];
+
+  app.get("/api/users/me/insights", isAuthenticated, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const focus = (VALID_FOCUSES.includes(req.query.focus as InsightFocus)
+        ? req.query.focus
+        : "general") as InsightFocus;
+      const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+      const displayName =
+        (user?.settings as any)?.displayName || user?.firstName || user?.email || "You";
+      const result = await getUserInsights(user.id, displayName, focus, leagueId);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[insights] user error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/leagues/:leagueId/insights", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const focus = (VALID_FOCUSES.includes(req.query.focus as InsightFocus)
+        ? req.query.focus
+        : "general") as InsightFocus;
+      const league = await storage.getLeague(leagueId);
+      if (!league) return res.status(404).json({ message: "League not found" });
+      const result = await getLeagueInsights(leagueId, league.name, focus);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[insights] league error:", err);
       res.status(500).json({ message: err.message });
     }
   });
