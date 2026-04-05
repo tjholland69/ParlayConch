@@ -89,6 +89,34 @@ A `is_super_user` boolean column exists on the `users` table (default `false`). 
 
 **How to grant super user access:** Set `is_super_user = true` on the target row in the `users` table. This is intentionally a manual database operation — there is no UI or API for it.
 
+## Player Prop Bets
+
+Parlay legs can now represent player prop bets in addition to standard game bets (spread, moneyline, over/under).
+
+### Schema Changes
+- `parlay_legs.game_id` — now nullable (prop bets may not reference a specific game)
+- `parlay_legs.player_name` — the player's name (null for game bets)
+- `parlay_legs.prop_type` — the prop category (null for game bets); e.g. `rush_yards`, `rec_yards`, `pass_yards`, `pass_tds`, `receptions`, `anytime_td`, `first_td`, `last_td`, `interceptions`, `sacks`, `kicking_pts`, `fg_made`, etc.
+- `parlay_legs.bet_type` — extended with `'player_prop'`
+- `parlay_legs.pick` — extended with `'yes'` / `'no'` for scoring props (alongside existing `'over'`/`'under'`/`'home'`/`'away'`)
+
+### CSV Import Format
+Prop legs are imported via the standard CSV flow. Game identification (`home_team`/`away_team` or `game_id`) is optional for prop bets:
+```
+week_id,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type
+4,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards
+4,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td
+```
+
+### Enrichment
+Prop legs are skipped by the auto-enrichment service (no game-score formula can calculate them). They are immediately marked `odds_enriched = true` so they don't show up in every enrichment pass. Manual result entry (via the Edit Parlay dialog) is the intended way to set prop outcomes.
+
+### Display
+All UI that shows parlay legs handles `player_prop` bet types:
+- **LeagueDetail** and **History** pages show "Player Name — Prop Type" as the matchup label
+- Bet type badge shows "PROP" instead of "PLAYER_PROP"
+- Pick badge shows "Over 72.5", "Yes", "Under 45.5", etc.
+
 ## nflverse Data Integration
 
 ### Overview

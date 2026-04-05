@@ -493,8 +493,11 @@ export async function registerRoutes(
           }
 
           // Resolve legs — support both gameId (old) and homeTeam+awayTeam (new)
-          const resolvedLegs: { gameId: number; betType: string; pick: string; line?: string; result?: string }[] = [];
+          // Player prop legs may omit game identification entirely.
+          const resolvedLegs: { gameId: number | null; betType: string; pick: string; line?: string | null; result?: string | null; playerName?: string | null; propType?: string | null }[] = [];
           for (const leg of legs as any[]) {
+            const betType = leg.betType || 'spread';
+            const isPlayerProp = betType === 'player_prop';
             let gameId: number | null = leg.gameId ?? null;
 
             if (!gameId && leg.homeTeam && leg.awayTeam) {
@@ -502,17 +505,20 @@ export async function registerRoutes(
               gameId = game.id;
             }
 
-            if (!gameId) {
+            // For non-prop bets, game identification is required
+            if (!gameId && !isPlayerProp) {
               skippedRows.push(`${memberEmail} week ${weekId}: could not resolve game for leg`);
               continue;
             }
 
             resolvedLegs.push({
-              gameId,
-              betType: leg.betType || 'spread',
+              gameId: gameId ?? null,
+              betType,
               pick: leg.pick,
               line: leg.line || null,
               result: leg.result || null,
+              playerName: isPlayerProp ? (leg.playerName || null) : null,
+              propType: isPlayerProp ? (leg.propType || null) : null,
             });
           }
 
