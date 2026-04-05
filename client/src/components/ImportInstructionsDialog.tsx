@@ -66,7 +66,7 @@ const FIELDS = [
     column: "line",
     required: false,
     type: "text",
-    description: "The line or odds at the time the bet was placed. Leave blank — it will be auto-filled from game data.",
+    description: "For game bets only: the spread or moneyline odds at the time the bet was placed. Leave blank — it will be auto-filled from game data. For player props, use prop_line instead.",
     example: "-3.5",
   },
   {
@@ -104,22 +104,29 @@ const FIELDS = [
     description: "For player prop bets: the prop category. Common values: rush_yards, rec_yards, pass_yards, pass_tds, receptions, anytime_td, first_td, interceptions, sacks, kicking_pts.",
     example: "rec_yards",
   },
+  {
+    column: "prop_line",
+    required: false,
+    type: "number",
+    description: "For stat-based player props: the numeric threshold the bet is measured against. Combined with pick (over/under), this records the full prop — e.g. prop_line=250.5 with pick=over means you took Tom Brady over 250.5 passing yards. Leave blank for yes/no props like anytime_td.",
+    example: "250.5",
+  },
 ];
 
 const TEMPLATE_ROWS = [
-  "1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,",
-  "1,2024,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,",
-  "2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,",
-  "3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,",
-  "4,2024,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards",
-  "4,2024,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td",
+  "1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,,",
+  "1,2024,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,,",
+  "2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,,",
+  "3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,,",
+  "4,2024,player@example.com,,,player_prop,over,,,approved,Travis Kelce,rec_yards,72.5",
+  "4,2024,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td,",
 ];
 
 export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Props) {
   const [dontShow, setDontShow] = useState(false);
 
   const downloadTemplate = () => {
-    const header = "week_id,year,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type";
+    const header = "week_id,year,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type,prop_line";
     const content = [header, ...TEMPLATE_ROWS].join("\n");
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -234,6 +241,7 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
             <p>• Leave <code className="font-mono text-xs">result</code> and <code className="font-mono text-xs">line</code> blank — they'll be auto-filled from game data after import.</p>
             <p>• Leave <code className="font-mono text-xs">status</code> blank to import as "approved".</p>
             <p>• For player prop bets, set <code className="font-mono text-xs">bet_type</code> to <code className="font-mono text-xs">player_prop</code> and fill in <code className="font-mono text-xs">player_name</code> and <code className="font-mono text-xs">prop_type</code>. The game columns can be left blank for props.</p>
+            <p>• For stat-based props (yards, touchdowns, etc.) fill in <code className="font-mono text-xs">prop_line</code> with the numeric threshold and set <code className="font-mono text-xs">pick</code> to <code className="font-mono text-xs">over</code> or <code className="font-mono text-xs">under</code>. For yes/no props like <code className="font-mono text-xs">anytime_td</code>, leave <code className="font-mono text-xs">prop_line</code> blank and set <code className="font-mono text-xs">pick</code> to <code className="font-mono text-xs">yes</code> or <code className="font-mono text-xs">no</code>.</p>
             <p>• Common <code className="font-mono text-xs">prop_type</code> values: <code className="font-mono text-xs">rush_yards</code>, <code className="font-mono text-xs">rec_yards</code>, <code className="font-mono text-xs">pass_yards</code>, <code className="font-mono text-xs">pass_tds</code>, <code className="font-mono text-xs">receptions</code>, <code className="font-mono text-xs">anytime_td</code>, <code className="font-mono text-xs">first_td</code>, <code className="font-mono text-xs">interceptions</code>, <code className="font-mono text-xs">sacks</code>.</p>
           </div>
 
