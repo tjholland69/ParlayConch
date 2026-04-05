@@ -13,6 +13,7 @@ type SuperUserResult = {
   email: string | null;
   firstName: string | null;
   lastName: string | null;
+  settings?: { displayName?: string } | null;
 };
 
 type ActingAsData = {
@@ -114,7 +115,7 @@ export function ActForBar() {
         <UserCog className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
         <span className="text-xs text-yellow-300/70 font-mono hidden sm:inline">Acting as</span>
         <span className="text-xs font-semibold text-yellow-300 max-w-[160px] truncate">
-          {actingAs.firstName ? `${actingAs.firstName} ${actingAs.lastName || ""}`.trim() : actingAs.email}
+          {actingAs.settings?.displayName || (actingAs.firstName ? `${actingAs.firstName} ${actingAs.lastName || ""}`.trim() : actingAs.email)}
         </span>
         <Button
           size="icon"
@@ -171,12 +172,12 @@ export function ActForBar() {
                 onClick={() => setActAs.mutate(u.id)}
               >
                 <div className="w-7 h-7 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-xs font-bold text-primary shrink-0">
-                  {u.firstName?.[0] || u.email?.[0]?.toUpperCase() || "?"}
+                  {(u.settings?.displayName || u.firstName || u.email || "?")[0].toUpperCase()}
                 </div>
                 <div className="min-w-0">
-                  {u.firstName && (
+                  {(u.settings?.displayName || u.firstName) && (
                     <div className="text-xs font-medium truncate">
-                      {u.firstName} {u.lastName || ""}
+                      {u.settings?.displayName || `${u.firstName} ${u.lastName || ""}`.trim()}
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground truncate">{u.email}</div>

@@ -81,6 +81,7 @@ export async function registerRoutes(
         email: users.email,
         firstName: users.firstName,
         lastName: users.lastName,
+        settings: users.settings,
       };
       let results;
       if (q) {

@@ -76,13 +76,13 @@ export function Sidebar() {
               <img src={user.profileImageUrl} alt="" className="w-10 h-10 rounded-full" />
             ) : (
               <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-lg shadow-lg">
-                {user?.firstName?.[0] || <User className="w-5 h-5" />}
+                {((user?.settings as any)?.displayName || user?.firstName)?.[0] || <User className="w-5 h-5" />}
               </div>
             )}
             <div className="overflow-hidden flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-bold truncate text-white">
-                  {user?.firstName || 'Player'}
+                  {(user?.settings as any)?.displayName || user?.firstName || 'Player'}
                 </p>
                 {user?.isDemo && (
                   <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4 shrink-0" data-testid="badge-user-demo">

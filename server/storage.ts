@@ -355,7 +355,8 @@ export class DatabaseStorage implements IStorage {
         firstName: r.user.firstName,
         email: r.user.email,
         profileImageUrl: r.user.profileImageUrl,
-        isDemo: r.user.isDemo
+        isDemo: r.user.isDemo,
+        settings: r.user.settings as any
       }
     }));
   }
@@ -498,7 +499,7 @@ export class DatabaseStorage implements IStorage {
         ...parlay,
         legs: legs.map(l => ({ ...l.leg, game: l.game ?? null })),
         week,
-        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo }
+        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any }
       });
     }
 

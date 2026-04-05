@@ -75,13 +75,13 @@ function MemberRow({
         <Avatar className="w-9 h-9">
           <AvatarImage src={member.user.profileImageUrl || undefined} />
           <AvatarFallback className="bg-gradient-to-tr from-primary to-accent text-primary-foreground text-sm font-bold">
-            {member.user.firstName?.[0] || member.user.email?.[0] || "?"}
+            {((member.user.settings as any)?.displayName || member.user.firstName || member.user.email || "?")[0]}
           </AvatarFallback>
         </Avatar>
         <div>
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium">
-              {member.user.firstName || member.user.email || "Unknown"}
+              {(member.user.settings as any)?.displayName || member.user.firstName || member.user.email || "Unknown"}
             </p>
             {isMemberAdmin && (
               <Badge variant="secondary" className="text-xs h-4 px-1">
