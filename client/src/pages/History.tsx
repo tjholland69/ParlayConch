@@ -142,11 +142,19 @@ export default function History() {
                       )}
                     >
                       <div className="flex items-center gap-2">
-                        <span className="text-muted-foreground">{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
+                        <span className="text-muted-foreground">
+                          {leg.betType === 'player_prop'
+                            ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}` : ''}`
+                            : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`}
+                        </span>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant="outline" className="text-xs">
-                          {leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam}
+                          {leg.betType === 'player_prop'
+                            ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}`
+                            : leg.betType === 'over' ? `Over ${leg.line || leg.game?.overUnder}`
+                            : leg.betType === 'under' ? `Under ${leg.line || leg.game?.overUnder}`
+                            : leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}
                         </Badge>
                         {leg.result && (
                           <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
@@ -158,7 +166,7 @@ export default function History() {
                   ))}
                 </div>
                 
-                {parlay.legs.some(l => l.game.isFinished) && (
+                {parlay.legs.some(l => l.game?.isFinished) && (
                   <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between text-sm">
                     <span className="text-muted-foreground">
                       {parlay.legs.filter(l => l.result === 'win').length} / {parlay.legs.length} legs hit

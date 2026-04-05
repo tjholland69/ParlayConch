@@ -85,6 +85,18 @@ export async function enrichLeagueParlayLegs(leagueId?: number): Promise<{
       oddsEnriched: true,
     };
 
+    // Player prop legs: skip result/line enrichment (no game-score formula applies)
+    if (leg.betType === 'player_prop' || !game) {
+      try {
+        await storage.enrichParlayLeg(leg.id, updates);
+        enriched++;
+      } catch (err) {
+        console.error(`Failed to mark prop leg ${leg.id} enriched:`, err);
+        skipped++;
+      }
+      continue;
+    }
+
     // Auto-fill result if game is finished and leg has no result
     if (game.isFinished && !leg.result) {
       const result = calculateLegResult(leg.betType, leg.pick, game);

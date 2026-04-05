@@ -83,20 +83,36 @@ const FIELDS = [
     description: "Alternative to home_team + away_team. Use the internal game ID if you have it (advanced / power-user).",
     example: "101",
   },
+  {
+    column: "player_name",
+    required: false,
+    type: "text",
+    description: "For player prop bets (bet_type = player_prop): the player's full name. Leave blank for game bets.",
+    example: "Travis Kelce",
+  },
+  {
+    column: "prop_type",
+    required: false,
+    type: "text",
+    description: "For player prop bets: the prop category. Common values: rush_yards, rec_yards, pass_yards, pass_tds, receptions, anytime_td, first_td, interceptions, sacks, kicking_pts.",
+    example: "rec_yards",
+  },
 ];
 
 const TEMPLATE_ROWS = [
-  "1,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved",
-  "1,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved",
-  "2,other@example.com,Eagles,Cowboys,spread,away,+3,,pending",
-  "3,fan@example.com,49ers,Seahawks,over,over,47.5,,approved",
+  "1,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved,,",
+  "1,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved,,",
+  "2,other@example.com,Eagles,Cowboys,spread,away,+3,,pending,,",
+  "3,fan@example.com,49ers,Seahawks,over,over,47.5,,approved,,",
+  "4,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards",
+  "4,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td",
 ];
 
 export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Props) {
   const [dontShow, setDontShow] = useState(false);
 
   const downloadTemplate = () => {
-    const header = "week_id,member_email,home_team,away_team,bet_type,pick,line,result,status";
+    const header = "week_id,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type";
     const content = [header, ...TEMPLATE_ROWS].join("\n");
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -209,6 +225,8 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
             <p>• <code className="font-mono text-xs">home_team</code> + <code className="font-mono text-xs">away_team</code> are matched to games in your league. If no match is found, a placeholder game is created.</p>
             <p>• Leave <code className="font-mono text-xs">result</code> and <code className="font-mono text-xs">line</code> blank — they'll be auto-filled from game data after import.</p>
             <p>• Leave <code className="font-mono text-xs">status</code> blank to import as "approved".</p>
+            <p>• For player prop bets, set <code className="font-mono text-xs">bet_type</code> to <code className="font-mono text-xs">player_prop</code> and fill in <code className="font-mono text-xs">player_name</code> and <code className="font-mono text-xs">prop_type</code>. The game columns can be left blank for props.</p>
+            <p>• Common <code className="font-mono text-xs">prop_type</code> values: <code className="font-mono text-xs">rush_yards</code>, <code className="font-mono text-xs">rec_yards</code>, <code className="font-mono text-xs">pass_yards</code>, <code className="font-mono text-xs">pass_tds</code>, <code className="font-mono text-xs">receptions</code>, <code className="font-mono text-xs">anytime_td</code>, <code className="font-mono text-xs">first_td</code>, <code className="font-mono text-xs">interceptions</code>, <code className="font-mono text-xs">sacks</code>.</p>
           </div>
 
           {/* Opt-out */}

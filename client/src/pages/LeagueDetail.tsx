@@ -247,19 +247,29 @@ export default function LeagueDetail() {
               <CardContent>
                 <div className="space-y-2">
                   {myParlay.legs.map((leg, i) => {
-                    const pickDisplay = 
-                      leg.betType === 'over' ? `Over ${leg.line || leg.game.overUnder}` :
-                      leg.betType === 'under' ? `Under ${leg.line || leg.game.overUnder}` :
-                      leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam;
-                    const lineDisplay = 
-                      leg.betType === 'spread' ? leg.line || leg.game.spread :
-                      leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game.moneylineHome : leg.game.moneylineAway) :
-                      null;
+                    const isProp = leg.betType === 'player_prop';
+                    const fmtProp = (t: string | null | undefined) =>
+                      t ? t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Prop';
+                    const matchupLabel = isProp
+                      ? (leg.playerName || 'Player')
+                      : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`;
+                    const pickDisplay = isProp
+                      ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}`
+                      : leg.betType === 'over' ? `Over ${leg.line || leg.game?.overUnder}`
+                      : leg.betType === 'under' ? `Under ${leg.line || leg.game?.overUnder}`
+                      : leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam;
+                    const lineDisplay = isProp ? null
+                      : leg.betType === 'spread' ? leg.line || leg.game?.spread
+                      : leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game?.moneylineHome : leg.game?.moneylineAway)
+                      : null;
                     return (
                       <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
-                        <span className="text-sm">{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
+                        <div className="flex flex-col">
+                          <span className="text-sm">{matchupLabel}</span>
+                          {isProp && <span className="text-xs text-muted-foreground">{fmtProp(leg.propType)}</span>}
+                        </div>
                         <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs uppercase">{leg.betType}</Badge>
+                          <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
                           <Badge>{pickDisplay} {lineDisplay && `(${lineDisplay})`}</Badge>
                         </div>
                       </div>
@@ -573,24 +583,31 @@ export default function LeagueDetail() {
                     <CardContent>
                       <div className="space-y-1">
                         {parlay.legs.map((leg, i) => {
-                          const pickDisplay = 
-                            leg.betType === 'over' ? `Over ${leg.line || leg.game.overUnder}` :
-                            leg.betType === 'under' ? `Under ${leg.line || leg.game.overUnder}` :
-                            leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam;
-                          const lineDisplay = 
-                            leg.betType === 'spread' ? leg.line || leg.game.spread :
-                            leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game.moneylineHome : leg.game.moneylineAway) :
-                            null;
+                          const isProp = leg.betType === 'player_prop';
+                          const fmtProp = (t: string | null | undefined) =>
+                            t ? t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Prop';
+                          const matchupLabel = isProp
+                            ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${fmtProp(leg.propType)}` : ''}`
+                            : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`;
+                          const pickDisplay = isProp
+                            ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}`
+                            : leg.betType === 'over' ? `Over ${leg.line || leg.game?.overUnder}`
+                            : leg.betType === 'under' ? `Under ${leg.line || leg.game?.overUnder}`
+                            : leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam;
+                          const lineDisplay = isProp ? null
+                            : leg.betType === 'spread' ? leg.line || leg.game?.spread
+                            : leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game?.moneylineHome : leg.game?.moneylineAway)
+                            : null;
                           return (
                             <div key={i} className="flex items-center justify-between text-sm p-2 bg-white/5 rounded">
-                              <span>{leg.game.awayTeam} @ {leg.game.homeTeam}</span>
+                              <span>{matchupLabel}</span>
                               <div className="flex items-center gap-2">
                                 {leg.result && (
                                   <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
                                     {leg.result}
                                   </Badge>
                                 )}
-                                <Badge variant="outline" className="text-xs uppercase">{leg.betType}</Badge>
+                                <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
                                 <Badge variant="outline" className="text-xs">
                                   {pickDisplay} {lineDisplay && `(${lineDisplay})`}
                                 </Badge>

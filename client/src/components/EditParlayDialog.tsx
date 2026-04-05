@@ -88,9 +88,15 @@ export function EditParlayDialog({ open, onOpenChange, parlay, leagueId, weekId 
             {parlay.legs.map((leg) => (
               <div key={leg.id} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg">
                 <div className="flex-1 text-sm">
-                  <p className="font-medium">{leg.game.awayTeam} @ {leg.game.homeTeam}</p>
+                  <p className="font-medium">
+                    {leg.betType === 'player_prop'
+                      ? (leg.playerName || 'Player Prop')
+                      : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`}
+                  </p>
                   <p className="text-muted-foreground text-xs">
-                    {leg.pick === 'home' ? leg.game.homeTeam : leg.game.awayTeam} ({leg.betType})
+                    {leg.betType === 'player_prop'
+                      ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''} — ${leg.propType?.replace(/_/g, ' ') ?? 'prop'}`
+                      : `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam} (${leg.betType})`}
                   </p>
                 </div>
                 <Select 
