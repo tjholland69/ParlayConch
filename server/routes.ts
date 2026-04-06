@@ -569,7 +569,7 @@ export async function registerRoutes(
 
           // Resolve legs — support both gameId (old) and homeTeam+awayTeam (new)
           // Player prop legs may omit game identification entirely.
-          const resolvedLegs: { gameId: number | null; betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null }[] = [];
+          const resolvedLegs: { gameId: number | null; betType: string; pick: string; line?: string | null; odds?: string | null; gameSegment?: string | null; result?: string | null; playerName?: string | null; propType?: string | null }[] = [];
           for (const leg of legs as any[]) {
             const betType = leg.betType || 'spread';
             const isPlayerProp = betType === 'player_prop';
@@ -592,6 +592,7 @@ export async function registerRoutes(
               pick: leg.pick,
               line: leg.line || null,
               odds: leg.odds || null,
+              gameSegment: leg.gameSegment || null,
               result: leg.result || null,
               playerName: isPlayerProp ? (leg.playerName || null) : null,
               propType: isPlayerProp ? (leg.propType || null) : null,

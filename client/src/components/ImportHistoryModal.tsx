@@ -20,6 +20,7 @@ interface CSVLeg {
   awayTeam?: string;
   betType: string;
   odds?: string;
+  gameSegment?: string;
   pick: string;
   line?: string;
   result?: string;
@@ -106,11 +107,12 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
       const propLine = row.prop_line?.trim() || undefined;
       const line = isPlayerProp ? (propLine || row.line?.trim() || undefined) : (row.line?.trim() || undefined);
       const odds = row.odds?.trim() || undefined;
+      const gameSegment = row.game_segment?.trim() || undefined;
       const legResult = row.result?.trim() || undefined;
 
       if (!weekNumber || !year || !email || !pick) continue;
 
-      const leg: CSVLeg = { betType, pick, line, odds, result: legResult };
+      const leg: CSVLeg = { betType, pick, line, odds, gameSegment, result: legResult };
 
       // Player prop fields
       if (row.player_name?.trim()) leg.playerName = row.player_name.trim();
@@ -161,9 +163,10 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
   };
 
   const downloadTemplate = () => {
-    const template = `week_id,year,member_email,home_team,away_team,bet_type,pick,line,odds,result,status,player_name,prop_type,prop_line
-1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,-110,win,approved,,,
-1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,win,approved,,,
+    const template = `week_id,year,member_email,home_team,away_team,bet_type,pick,line,odds,game_segment,result,status,player_name,prop_type,prop_line
+1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,-110,,win,approved,,,
+1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,,win,approved,,,
+1,2024,player@example.com,Chiefs,Bills,over,over,24.5,-110,First Half,win,approved,,,
 2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,,pending,,,
 3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,-110,,approved,,,
 4,2024,player@example.com,,,player_prop,over,,-115,,approved,Travis Kelce,rec_yards,72.5

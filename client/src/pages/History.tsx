@@ -211,7 +211,12 @@ export default function History() {
                         "bg-white/5"
                       )}
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {(leg as any).gameSegment && (
+                          <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 leading-none">
+                            {(leg as any).gameSegment}
+                          </span>
+                        )}
                         <span className="text-muted-foreground">
                           {leg.betType === 'player_prop'
                             ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}` : ''}`
