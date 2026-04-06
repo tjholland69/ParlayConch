@@ -174,7 +174,8 @@ export const parlayLegs = pgTable("parlay_legs", {
   gameId: integer("game_id"), // nullable — player prop bets may not reference a specific game
   betType: text("bet_type").notNull(), // 'spread', 'moneyline', 'over', 'under', 'player_prop'
   pick: text("pick").notNull(), // 'home', 'away', 'over', 'under', 'yes', 'no'
-  line: text("line"), // The line at time of pick (approximate if auto-filled)
+  line: text("line"), // Spread/total value at time of pick (e.g. -3.5 for spread, 47.5 for total; blank for moneyline)
+  odds: text("odds"), // American-style odds at time of pick (e.g. -110, +130); stored separately from the line value
   result: text("result"), // 'win', 'loss', 'push', null
   oddsEnriched: boolean("odds_enriched").default(false), // true once odds/result have been auto-resolved
   playerName: text("player_name"), // for player_prop bets: the player's name

@@ -592,6 +592,7 @@ export class DatabaseStorage implements IStorage {
           betType: leg.betType,
           pick: leg.pick,
           line: leg.line,
+          odds: (leg as any).odds ?? null,
           result: leg.result,
           playerName: (leg as any).playerName ?? null,
           propType: (leg as any).propType ?? null,
