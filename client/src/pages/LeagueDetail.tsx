@@ -18,6 +18,7 @@ import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { EditParlayDialog } from "@/components/EditParlayDialog";
 import { BettingInsights } from "@/components/BettingInsights";
+import { BetSlipPanel } from "@/components/BetSlipPanel";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import type { Game, ParlayWithLegs } from "@shared/schema";
@@ -283,6 +284,7 @@ export default function LeagueDetail() {
                     {myParlay.status}
                   </Badge>
                 </div>
+                <BetSlipPanel parlay={myParlay} leagueName={league.name} />
               </CardContent>
             </Card>
           ) : (
