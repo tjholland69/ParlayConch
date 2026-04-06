@@ -3,13 +3,28 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2 } from "lucide-react";
+import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check } from "lucide-react";
+import { buildSlipText } from "@/components/BetSlipPanel";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 
 export default function History() {
+  const { toast } = useToast();
   const { data: leagues } = useLeagues();
   const [selectedLeagueId, setSelectedLeagueId] = useState<string>("all");
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  const handleCopySlip = async (parlay: Parameters<typeof buildSlipText>[0]) => {
+    try {
+      await navigator.clipboard.writeText(buildSlipText(parlay));
+      setCopiedId(parlay.id);
+      toast({ title: "Bet slip copied!", description: "Paste it into your sportsbook app." });
+      setTimeout(() => setCopiedId(null), 2500);
+    } catch {
+      toast({ title: "Copy failed", description: "Please copy the text manually.", variant: "destructive" });
+    }
+  };
   
   const leagueId = selectedLeagueId === "all" ? undefined : Number(selectedLeagueId);
   const { data: parlays, isLoading } = useMyParlayHistory(leagueId);
@@ -195,9 +210,20 @@ export default function History() {
                     </p>
                   </div>
                 </div>
-                <Badge variant={getStatusVariant(parlay.status)}>
-                  {parlay.status}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleCopySlip(parlay)}
+                    title="Copy bet slip"
+                    className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+                  >
+                    {copiedId === parlay.id
+                      ? <Check className="w-3.5 h-3.5 text-green-400" />
+                      : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                  <Badge variant={getStatusVariant(parlay.status)}>
+                    {parlay.status}
+                  </Badge>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
