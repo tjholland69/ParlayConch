@@ -77,6 +77,13 @@ const FIELDS = [
     example: "-110",
   },
   {
+    column: "game_segment",
+    required: false,
+    type: "text",
+    description: "The portion of the game the bet applies to. Leave blank for full-game bets. Common values: First Half, Second Half, First Quarter, Second Quarter, Third Quarter, Fourth Quarter. Works with any bet type — e.g. a first-half over or a second-quarter player prop.",
+    example: "First Half",
+  },
+  {
     column: "result",
     required: false,
     type: "text",
@@ -121,19 +128,20 @@ const FIELDS = [
 ];
 
 const TEMPLATE_ROWS = [
-  "1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,-110,win,approved,,,",
-  "1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,win,approved,,,",
-  "2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,,pending,,,",
-  "3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,-110,,approved,,,",
-  "4,2024,player@example.com,,,player_prop,over,,-115,,approved,Travis Kelce,rec_yards,72.5",
-  "4,2024,player@example.com,,,player_prop,yes,,,,approved,Patrick Mahomes,anytime_td,",
+  "1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,-110,,win,approved,,,",
+  "1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,,win,approved,,,",
+  "1,2024,player@example.com,Chiefs,Bills,over,over,24.5,-110,First Half,win,approved,,,",
+  "2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,,,,pending,,,",
+  "3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,-110,,,approved,,,",
+  "4,2024,player@example.com,,,player_prop,over,,-115,Second Quarter,,approved,Travis Kelce,rec_yards,72.5",
+  "4,2024,player@example.com,,,player_prop,yes,,,,,approved,Patrick Mahomes,anytime_td,",
 ];
 
 export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Props) {
   const [dontShow, setDontShow] = useState(false);
 
   const downloadTemplate = () => {
-    const header = "week_id,year,member_email,home_team,away_team,bet_type,pick,line,odds,result,status,player_name,prop_type,prop_line";
+    const header = "week_id,year,member_email,home_team,away_team,bet_type,pick,line,odds,game_segment,result,status,player_name,prop_type,prop_line";
     const content = [header, ...TEMPLATE_ROWS].join("\n");
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -247,6 +255,7 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
             <p>• <code className="font-mono text-xs">home_team</code> + <code className="font-mono text-xs">away_team</code> are matched to games in your league. If no match is found, a placeholder game is created.</p>
             <p>• Leave <code className="font-mono text-xs">result</code> and <code className="font-mono text-xs">line</code> blank — they'll be auto-filled from game data after import. The <code className="font-mono text-xs">odds</code> column is optional; if supplied it's stored as-is (e.g. <code className="font-mono text-xs">-110</code>, <code className="font-mono text-xs">+130</code>).</p>
             <p>• For moneyline bets, leave <code className="font-mono text-xs">line</code> blank and put the odds in the <code className="font-mono text-xs">odds</code> column (e.g. <code className="font-mono text-xs">-155</code>). The spread-style line doesn't apply to moneyline bets.</p>
+            <p>• Use <code className="font-mono text-xs">game_segment</code> when the bet covers only part of the game — e.g. <code className="font-mono text-xs">First Half</code>, <code className="font-mono text-xs">Second Quarter</code>. Leave blank for full-game bets. The segment label is free-form text and will be shown on the parlay card exactly as entered.</p>
             <p>• Leave <code className="font-mono text-xs">status</code> blank to import as "approved".</p>
             <p>• For player prop bets, set <code className="font-mono text-xs">bet_type</code> to <code className="font-mono text-xs">player_prop</code> and fill in <code className="font-mono text-xs">player_name</code> and <code className="font-mono text-xs">prop_type</code>. The game columns can be left blank for props.</p>
             <p>• For stat-based props (yards, touchdowns, etc.) fill in <code className="font-mono text-xs">prop_line</code> with the numeric threshold and set <code className="font-mono text-xs">pick</code> to <code className="font-mono text-xs">over</code> or <code className="font-mono text-xs">under</code>. For yes/no props like <code className="font-mono text-xs">anytime_td</code>, leave <code className="font-mono text-xs">prop_line</code> blank and set <code className="font-mono text-xs">pick</code> to <code className="font-mono text-xs">yes</code> or <code className="font-mono text-xs">no</code>.</p>
