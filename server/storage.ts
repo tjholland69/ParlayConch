@@ -43,6 +43,7 @@ export interface IStorage {
   joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null>;
   getLeagueMembers(leagueId: number): Promise<LeagueMember[]>;
   getLeagueMembersWithUsers(leagueId: number): Promise<LeagueMemberWithUser[]>;
+  isSuperUser(userId: string): Promise<boolean>;
   isLeagueAdmin(leagueId: number, userId: string): Promise<boolean>;
   isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean>;
   updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay'>>): Promise<League>;
@@ -94,7 +95,7 @@ export interface IStorage {
   // Enrichment
   findGameByTeams(weekId: number, homeTeam: string, awayTeam: string): Promise<Game | null>;
   upsertGameForImport(weekId: number, homeTeam: string, awayTeam: string, gameDate?: Date): Promise<Game>;
-  getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game })[]>;
+  getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game | null })[]>;
   enrichParlayLeg(legId: number, updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
   updateGameScores(gameId: number, homeScore: number, awayScore: number, isFinished: boolean, winner?: string): Promise<void>;
   patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
@@ -319,13 +320,20 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
   }
 
+  async isSuperUser(userId: string): Promise<boolean> {
+    const [user] = await db.select({ isSuperUser: users.isSuperUser }).from(users).where(eq(users.id, userId));
+    return user?.isSuperUser === true;
+  }
+
   async isLeagueAdmin(leagueId: number, userId: string): Promise<boolean> {
+    if (await this.isSuperUser(userId)) return true;
     const [member] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
     return member?.role === 'admin';
   }
 
   async isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean> {
+    if (await this.isSuperUser(userId)) return true;
     const [member] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
     return member?.role === 'lieutenant';
@@ -347,7 +355,8 @@ export class DatabaseStorage implements IStorage {
         firstName: r.user.firstName,
         email: r.user.email,
         profileImageUrl: r.user.profileImageUrl,
-        isDemo: r.user.isDemo
+        isDemo: r.user.isDemo,
+        settings: r.user.settings as any
       }
     }));
   }
@@ -357,7 +366,7 @@ export class DatabaseStorage implements IStorage {
     return all.filter(m => m.role === 'lieutenant');
   }
 
-  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay'>>): Promise<League> {
+  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'insightsEnabled'>>): Promise<League> {
     const [updated] = await db.update(leagues)
       .set(updates)
       .where(eq(leagues.id, leagueId))
@@ -453,14 +462,14 @@ export class DatabaseStorage implements IStorage {
       game: games
     })
     .from(parlayLegs)
-    .innerJoin(games, eq(parlayLegs.gameId, games.id))
+    .leftJoin(games, eq(parlayLegs.gameId, games.id))
     .where(eq(parlayLegs.parlayId, parlay.id));
 
     const [week] = await db.select().from(weeks).where(eq(weeks.id, parlay.weekId));
 
     return {
       ...parlay,
-      legs: legs.map(l => ({ ...l.leg, game: l.game })),
+      legs: legs.map(l => ({ ...l.leg, game: l.game ?? null })),
       week
     };
   }
@@ -483,14 +492,14 @@ export class DatabaseStorage implements IStorage {
         game: games
       })
       .from(parlayLegs)
-      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
       .where(eq(parlayLegs.parlayId, parlay.id));
 
       result.push({
         ...parlay,
-        legs: legs.map(l => ({ ...l.leg, game: l.game })),
+        legs: legs.map(l => ({ ...l.leg, game: l.game ?? null })),
         week,
-        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo }
+        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any }
       });
     }
 
@@ -527,14 +536,14 @@ export class DatabaseStorage implements IStorage {
         game: games
       })
       .from(parlayLegs)
-      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
       .where(eq(parlayLegs.parlayId, parlay.id));
 
       const [week] = await db.select().from(weeks).where(eq(weeks.id, parlay.weekId));
 
       result.push({
         ...parlay,
-        legs: legs.map(l => ({ ...l.leg, game: l.game })),
+        legs: legs.map(l => ({ ...l.leg, game: l.game ?? null })),
         week
       });
     }
@@ -579,11 +588,15 @@ export class DatabaseStorage implements IStorage {
 
       if (legs.length > 0) {
         await tx.insert(parlayLegs).values(legs.map(leg => ({ 
-          gameId: leg.gameId,
+          gameId: leg.gameId ?? null,
           betType: leg.betType,
           pick: leg.pick,
           line: leg.line,
+          odds: (leg as any).odds ?? null,
+          gameSegment: (leg as any).gameSegment ?? null,
           result: leg.result,
+          playerName: (leg as any).playerName ?? null,
+          propType: (leg as any).propType ?? null,
           parlayId: newParlay.id 
         })));
       }
@@ -769,15 +782,20 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game })[]> {
+  async getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game | null })[]> {
     // Get legs where oddsEnriched = false, joining on game
     const rows = await db.select().from(parlayLegs);
     const unenriched = rows.filter(l => !l.oddsEnriched);
 
-    const results: (ParlayLeg & { game: Game })[] = [];
+    const results: (ParlayLeg & { game: Game | null })[] = [];
     for (const leg of unenriched) {
-      const [game] = await db.select().from(games).where(eq(games.id, leg.gameId));
-      if (!game) continue;
+      // Player prop legs may have no gameId — still include them so enrichment can mark them done
+      let game: Game | null = null;
+      if (leg.gameId) {
+        const [found] = await db.select().from(games).where(eq(games.id, leg.gameId));
+        if (!found) continue; // Game missing for a game-based leg — skip
+        game = found;
+      }
 
       if (leagueId !== undefined) {
         // Filter by league — need to check parlay -> league

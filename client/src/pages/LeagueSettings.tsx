@@ -34,6 +34,7 @@ import {
   Bell,
   Megaphone,
   Clock,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
@@ -77,13 +78,13 @@ function MemberRow({
         <Avatar className="w-9 h-9">
           <AvatarImage src={member.user.profileImageUrl || undefined} />
           <AvatarFallback className="bg-gradient-to-tr from-primary to-accent text-primary-foreground text-sm font-bold">
-            {member.user.firstName?.[0] || member.user.email?.[0] || "?"}
+            {((member.user.settings as any)?.displayName || member.user.firstName || member.user.email || "?")[0]}
           </AvatarFallback>
         </Avatar>
         <div>
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium">
-              {member.user.firstName || member.user.email || "Unknown"}
+              {(member.user.settings as any)?.displayName || member.user.firstName || member.user.email || "Unknown"}
             </p>
             {isMemberAdmin && (
               <Badge variant="secondary" className="text-xs h-4 px-1">
@@ -168,6 +169,7 @@ export default function LeagueSettings() {
   const [minLegs, setMinLegs] = useState(3);
   const [maxLegs, setMaxLegs] = useState(5);
   const [maxParlays, setMaxParlays] = useState(1);
+  const [insightsEnabled, setInsightsEnabled] = useState(false);
   const [perms, setPerms] = useState<LieutenantPermissions>(DEFAULT_LIEUTENANT_PERMISSIONS);
   const [notifSettings, setNotifSettings] = useState<LeagueNotificationSettings>(DEFAULT_LEAGUE_NOTIFICATION_SETTINGS);
   const [announceTitle, setAnnounceTitle] = useState("");
@@ -180,6 +182,7 @@ export default function LeagueSettings() {
       setMinLegs(league.minLegsPerParlay || 3);
       setMaxLegs(league.maxLegsPerParlay || 5);
       setMaxParlays(league.maxParlaysPerWeek || 1);
+      setInsightsEnabled(league.insightsEnabled ?? false);
       setPerms(
         (league.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS
       );
@@ -213,7 +216,7 @@ export default function LeagueSettings() {
   const lieutenants = members?.filter((m) => m.role === "lieutenant") || [];
 
   const handleSaveGeneral = () => {
-    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays });
+    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled });
   };
 
   const handleSavePermissions = () => {
@@ -370,6 +373,35 @@ export default function LeagueSettings() {
               <p className="text-xs text-muted-foreground">
                 Members must include at least {minLegs} game picks per parlay. The default leg count is {maxLegs}, up to {maxParlays} parlay{maxParlays !== 1 ? "s" : ""} per week.
               </p>
+            </CardContent>
+          </Card>
+
+          {/* AI Insights Feature Toggle */}
+          <Card className="bg-card/50 border-white/5">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-violet-400" />
+                AI Betting Insights
+              </CardTitle>
+              <CardDescription>
+                Enable AI-generated commentary and betting analytics for this league. This uses AI credits and should only be enabled when actively in use.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">
+                    {insightsEnabled ? "Insights are enabled" : "Insights are disabled"}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    When disabled, the Insights tab will show a locked state to all members.
+                  </p>
+                </div>
+                <Switch
+                  checked={insightsEnabled}
+                  onCheckedChange={setInsightsEnabled}
+                />
+              </div>
             </CardContent>
           </Card>
 

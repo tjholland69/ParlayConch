@@ -1,12 +1,14 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { pool } from "./db";
-import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { pool, db } from "./db";
+import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
-import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS } from "@shared/schema";
+import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers } from "@shared/schema";
+import { ilike, eq, and } from "drizzle-orm";
 import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
-import { fetchNFLNews } from "./services/nflNews";
+import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
+import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
@@ -29,6 +31,111 @@ export async function registerRoutes(
   // Auth setup
   await setupAuth(app);
   registerAuthRoutes(app);
+  registerLocalAuthRoutes(app);
+
+  // === Act-As middleware for super users ===
+  // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
+  // The override is only applied when a super user has set an active act-as session.
+  app.use((req, _res, next) => {
+    const session = req.session as any;
+    if (
+      session?.actingAsUserId &&
+      req.user &&
+      !req.path.startsWith("/api/superuser") &&
+      req.path !== "/api/auth/user"
+    ) {
+      (req.user as any).claims.sub = session.actingAsUserId;
+    }
+    next();
+  });
+
+  // === Super User endpoints ===
+  // All of these intentionally bypass the act-as override (path starts with /api/superuser).
+
+  app.get("/api/superuser/acting-as", isAuthenticated, async (req, res) => {
+    try {
+      const realUserId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(realUserId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const actingAsUserId = (req.session as any).actingAsUserId as string | undefined;
+      if (!actingAsUserId) return res.json({ actingAs: null });
+      const [actingAsUser] = await db
+        .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName })
+        .from(users)
+        .where(eq(users.id, actingAsUserId));
+      res.json({ actingAs: actingAsUser || null });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/superuser/users", isAuthenticated, async (req, res) => {
+    try {
+      const realUserId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(realUserId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const q = (req.query.q as string || "").trim();
+      const userFields = {
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        settings: users.settings,
+      };
+      let results;
+      if (q) {
+        results = await db
+          .select(userFields)
+          .from(users)
+          .where(ilike(users.email, `%${q}%`))
+          .limit(10);
+      } else {
+        // Default: return users who are admins in at least one league
+        results = await db
+          .selectDistinct(userFields)
+          .from(users)
+          .innerJoin(leagueMembers, and(eq(leagueMembers.userId, users.id), eq(leagueMembers.role, "admin")))
+          .limit(20);
+      }
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/superuser/act-as", isAuthenticated, async (req, res) => {
+    try {
+      const realUserId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(realUserId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const { userId } = z.object({ userId: z.string() }).parse(req.body);
+      const [targetUser] = await db
+        .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName })
+        .from(users)
+        .where(eq(users.id, userId));
+      if (!targetUser) return res.status(404).json({ message: "User not found" });
+      (req.session as any).actingAsUserId = userId;
+      res.json({ actingAs: targetUser });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/superuser/act-as", isAuthenticated, async (req, res) => {
+    try {
+      const realUserId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(realUserId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      delete (req.session as any).actingAsUserId;
+      res.json({ actingAs: null });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
 
   // Weeks
   app.get("/api/weeks", async (req, res) => {
@@ -339,10 +446,70 @@ export async function registerRoutes(
   // ===== NFL NEWS =====
   app.get("/api/news", async (req, res) => {
     try {
-      const limit = Math.min(Number(req.query.limit) || 10, 20);
-      const news = await fetchNFLNews(limit);
+      const feed = (req.query.feed as string) || "headlines";
+      const limit = Math.min(Number(req.query.limit) || 12, 30);
+
+      let news;
+      if (feed === "injuries") {
+        news = await fetchNFLInjuries();
+      } else if (feed === "scores") {
+        news = await fetchNFLScores();
+      } else {
+        news = await fetchNFLNews(limit);
+      }
+
       res.json(news);
     } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ===== BETTING INSIGHTS =====
+
+  const VALID_FOCUSES: InsightFocus[] = ["general", "bet_types", "teams", "props", "trends"];
+
+  app.get("/api/users/me/insights", isAuthenticated, async (req, res) => {
+    try {
+      const user = req.user as any;
+      const focus = (VALID_FOCUSES.includes(req.query.focus as InsightFocus)
+        ? req.query.focus
+        : "general") as InsightFocus;
+      const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+
+      // If a specific league is requested, gate by that league's insightsEnabled flag
+      if (leagueId) {
+        const league = await storage.getLeague(leagueId);
+        if (!league) return res.status(404).json({ message: "League not found" });
+        if (!league.insightsEnabled) {
+          return res.json({ disabled: true, leagueName: league.name });
+        }
+      }
+
+      const displayName =
+        (user?.settings as any)?.displayName || user?.firstName || user?.email || "You";
+      const result = await getUserInsights(user.id, displayName, focus, leagueId);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[insights] user error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/leagues/:leagueId/insights", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const focus = (VALID_FOCUSES.includes(req.query.focus as InsightFocus)
+        ? req.query.focus
+        : "general") as InsightFocus;
+      const league = await storage.getLeague(leagueId);
+      if (!league) return res.status(404).json({ message: "League not found" });
+      if (!league.insightsEnabled) {
+        return res.json({ disabled: true, leagueName: league.name });
+      }
+      const result = await getLeagueInsights(leagueId, league.name, focus);
+      res.json(result);
+    } catch (err: any) {
+      console.error("[insights] league error:", err);
       res.status(500).json({ message: err.message });
     }
   });
@@ -375,12 +542,24 @@ export async function registerRoutes(
 
       for (const record of records) {
         try {
-          const { weekId, memberEmail, status, legs } = record;
+          const { weekNumber, year, memberEmail, status, legs } = record;
           
-          if (!weekId || !memberEmail || !legs || !Array.isArray(legs) || legs.length === 0) {
-            skippedRows.push(`${memberEmail || "?"} week ${weekId}: missing required fields`);
+          if (!weekNumber || !year || !memberEmail || !legs || !Array.isArray(legs) || legs.length === 0) {
+            skippedRows.push(`${memberEmail || "?"} week ${weekNumber} (${year}): missing required fields`);
             continue;
           }
+
+          // Resolve or auto-create the week row for this season + week number
+          let week = await storage.getWeekBySeasonAndNumber(year, weekNumber);
+          if (!week) {
+            week = await storage.createWeek({
+              season: year,
+              weekNumber,
+              label: `${year} Week ${weekNumber}`,
+              isActive: false,
+            });
+          }
+          const weekId = week.id;
 
           const member = await storage.getLeagueMemberByEmail(leagueId, memberEmail);
           if (!member) {
@@ -389,8 +568,11 @@ export async function registerRoutes(
           }
 
           // Resolve legs — support both gameId (old) and homeTeam+awayTeam (new)
-          const resolvedLegs: { gameId: number; betType: string; pick: string; line?: string; result?: string }[] = [];
+          // Player prop legs may omit game identification entirely.
+          const resolvedLegs: { gameId: number | null; betType: string; pick: string; line?: string | null; odds?: string | null; gameSegment?: string | null; result?: string | null; playerName?: string | null; propType?: string | null }[] = [];
           for (const leg of legs as any[]) {
+            const betType = leg.betType || 'spread';
+            const isPlayerProp = betType === 'player_prop';
             let gameId: number | null = leg.gameId ?? null;
 
             if (!gameId && leg.homeTeam && leg.awayTeam) {
@@ -398,17 +580,22 @@ export async function registerRoutes(
               gameId = game.id;
             }
 
-            if (!gameId) {
+            // For non-prop bets, game identification is required
+            if (!gameId && !isPlayerProp) {
               skippedRows.push(`${memberEmail} week ${weekId}: could not resolve game for leg`);
               continue;
             }
 
             resolvedLegs.push({
-              gameId,
-              betType: leg.betType || 'spread',
+              gameId: gameId ?? null,
+              betType,
               pick: leg.pick,
               line: leg.line || null,
+              odds: leg.odds || null,
+              gameSegment: leg.gameSegment || null,
               result: leg.result || null,
+              playerName: isPlayerProp ? (leg.playerName || null) : null,
+              propType: isPlayerProp ? (leg.propType || null) : null,
             });
           }
 
@@ -579,7 +766,8 @@ export async function registerRoutes(
     try {
       const leagueId = Number(req.params.id);
       const userId = (req.user as any).claims.sub;
-      const isMember = (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+      const superUser = await storage.isSuperUser(userId);
+      const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
       const members = await storage.getLeagueMembersWithUsers(leagueId);
       res.json(members);
@@ -680,6 +868,7 @@ export async function registerRoutes(
         maxParlaysPerWeek: z.number().int().positive().optional(),
         minLegsPerParlay: z.number().int().min(1).optional(),
         maxLegsPerParlay: z.number().int().min(1).optional(),
+        insightsEnabled: z.boolean().optional(),
       });
       const updates = schema.parse(req.body);
       const league = await storage.updateLeagueSettings(leagueId, updates);

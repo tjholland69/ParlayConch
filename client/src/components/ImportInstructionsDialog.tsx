@@ -17,8 +17,15 @@ const FIELDS = [
     column: "week_id",
     required: true,
     type: "number",
-    description: "The numeric ID of the NFL week the parlay belongs to.",
-    example: "1",
+    description: "The NFL week number (1–18 for regular season, 19–22 for playoffs). Combined with year to identify the correct week.",
+    example: "3",
+  },
+  {
+    column: "year",
+    required: true,
+    type: "number",
+    description: "The NFL season year the parlay belongs to. Use the year the season started (e.g. 2024 for the 2024–25 season).",
+    example: "2024",
   },
   {
     column: "member_email",
@@ -59,8 +66,22 @@ const FIELDS = [
     column: "line",
     required: false,
     type: "text",
-    description: "The line or odds at the time the bet was placed. Leave blank — it will be auto-filled from game data.",
+    description: "The spread or total value at the time of the bet. For spread bets: the point spread (e.g. -3.5). For over/under bets: the total (e.g. 47.5). Leave blank for moneyline bets — there is no line. For player props, use prop_line instead.",
     example: "-3.5",
+  },
+  {
+    column: "odds",
+    required: false,
+    type: "text",
+    description: "The American-style odds at the time of the bet (e.g. -110, +130). This is separate from the line — use it to capture the actual payout odds. For moneyline bets, this is where the odds belong (e.g. -155, +120). Leave blank to skip.",
+    example: "-110",
+  },
+  {
+    column: "game_segment",
+    required: false,
+    type: "text",
+    description: "The portion of the game the bet applies to. Leave blank for full-game bets. Common values: First Half, Second Half, First Quarter, Second Quarter, Third Quarter, Fourth Quarter. Works with any bet type — e.g. a first-half over or a second-quarter player prop.",
+    example: "First Half",
   },
   {
     column: "result",
@@ -83,20 +104,44 @@ const FIELDS = [
     description: "Alternative to home_team + away_team. Use the internal game ID if you have it (advanced / power-user).",
     example: "101",
   },
+  {
+    column: "player_name",
+    required: false,
+    type: "text",
+    description: "For player prop bets (bet_type = player_prop): the player's full name. Leave blank for game bets.",
+    example: "Travis Kelce",
+  },
+  {
+    column: "prop_type",
+    required: false,
+    type: "text",
+    description: "For player prop bets: the prop category. Common values: rush_yards, rec_yards, pass_yards, pass_tds, receptions, anytime_td, first_td, interceptions, sacks, kicking_pts.",
+    example: "rec_yards",
+  },
+  {
+    column: "prop_line",
+    required: false,
+    type: "number",
+    description: "For stat-based player props: the numeric threshold the bet is measured against. Combined with pick (over/under), this records the full prop — e.g. prop_line=250.5 with pick=over means you took Tom Brady over 250.5 passing yards. Leave blank for yes/no props like anytime_td.",
+    example: "250.5",
+  },
 ];
 
 const TEMPLATE_ROWS = [
-  "1,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved",
-  "1,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved",
-  "2,other@example.com,Eagles,Cowboys,spread,away,+3,,pending",
-  "3,fan@example.com,49ers,Seahawks,over,over,47.5,,approved",
+  "1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,-110,,win,approved,,,",
+  "1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,,win,approved,,,",
+  "1,2024,player@example.com,Chiefs,Bills,over,over,24.5,-110,First Half,win,approved,,,",
+  "2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,,,,pending,,,",
+  "3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,-110,,,approved,,,",
+  "4,2024,player@example.com,,,player_prop,over,,-115,Second Quarter,,approved,Travis Kelce,rec_yards,72.5",
+  "4,2024,player@example.com,,,player_prop,yes,,,,,approved,Patrick Mahomes,anytime_td,",
 ];
 
 export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Props) {
   const [dontShow, setDontShow] = useState(false);
 
   const downloadTemplate = () => {
-    const header = "week_id,member_email,home_team,away_team,bet_type,pick,line,result,status";
+    const header = "week_id,year,member_email,home_team,away_team,bet_type,pick,line,odds,game_segment,result,status,player_name,prop_type,prop_line";
     const content = [header, ...TEMPLATE_ROWS].join("\n");
     const blob = new Blob([content], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -144,7 +189,7 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
             <div className="text-sm">
               <p className="font-semibold text-foreground mb-0.5">Results & odds auto-filled</p>
               <p className="text-muted-foreground leading-snug">
-                You don't need to manually enter <code className="font-mono text-xs">line</code> or <code className="font-mono text-xs">result</code>. After import, the system automatically calculates win/loss from game scores and fills in approximate odds from the game record.
+                You don't need to manually enter <code className="font-mono text-xs">line</code>, <code className="font-mono text-xs">odds</code>, or <code className="font-mono text-xs">result</code>. After import, the system automatically calculates win/loss from game scores and fills in approximate lines from the game record. If you do supply <code className="font-mono text-xs">odds</code>, those values are preserved as-entered.
               </p>
             </div>
           </div>
@@ -203,12 +248,18 @@ export function ImportInstructionsDialog({ open, onOpenChange, onContinue }: Pro
           {/* Tips */}
           <div className="rounded-xl bg-white/5 border border-white/5 p-4 space-y-1.5 text-sm text-muted-foreground">
             <p className="font-medium text-foreground text-xs uppercase tracking-wider mb-2">Tips</p>
-            <p>• One row per parlay leg. Multiple legs for the same member + week are automatically combined into one parlay.</p>
+            <p>• One row per parlay leg. Multiple legs for the same member + week + year are automatically combined into one parlay.</p>
+            <p>• Use the year the NFL season <em>started</em> — the 2024–25 season is year <code className="font-mono text-xs">2024</code>.</p>
             <p>• The member's email must match their Parlayconch account email exactly.</p>
             <p>• Use either team name shorthand ("Chiefs") or the full name ("Kansas City Chiefs") — both work.</p>
             <p>• <code className="font-mono text-xs">home_team</code> + <code className="font-mono text-xs">away_team</code> are matched to games in your league. If no match is found, a placeholder game is created.</p>
-            <p>• Leave <code className="font-mono text-xs">result</code> and <code className="font-mono text-xs">line</code> blank — they'll be auto-filled from game data after import.</p>
+            <p>• Leave <code className="font-mono text-xs">result</code> and <code className="font-mono text-xs">line</code> blank — they'll be auto-filled from game data after import. The <code className="font-mono text-xs">odds</code> column is optional; if supplied it's stored as-is (e.g. <code className="font-mono text-xs">-110</code>, <code className="font-mono text-xs">+130</code>).</p>
+            <p>• For moneyline bets, leave <code className="font-mono text-xs">line</code> blank and put the odds in the <code className="font-mono text-xs">odds</code> column (e.g. <code className="font-mono text-xs">-155</code>). The spread-style line doesn't apply to moneyline bets.</p>
+            <p>• Use <code className="font-mono text-xs">game_segment</code> when the bet covers only part of the game — e.g. <code className="font-mono text-xs">First Half</code>, <code className="font-mono text-xs">Second Quarter</code>. Leave blank for full-game bets. The segment label is free-form text and will be shown on the parlay card exactly as entered.</p>
             <p>• Leave <code className="font-mono text-xs">status</code> blank to import as "approved".</p>
+            <p>• For player prop bets, set <code className="font-mono text-xs">bet_type</code> to <code className="font-mono text-xs">player_prop</code> and fill in <code className="font-mono text-xs">player_name</code> and <code className="font-mono text-xs">prop_type</code>. The game columns can be left blank for props.</p>
+            <p>• For stat-based props (yards, touchdowns, etc.) fill in <code className="font-mono text-xs">prop_line</code> with the numeric threshold and set <code className="font-mono text-xs">pick</code> to <code className="font-mono text-xs">over</code> or <code className="font-mono text-xs">under</code>. For yes/no props like <code className="font-mono text-xs">anytime_td</code>, leave <code className="font-mono text-xs">prop_line</code> blank and set <code className="font-mono text-xs">pick</code> to <code className="font-mono text-xs">yes</code> or <code className="font-mono text-xs">no</code>.</p>
+            <p>• Common <code className="font-mono text-xs">prop_type</code> values: <code className="font-mono text-xs">rush_yards</code>, <code className="font-mono text-xs">rec_yards</code>, <code className="font-mono text-xs">pass_yards</code>, <code className="font-mono text-xs">pass_tds</code>, <code className="font-mono text-xs">receptions</code>, <code className="font-mono text-xs">anytime_td</code>, <code className="font-mono text-xs">first_td</code>, <code className="font-mono text-xs">interceptions</code>, <code className="font-mono text-xs">sacks</code>.</p>
           </div>
 
           {/* Opt-out */}

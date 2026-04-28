@@ -19,13 +19,18 @@ interface CSVLeg {
   homeTeam?: string;
   awayTeam?: string;
   betType: string;
+  odds?: string;
+  gameSegment?: string;
   pick: string;
   line?: string;
   result?: string;
+  playerName?: string;
+  propType?: string;
 }
 
 interface CSVRecord {
-  weekId: number;
+  weekNumber: number;
+  year: number;
   memberEmail: string;
   status: string;
   legs: CSVLeg[];
@@ -79,14 +84,9 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
     const firstRow = rows[0];
     const hasGameId = "game_id" in firstRow;
     const hasTeamNames = "home_team" in firstRow && "away_team" in firstRow;
+    const hasGameIdentifier = hasGameId || hasTeamNames;
 
-    if (!hasGameId && !hasTeamNames) {
-      throw new Error(
-        "CSV must include either 'game_id' or both 'home_team' + 'away_team' columns to identify each game."
-      );
-    }
-
-    const requiredBase = ["week_id", "member_email", "pick"];
+    const requiredBase = ["week_id", "year", "member_email", "pick"];
     const missingBase = requiredBase.filter(f => !(f in firstRow));
     if (missingBase.length > 0) {
       throw new Error(`CSV is missing required columns: ${missingBase.join(", ")}`);
@@ -95,17 +95,28 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
     const recordMap = new Map<string, CSVRecord>();
 
     for (const row of rows) {
-      const weekId = parseInt(row.week_id);
+      const weekNumber = parseInt(row.week_id);
+      const year = parseInt(row.year);
       const email = row.member_email?.trim();
       const pick = row.pick?.trim();
       const betType = row.bet_type?.trim() || "spread";
       const status = row.status?.trim() || "approved";
-      const line = row.line?.trim() || undefined;
+      const isPlayerProp = betType === "player_prop";
+      // For prop bets: prop_line holds the numeric threshold (e.g. 250.5 yards).
+      // For game bets: line holds the spread/odds. prop_line takes precedence for props.
+      const propLine = row.prop_line?.trim() || undefined;
+      const line = isPlayerProp ? (propLine || row.line?.trim() || undefined) : (row.line?.trim() || undefined);
+      const odds = row.odds?.trim() || undefined;
+      const gameSegment = row.game_segment?.trim() || undefined;
       const legResult = row.result?.trim() || undefined;
 
-      if (!weekId || !email || !pick) continue;
+      if (!weekNumber || !year || !email || !pick) continue;
 
-      const leg: CSVLeg = { betType, pick, line, result: legResult };
+      const leg: CSVLeg = { betType, pick, line, odds, gameSegment, result: legResult };
+
+      // Player prop fields
+      if (row.player_name?.trim()) leg.playerName = row.player_name.trim();
+      if (row.prop_type?.trim()) leg.propType = row.prop_type.trim();
 
       if (hasGameId && row.game_id) {
         const gameId = parseInt(row.game_id);
@@ -117,11 +128,12 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
         leg.awayTeam = row.away_team.trim();
       }
 
-      if (!leg.gameId && !leg.homeTeam) continue;
+      // Game identification required for non-prop bets; prop bets can stand alone
+      if (!leg.gameId && !leg.homeTeam && !isPlayerProp) continue;
 
-      const key = `${weekId}-${email}`;
+      const key = `${year}-${weekNumber}-${email}`;
       if (!recordMap.has(key)) {
-        recordMap.set(key, { weekId, memberEmail: email, status, legs: [] });
+        recordMap.set(key, { weekNumber, year, memberEmail: email, status, legs: [] });
       }
       recordMap.get(key)!.legs.push(leg);
     }
@@ -151,10 +163,14 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
   };
 
   const downloadTemplate = () => {
-    const template = `week_id,member_email,home_team,away_team,bet_type,pick,line,result,status
-1,player@example.com,Chiefs,Bills,spread,home,-3.5,win,approved
-1,player@example.com,Chiefs,Bills,moneyline,home,-155,win,approved
-2,other@example.com,Eagles,Cowboys,spread,away,+3,,pending`;
+    const template = `week_id,year,member_email,home_team,away_team,bet_type,pick,line,odds,game_segment,result,status,player_name,prop_type,prop_line
+1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,-110,,win,approved,,,
+1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,,win,approved,,,
+1,2024,player@example.com,Chiefs,Bills,over,over,24.5,-110,First Half,win,approved,,,
+2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,,pending,,,
+3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,-110,,approved,,,
+4,2024,player@example.com,,,player_prop,over,,-115,,approved,Travis Kelce,rec_yards,72.5
+4,2024,player@example.com,,,player_prop,yes,,,,approved,Patrick Mahomes,anytime_td,`;
     const blob = new Blob([template], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
