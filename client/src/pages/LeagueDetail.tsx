@@ -282,15 +282,22 @@ export default function LeagueDetail() {
                       : leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game?.moneylineHome : leg.game?.moneylineAway)
                       : null;
                     return (
-                      <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-lg">
-                        <div className="flex flex-col">
-                          <span className="text-sm">{matchupLabel}</span>
-                          {isProp && <span className="text-xs text-muted-foreground">{fmtProp(leg.propType)}</span>}
+                      <div key={i} className="flex flex-col gap-1 p-3 bg-white/5 rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <div className="flex flex-col">
+                            <span className="text-sm">{matchupLabel}</span>
+                            {isProp && <span className="text-xs text-muted-foreground">{fmtProp(leg.propType)}</span>}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
+                            <Badge>{pickDisplay} {lineDisplay && `(${lineDisplay})`}</Badge>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
-                          <Badge>{pickDisplay} {lineDisplay && `(${lineDisplay})`}</Badge>
-                        </div>
+                        {leg.notes && (
+                          <p className="text-xs text-muted-foreground italic pl-1 border-l border-white/10">
+                            {leg.notes}
+                          </p>
+                        )}
                       </div>
                     );
                   })}
@@ -619,19 +626,26 @@ export default function LeagueDetail() {
                             : leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game?.moneylineHome : leg.game?.moneylineAway)
                             : null;
                           return (
-                            <div key={i} className="flex items-center justify-between text-sm p-2 bg-white/5 rounded">
-                              <span>{matchupLabel}</span>
-                              <div className="flex items-center gap-2">
-                                {leg.result && (
-                                  <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
-                                    {leg.result}
+                            <div key={i} className="flex flex-col gap-1 text-sm p-2 bg-white/5 rounded">
+                              <div className="flex items-center justify-between">
+                                <span>{matchupLabel}</span>
+                                <div className="flex items-center gap-2">
+                                  {leg.result && (
+                                    <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
+                                      {leg.result}
+                                    </Badge>
+                                  )}
+                                  <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
+                                  <Badge variant="outline" className="text-xs">
+                                    {pickDisplay} {lineDisplay && `(${lineDisplay})`}
                                   </Badge>
-                                )}
-                                <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
-                                <Badge variant="outline" className="text-xs">
-                                  {pickDisplay} {lineDisplay && `(${lineDisplay})`}
-                                </Badge>
+                                </div>
                               </div>
+                              {leg.notes && (
+                                <p className="text-xs text-muted-foreground italic pl-1 border-l border-white/10">
+                                  {leg.notes}
+                                </p>
+                              )}
                             </div>
                           );
                         })}

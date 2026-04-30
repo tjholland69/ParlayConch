@@ -181,6 +181,7 @@ export const parlayLegs = pgTable("parlay_legs", {
   oddsEnriched: boolean("odds_enriched").default(false), // true once odds/result have been auto-resolved
   playerName: text("player_name"), // for player_prop bets: the player's name
   propType: text("prop_type"),     // for player_prop bets: the prop category (e.g. 'rush_yards')
+  notes: text("notes"),            // free-text note, display only
 });
 
 // Parlay week locks — tracks when a Parlay Maestro locks a week's submissions

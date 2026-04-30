@@ -231,42 +231,49 @@ export default function History() {
                     <div 
                       key={i} 
                       className={cn(
-                        "flex items-center justify-between text-sm p-3 rounded-lg",
+                        "flex flex-col gap-1 text-sm p-3 rounded-lg",
                         leg.result === 'win' ? "bg-primary/10" :
                         leg.result === 'loss' ? "bg-destructive/10" :
                         "bg-white/5"
                       )}
                     >
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {(leg as any).gameSegment && (
-                          <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 leading-none">
-                            {(leg as any).gameSegment}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {(leg as any).gameSegment && (
+                            <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 leading-none">
+                              {(leg as any).gameSegment}
+                            </span>
+                          )}
+                          <span className="text-muted-foreground">
+                            {leg.betType === 'player_prop'
+                              ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}` : ''}`
+                              : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`}
                           </span>
-                        )}
-                        <span className="text-muted-foreground">
-                          {leg.betType === 'player_prop'
-                            ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}` : ''}`
-                            : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">
-                          {leg.betType === 'player_prop'
-                            ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                            : leg.betType === 'over'
-                            ? `Over ${leg.line || leg.game?.overUnder}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                            : leg.betType === 'under'
-                            ? `Under ${leg.line || leg.game?.overUnder}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                            : leg.betType === 'moneyline'
-                            ? `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}${(leg as any).odds ? ` ${(leg as any).odds}` : ''}`
-                            : `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}${leg.line ? ` ${leg.line}` : ''}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`}
-                        </Badge>
-                        {leg.result && (
-                          <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
-                            {leg.result}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline" className="text-xs">
+                            {leg.betType === 'player_prop'
+                              ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
+                              : leg.betType === 'over'
+                              ? `Over ${leg.line || leg.game?.overUnder}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
+                              : leg.betType === 'under'
+                              ? `Under ${leg.line || leg.game?.overUnder}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
+                              : leg.betType === 'moneyline'
+                              ? `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}${(leg as any).odds ? ` ${(leg as any).odds}` : ''}`
+                              : `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}${leg.line ? ` ${leg.line}` : ''}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`}
                           </Badge>
-                        )}
+                          {leg.result && (
+                            <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
+                              {leg.result}
+                            </Badge>
+                          )}
+                        </div>
                       </div>
+                      {leg.notes && (
+                        <p className="text-xs text-muted-foreground italic pl-1 border-l border-white/10">
+                          {leg.notes}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>

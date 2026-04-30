@@ -61,7 +61,7 @@ export interface IStorage {
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
   getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]>;
-  updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string }[] }): Promise<Parlay>;
+  updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string; notes?: string | null }[] }): Promise<Parlay>;
 
   // Imports
   createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
@@ -562,7 +562,7 @@ export class DatabaseStorage implements IStorage {
       .sort((a, b) => b.week.weekNumber - a.week.weekNumber);
   }
 
-  async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string }[] }): Promise<Parlay> {
+  async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string; notes?: string | null }[] }): Promise<Parlay> {
     return await db.transaction(async (tx) => {
       const existingLegs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
       const validLegIds = new Set(existingLegs.map(l => l.id));
@@ -574,8 +574,11 @@ export class DatabaseStorage implements IStorage {
       if (updates.legs) {
         for (const leg of updates.legs) {
           if (!validLegIds.has(leg.id)) continue;
-          if (leg.result !== undefined) {
-            await tx.update(parlayLegs).set({ result: leg.result }).where(eq(parlayLegs.id, leg.id));
+          const legUpdates: Record<string, any> = {};
+          if (leg.result !== undefined) legUpdates.result = leg.result;
+          if (leg.notes !== undefined) legUpdates.notes = leg.notes;
+          if (Object.keys(legUpdates).length > 0) {
+            await tx.update(parlayLegs).set(legUpdates).where(eq(parlayLegs.id, leg.id));
           }
         }
       }
@@ -608,6 +611,7 @@ export class DatabaseStorage implements IStorage {
           result: leg.result,
           playerName: (leg as any).playerName ?? null,
           propType: (leg as any).propType ?? null,
+          notes: (leg as any).notes ?? null,
           parlayId: newParlay.id 
         })));
       }
