@@ -87,7 +87,7 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
     const hasTeamNames = "home_team" in firstRow && "away_team" in firstRow;
     const hasGameIdentifier = hasGameId || hasTeamNames;
 
-    const requiredBase = ["week_id", "year", "member_email", "pick"];
+    const requiredBase = ["week_id", "year", "member_email"];
     const missingBase = requiredBase.filter(f => !(f in firstRow));
     if (missingBase.length > 0) {
       throw new Error(`CSV is missing required columns: ${missingBase.join(", ")}`);
@@ -99,19 +99,31 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
       const weekNumber = parseInt(row.week_id);
       const year = parseInt(row.year);
       const email = row.member_email?.trim();
-      const pick = row.pick?.trim();
-      const betType = row.bet_type?.trim() || "spread";
       const status = row.status?.trim() || "approved";
+      const pick = row.pick?.trim();
+
+      if (!weekNumber || !year || !email) continue;
+
+      const key = `${year}-${weekNumber}-${email}`;
+
+      // Void/missed rows — no bet data needed, just record the miss
+      if (status === "void" || status === "missed") {
+        if (!recordMap.has(key)) {
+          recordMap.set(key, { weekNumber, year, memberEmail: email, status: "void", legs: [] });
+        }
+        continue;
+      }
+
+      // Regular bet rows require a pick
+      if (!pick) continue;
+
+      const betType = row.bet_type?.trim() || "spread";
       const isPlayerProp = betType === "player_prop";
-      // For prop bets: prop_line holds the numeric threshold (e.g. 250.5 yards).
-      // For game bets: line holds the spread/odds. prop_line takes precedence for props.
       const propLine = row.prop_line?.trim() || undefined;
       const line = isPlayerProp ? (propLine || row.line?.trim() || undefined) : (row.line?.trim() || undefined);
       const odds = row.odds?.trim() || undefined;
       const gameSegment = row.game_segment?.trim() || undefined;
       const legResult = row.result?.trim() || undefined;
-
-      if (!weekNumber || !year || !email || !pick) continue;
 
       const leg: CSVLeg = { betType, pick, line, odds, gameSegment, result: legResult };
 
@@ -135,7 +147,6 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
       // Game identification required for non-prop bets; prop bets can stand alone
       if (!leg.gameId && !leg.homeTeam && !isPlayerProp) continue;
 
-      const key = `${year}-${weekNumber}-${email}`;
       if (!recordMap.has(key)) {
         recordMap.set(key, { weekNumber, year, memberEmail: email, status, legs: [] });
       }
@@ -172,7 +183,8 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
 1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,,win,approved,,,,"Great value at this price"
 1,2024,player@example.com,Chiefs,Bills,over,over,24.5,-110,First Half,win,approved,,,,"Both teams scored on opening drives"
 2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,,pending,,,,
-3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,-110,,approved,,,,
+3,2023,fan@example.com,,,,,,,,void
+3,2023,other@example.com,49ers,Seahawks,over,over,47.5,-110,,approved,,,,
 4,2024,player@example.com,,,player_prop,over,,-115,,approved,Travis Kelce,rec_yards,72.5,
 4,2024,player@example.com,,,player_prop,yes,,,,approved,Patrick Mahomes,anytime_td,,"Mahomes always finds the end zone"`;
     const blob = new Blob([template], { type: "text/csv" });
@@ -235,7 +247,7 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
                 <span className="font-medium">Ready to import</span>
               </div>
               <div className="space-y-1 text-sm text-muted-foreground">
-                <p>{parsedRecords.length} parlays found</p>
+                <p>{parsedRecords.filter(r => r.status !== 'void').length} parlays · {parsedRecords.filter(r => r.status === 'void').length} missed weeks</p>
                 <p>{parsedRecords.reduce((sum, r) => sum + r.legs.length, 0)} total legs</p>
               </div>
               <div className="flex items-start gap-2 mt-2 p-2 bg-primary/10 rounded text-xs text-primary">

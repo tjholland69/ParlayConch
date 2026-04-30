@@ -543,8 +543,15 @@ export async function registerRoutes(
       for (const record of records) {
         try {
           const { weekNumber, year, memberEmail, status, legs } = record;
-          
-          if (!weekNumber || !year || !memberEmail || !legs || !Array.isArray(legs) || legs.length === 0) {
+          const isVoid = status === 'void' || status === 'missed';
+
+          if (!weekNumber || !year || !memberEmail) {
+            skippedRows.push(`${memberEmail || "?"} week ${weekNumber} (${year}): missing required fields`);
+            continue;
+          }
+
+          // Non-void records must have at least one leg
+          if (!isVoid && (!legs || !Array.isArray(legs) || legs.length === 0)) {
             skippedRows.push(`${memberEmail || "?"} week ${weekNumber} (${year}): missing required fields`);
             continue;
           }
@@ -564,6 +571,19 @@ export async function registerRoutes(
           const member = await storage.getLeagueMemberByEmail(leagueId, memberEmail);
           if (!member) {
             skippedRows.push(`${memberEmail}: not a member of this league`);
+            continue;
+          }
+
+          // Void/missed records: create a 0-leg parlay and skip leg resolution
+          if (isVoid) {
+            await storage.createImportedParlay(
+              member.userId,
+              { leagueId, weekId },
+              [],
+              batch.id,
+              'void'
+            );
+            imported++;
             continue;
           }
 
