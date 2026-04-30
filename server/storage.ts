@@ -266,23 +266,27 @@ export class DatabaseStorage implements IStorage {
     if (memberships.length === 0) return [];
 
     const leagueIds = memberships.map(m => m.leagueId);
-    const userLeagues = await db.select().from(leagues).where(inArray(leagues.id, leagueIds));
+    const [userLeagues, allMembers] = await Promise.all([
+      db.select().from(leagues).where(inArray(leagues.id, leagueIds)),
+      db.select({ member: leagueMembers, user: users })
+        .from(leagueMembers)
+        .innerJoin(users, eq(leagueMembers.userId, users.id))
+        .where(inArray(leagueMembers.leagueId, leagueIds)),
+    ]);
 
-    const result: LeagueWithMembers[] = [];
-    for (const league of userLeagues) {
-      const allMembers = await db.select({
-        member: leagueMembers,
-        user: users
-      })
-      .from(leagueMembers)
-      .innerJoin(users, eq(leagueMembers.userId, users.id))
-      .where(eq(leagueMembers.leagueId, league.id));
+    const membersByLeague = new Map<number, typeof allMembers>();
+    for (const m of allMembers) {
+      const existing = membersByLeague.get(m.member.leagueId) ?? [];
+      existing.push(m);
+      membersByLeague.set(m.member.leagueId, existing);
+    }
 
+    return userLeagues.map(league => {
+      const members = membersByLeague.get(league.id) ?? [];
       const userMembership = memberships.find(m => m.leagueId === league.id);
-
-      result.push({
+      return {
         ...league,
-        members: allMembers.map(m => ({
+        members: members.map(m => ({
           ...m.member,
           user: {
             id: m.user.id,
@@ -292,13 +296,11 @@ export class DatabaseStorage implements IStorage {
             isDemo: m.user.isDemo
           }
         })),
-        memberCount: allMembers.length,
+        memberCount: members.length,
         isAdmin: userMembership?.role === 'admin',
-        isLieutenant: userMembership?.role === 'lieutenant'
-      });
-    }
-
-    return result;
+        isLieutenant: userMembership?.role === 'lieutenant',
+      };
+    });
   }
 
   async joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null> {
@@ -483,27 +485,29 @@ export class DatabaseStorage implements IStorage {
     .innerJoin(users, eq(parlays.userId, users.id))
     .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
 
+    if (leagueParlays.length === 0) return [];
+
     const [week] = await db.select().from(weeks).where(eq(weeks.id, weekId));
 
-    const result: ParlayWithLegs[] = [];
-    for (const { parlay, user } of leagueParlays) {
-      const legs = await db.select({
-        leg: parlayLegs,
-        game: games
-      })
+    const parlayIds = leagueParlays.map(({ parlay }) => parlay.id);
+    const allLegs = await db.select({ leg: parlayLegs, game: games })
       .from(parlayLegs)
-      .leftJoin(games, eq(parlayLegs.gameId, games.id))
-      .where(eq(parlayLegs.parlayId, parlay.id));
+      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(inArray(parlayLegs.parlayId, parlayIds));
 
-      result.push({
-        ...parlay,
-        legs: legs.map(l => ({ ...l.leg, game: l.game ?? null })),
-        week,
-        user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any }
-      });
+    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game })[]>();
+    for (const { leg, game } of allLegs) {
+      const existing = legsByParlayId.get(leg.parlayId) ?? [];
+      existing.push({ ...leg, game });
+      legsByParlayId.set(leg.parlayId, existing);
     }
 
-    return result;
+    return leagueParlays.map(({ parlay, user }) => ({
+      ...parlay,
+      legs: legsByParlayId.get(parlay.id) ?? [],
+      week,
+      user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo }
+    }));
   }
 
   async approveParlay(parlayId: number, adminId: string): Promise<Parlay> {
@@ -523,32 +527,39 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]> {
-    let query = db.select().from(parlays).where(eq(parlays.userId, userId));
-    
-    const userParlays = leagueId 
+    const userParlays = leagueId
       ? await db.select().from(parlays).where(and(eq(parlays.userId, userId), eq(parlays.leagueId, leagueId)))
       : await db.select().from(parlays).where(eq(parlays.userId, userId));
 
-    const result: ParlayWithLegs[] = [];
-    for (const parlay of userParlays) {
-      const legs = await db.select({
-        leg: parlayLegs,
-        game: games
-      })
-      .from(parlayLegs)
-      .leftJoin(games, eq(parlayLegs.gameId, games.id))
-      .where(eq(parlayLegs.parlayId, parlay.id));
+    if (userParlays.length === 0) return [];
 
-      const [week] = await db.select().from(weeks).where(eq(weeks.id, parlay.weekId));
+    const parlayIds = userParlays.map(p => p.id);
+    const weekIds = [...new Set(userParlays.map(p => p.weekId))];
 
-      result.push({
-        ...parlay,
-        legs: legs.map(l => ({ ...l.leg, game: l.game ?? null })),
-        week
-      });
+    const [allLegs, allWeeks] = await Promise.all([
+      db.select({ leg: parlayLegs, game: games })
+        .from(parlayLegs)
+        .innerJoin(games, eq(parlayLegs.gameId, games.id))
+        .where(inArray(parlayLegs.parlayId, parlayIds)),
+      db.select().from(weeks).where(inArray(weeks.id, weekIds)),
+    ]);
+
+    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game })[]>();
+    for (const { leg, game } of allLegs) {
+      const existing = legsByParlayId.get(leg.parlayId) ?? [];
+      existing.push({ ...leg, game });
+      legsByParlayId.set(leg.parlayId, existing);
     }
 
-    return result.sort((a, b) => b.week.weekNumber - a.week.weekNumber);
+    const weekById = new Map(allWeeks.map(w => [w.id, w]));
+
+    return userParlays
+      .map(parlay => ({
+        ...parlay,
+        legs: legsByParlayId.get(parlay.id) ?? [],
+        week: weekById.get(parlay.weekId)!,
+      }))
+      .sort((a, b) => b.week.weekNumber - a.week.weekNumber);
   }
 
   async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string }[] }): Promise<Parlay> {
@@ -782,30 +793,19 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game | null })[]> {
-    // Get legs where oddsEnriched = false, joining on game
-    const rows = await db.select().from(parlayLegs);
-    const unenriched = rows.filter(l => !l.oddsEnriched);
+  async getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game })[]> {
+    const rows = await db
+      .select({ leg: parlayLegs, game: games })
+      .from(parlayLegs)
+      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(
+        leagueId !== undefined
+          ? and(eq(parlayLegs.oddsEnriched, false), eq(parlays.leagueId, leagueId))
+          : eq(parlayLegs.oddsEnriched, false)
+      );
 
-    const results: (ParlayLeg & { game: Game | null })[] = [];
-    for (const leg of unenriched) {
-      // Player prop legs may have no gameId — still include them so enrichment can mark them done
-      let game: Game | null = null;
-      if (leg.gameId) {
-        const [found] = await db.select().from(games).where(eq(games.id, leg.gameId));
-        if (!found) continue; // Game missing for a game-based leg — skip
-        game = found;
-      }
-
-      if (leagueId !== undefined) {
-        // Filter by league — need to check parlay -> league
-        const [parlay] = await db.select().from(parlays).where(eq(parlays.id, leg.parlayId));
-        if (!parlay || parlay.leagueId !== leagueId) continue;
-      }
-
-      results.push({ ...leg, game });
-    }
-    return results;
+    return rows.map(r => ({ ...r.leg, game: r.game }));
   }
 
   async enrichParlayLeg(
@@ -900,16 +900,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]> {
-    // Find the game to get season/week + team names
     const [game] = await db.select().from(games).where(eq(games.id, gameId));
     if (!game) return [];
 
-    // Get the week to know season + week number
     const [week] = await db.select().from(weeks).where(eq(weeks.id, game.weekId));
     if (!week) return [];
 
-    // Get all player stats for that season/week
-    const stats = await db.select().from(playerWeekStats)
+    const rows = await db
+      .select({ stat: playerWeekStats, player: players })
+      .from(playerWeekStats)
+      .innerJoin(players, eq(playerWeekStats.playerId, players.id))
       .where(
         and(
           eq(playerWeekStats.season, week.season),
@@ -917,19 +917,7 @@ export class DatabaseStorage implements IStorage {
         )
       );
 
-    // Filter to players on the two teams in this game (by team abbreviation stored on stat)
-    // We need to know the team abbreviations for homeTeam and awayTeam
-    // The nflverse service stores team as abbreviation ("KC", "BUF") on playerWeekStats
-    // The game stores short names ("Chiefs", "Bills") — we match via a lookup
-    // For simplicity: join on playerId and fetch player records
-    const results: (PlayerWeekStat & { player: Player })[] = [];
-    for (const stat of stats) {
-      const [player] = await db.select().from(players).where(eq(players.id, stat.playerId));
-      if (!player) continue;
-      results.push({ ...stat, player });
-    }
-
-    return results;
+    return rows.map(r => ({ ...r.stat, player: r.player }));
   }
 }
 
