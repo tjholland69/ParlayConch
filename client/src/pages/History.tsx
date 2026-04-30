@@ -36,15 +36,18 @@ export default function History() {
       case 'push': return 'secondary';
       case 'approved': return 'outline';
       case 'rejected': return 'destructive';
+      case 'void': return 'outline';
       default: return 'secondary';
     }
   };
 
+  const activeParlays = parlays?.filter(p => p.status !== 'void') ?? [];
   const stats = {
-    total: parlays?.length || 0,
-    wins: parlays?.filter(p => p.status === 'win').length || 0,
-    losses: parlays?.filter(p => p.status === 'loss').length || 0,
-    pending: parlays?.filter(p => ['pending', 'approved'].includes(p.status || '')).length || 0,
+    total: activeParlays.length,
+    wins: activeParlays.filter(p => p.status === 'win').length,
+    losses: activeParlays.filter(p => p.status === 'loss').length,
+    pending: activeParlays.filter(p => ['pending', 'approved'].includes(p.status || '')).length,
+    missed: parlays?.filter(p => p.status === 'void').length || 0,
   };
   const winRate = (stats.wins + stats.losses) > 0 
     ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1) 
@@ -110,6 +113,9 @@ export default function History() {
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold font-mono">{stats.total}</p>
             <p className="text-xs text-muted-foreground uppercase">Total Parlays</p>
+            {stats.missed > 0 && (
+              <p className="text-[10px] text-muted-foreground/60 mt-0.5">{stats.missed} missed</p>
+            )}
           </CardContent>
         </Card>
         <Card className="bg-primary/10 border-primary/20">
@@ -199,7 +205,11 @@ export default function History() {
       ) : (
         <div className="space-y-4">
           {parlays.map((parlay) => (
-            <Card key={parlay.id} className="bg-card/50 border-white/5" data-testid={`card-parlay-history-${parlay.id}`}>
+            <Card
+              key={parlay.id}
+              className={cn("border-white/5", parlay.status === 'void' ? "bg-card/20 opacity-60" : "bg-card/50")}
+              data-testid={`card-parlay-history-${parlay.id}`}
+            >
               <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                 <div className="flex items-center gap-3">
                   <Calendar className="w-5 h-5 text-muted-foreground" />
@@ -211,20 +221,27 @@ export default function History() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleCopySlip(parlay)}
-                    title="Copy bet slip"
-                    className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
-                  >
-                    {copiedId === parlay.id
-                      ? <Check className="w-3.5 h-3.5 text-green-400" />
-                      : <Copy className="w-3.5 h-3.5" />}
-                  </button>
-                  <Badge variant={getStatusVariant(parlay.status)}>
-                    {parlay.status}
+                  {parlay.status !== 'void' && (
+                    <button
+                      onClick={() => handleCopySlip(parlay)}
+                      title="Copy bet slip"
+                      className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+                    >
+                      {copiedId === parlay.id
+                        ? <Check className="w-3.5 h-3.5 text-green-400" />
+                        : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  )}
+                  <Badge variant={getStatusVariant(parlay.status)} className={parlay.status === 'void' ? 'text-muted-foreground border-white/10' : ''}>
+                    {parlay.status === 'void' ? 'Void' : parlay.status}
                   </Badge>
                 </div>
               </CardHeader>
+              {parlay.status === 'void' ? (
+                <CardContent>
+                  <p className="text-sm text-muted-foreground italic">No submission — missed this week</p>
+                </CardContent>
+              ) : (
               <CardContent>
                 <div className="space-y-2">
                   {parlay.legs.map((leg, i) => (
@@ -286,6 +303,7 @@ export default function History() {
                   </div>
                 )}
               </CardContent>
+              )}
             </Card>
           ))}
         </div>

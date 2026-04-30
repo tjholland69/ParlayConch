@@ -85,6 +85,7 @@ export function EditParlayDialog({ open, onOpenChange, parlay, leagueId, weekId 
                 <SelectItem value="win">Win</SelectItem>
                 <SelectItem value="loss">Loss</SelectItem>
                 <SelectItem value="push">Push</SelectItem>
+                <SelectItem value="void">Void (Missed Week)</SelectItem>
               </SelectContent>
             </Select>
           </div>

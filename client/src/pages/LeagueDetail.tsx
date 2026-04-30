@@ -552,15 +552,21 @@ export default function LeagueDetail() {
             {leagueParlays?.map((parlay) => (
               <ContextMenu key={parlay.id}>
                 <ContextMenuTrigger asChild>
-                  <Card className="bg-card/50 border-white/5" data-testid={`card-parlay-${parlay.id}`}>
+                  <Card
+                    className={cn("border-white/5", parlay.status === 'void' ? "bg-card/20 opacity-60" : "bg-card/50")}
+                    data-testid={`card-parlay-${parlay.id}`}
+                  >
                     <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
+                        <div className={cn(
+                          "w-8 h-8 rounded-full flex items-center justify-center text-primary-foreground font-bold text-sm",
+                          parlay.status === 'void' ? "bg-muted" : "bg-gradient-to-tr from-primary to-accent"
+                        )}>
                           {((parlay.user?.settings as any)?.displayName || parlay.user?.firstName || '?')[0]}
                         </div>
                         <div>
                           <div className="flex items-center gap-2">
-                            <p className="font-bold">{(parlay.user?.settings as any)?.displayName || parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
+                            <p className={cn("font-bold", parlay.status === 'void' && "text-muted-foreground")}>{(parlay.user?.settings as any)?.displayName || parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
                             {parlay.user?.isDemo && (
                               <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4" data-testid={`badge-demo-user-${parlay.id}`}>
                                 DEMO
@@ -568,21 +574,22 @@ export default function LeagueDetail() {
                             )}
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            {parlay.legs.length} leg parlay
+                            {parlay.status === 'void' ? 'No submission' : `${parlay.legs.length} leg parlay`}
                             {parlay.source === 'imported' && <Badge variant="outline" className="ml-2 text-xs">Imported</Badge>}
                           </p>
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant={
+                          parlay.status === 'void' ? 'outline' :
                           parlay.status === 'approved' ? 'default' :
                           parlay.status === 'rejected' ? 'destructive' :
                           parlay.status === 'win' ? 'default' :
                           parlay.status === 'loss' ? 'destructive' :
                           'secondary'
-                        }>
+                        } className={parlay.status === 'void' ? 'text-muted-foreground border-white/10' : ''}>
                           {parlay.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
-                          {parlay.status}
+                          {parlay.status === 'void' ? 'Void' : parlay.status}
                         </Badge>
                         
                         {league.isAdmin && parlay.status === 'pending' && (
@@ -608,6 +615,9 @@ export default function LeagueDetail() {
                       </div>
                     </CardHeader>
                     <CardContent>
+                      {parlay.status === 'void' ? (
+                        <p className="text-sm text-muted-foreground italic">No submission — missed this week</p>
+                      ) : (
                       <div className="space-y-1">
                         {parlay.legs.map((leg, i) => {
                           const isProp = leg.betType === 'player_prop';
@@ -650,6 +660,7 @@ export default function LeagueDetail() {
                           );
                         })}
                       </div>
+                      )}
                     </CardContent>
                   </Card>
                 </ContextMenuTrigger>
