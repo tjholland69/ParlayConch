@@ -11,7 +11,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut } from "lucide-react";
+import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
@@ -61,6 +61,22 @@ export default function LeagueDetail() {
   const [editParlayOpen, setEditParlayOpen] = useState(false);
   const [selectedParlay, setSelectedParlay] = useState<ParlayWithLegs | null>(null);
   const [showLockConfirm, setShowLockConfirm] = useState(false);
+
+  // CSV export helper
+  function downloadCsv(filename: string, headers: string[], rows: (string | number | null | undefined)[][]) {
+    const escape = (v: string | number | null | undefined) => {
+      const s = v == null ? "" : String(v);
+      return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [headers, ...rows].map(r => r.map(escape).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   // Members tab state
   const { data: members, isLoading: loadingMembers } = useLeagueMembersWithUsers(leagueId);
@@ -725,6 +741,24 @@ export default function LeagueDetail() {
                   ))}
                 </div>
               )}
+              {stats && stats.length > 0 && (
+                <div className="flex justify-end pt-4 border-t border-white/5 mt-4">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-2"
+                    data-testid="button-export-standings"
+                    onClick={() => downloadCsv(
+                      `${league?.name ?? "league"}-standings.csv`,
+                      ["rank", "user_id", "username", "wins", "losses", "pushes", "win_rate_pct"],
+                      stats.map((s, i) => [i + 1, s.userId, s.username, s.wins, s.losses, s.pushes, s.winRate.toFixed(1)])
+                    )}
+                  >
+                    <Download className="w-4 h-4" />
+                    Export CSV
+                  </Button>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -802,6 +836,36 @@ export default function LeagueDetail() {
                         </div>
                       </div>
                     ))}
+                </div>
+              )}
+              {members && members.length > 0 && (
+                <div className="flex justify-end pt-4 border-t border-white/5 mt-4">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-2"
+                    data-testid="button-export-members"
+                    onClick={() => downloadCsv(
+                      `${league?.name ?? "league"}-members.csv`,
+                      ["user_id", "display_name", "first_name", "email", "role", "is_demo"],
+                      [...members]
+                        .sort((a, b) => {
+                          const order = { admin: 0, lieutenant: 1, member: 2 };
+                          return (order[a.role as keyof typeof order] ?? 2) - (order[b.role as keyof typeof order] ?? 2);
+                        })
+                        .map(m => [
+                          m.userId,
+                          (m.user.settings as any)?.displayName ?? "",
+                          m.user.firstName ?? "",
+                          m.user.email ?? "",
+                          m.role,
+                          m.user.isDemo ? "true" : "false",
+                        ])
+                    )}
+                  >
+                    <Download className="w-4 h-4" />
+                    Export CSV
+                  </Button>
                 </div>
               )}
             </CardContent>
