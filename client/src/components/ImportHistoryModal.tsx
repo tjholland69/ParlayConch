@@ -26,6 +26,7 @@ interface CSVLeg {
   result?: string;
   playerName?: string;
   propType?: string;
+  notes?: string;
 }
 
 interface CSVRecord {
@@ -118,6 +119,9 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
       if (row.player_name?.trim()) leg.playerName = row.player_name.trim();
       if (row.prop_type?.trim()) leg.propType = row.prop_type.trim();
 
+      // Free-text note
+      if (row.notes?.trim()) leg.notes = row.notes.trim();
+
       if (hasGameId && row.game_id) {
         const gameId = parseInt(row.game_id);
         if (!isNaN(gameId)) leg.gameId = gameId;
@@ -163,14 +167,14 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
   };
 
   const downloadTemplate = () => {
-    const template = `week_id,year,member_email,home_team,away_team,bet_type,pick,line,odds,game_segment,result,status,player_name,prop_type,prop_line
-1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,-110,,win,approved,,,
-1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,,win,approved,,,
-1,2024,player@example.com,Chiefs,Bills,over,over,24.5,-110,First Half,win,approved,,,
-2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,,pending,,,
-3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,-110,,approved,,,
-4,2024,player@example.com,,,player_prop,over,,-115,,approved,Travis Kelce,rec_yards,72.5
-4,2024,player@example.com,,,player_prop,yes,,,,approved,Patrick Mahomes,anytime_td,`;
+    const template = `week_id,year,member_email,home_team,away_team,bet_type,pick,line,odds,game_segment,result,status,player_name,prop_type,prop_line,notes
+1,2024,player@example.com,Chiefs,Bills,spread,home,-3.5,-110,,win,approved,,,,
+1,2024,player@example.com,Chiefs,Bills,moneyline,home,,-155,,win,approved,,,,"Great value at this price"
+1,2024,player@example.com,Chiefs,Bills,over,over,24.5,-110,First Half,win,approved,,,,"Both teams scored on opening drives"
+2,2024,other@example.com,Eagles,Cowboys,spread,away,+3,,,pending,,,,
+3,2023,fan@example.com,49ers,Seahawks,over,over,47.5,-110,,approved,,,,
+4,2024,player@example.com,,,player_prop,over,,-115,,approved,Travis Kelce,rec_yards,72.5,
+4,2024,player@example.com,,,player_prop,yes,,,,approved,Patrick Mahomes,anytime_td,,"Mahomes always finds the end zone"`;
     const blob = new Blob([template], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
