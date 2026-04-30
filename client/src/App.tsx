@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
+import { ActForBar } from "@/components/ActForBar";
 
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
@@ -46,7 +47,8 @@ function Router() {
       <Sidebar />
       <div className="flex-1 md:ml-72 flex flex-col min-h-screen">
         {/* Desktop top bar with notification bell */}
-        <div className="hidden md:flex items-center justify-end px-8 py-3 sticky top-0 z-30 bg-background/80 backdrop-blur-md border-b border-white/5">
+        <div className="hidden md:flex items-center justify-end gap-3 px-8 py-3 sticky top-0 z-30 bg-background/80 backdrop-blur-md border-b border-white/5">
+          <ActForBar />
           <NotificationBell />
         </div>
         <main className="flex-1 p-4 md:px-8 md:py-6 pt-20 md:pt-6 overflow-y-auto">

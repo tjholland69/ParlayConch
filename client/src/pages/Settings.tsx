@@ -23,7 +23,7 @@ export default function Settings() {
   const updateNotifPrefs = useUpdateNotificationPreferences();
   const { data: leagues } = useLeagues();
 
-  const [displayName, setDisplayName] = useState(user?.firstName || "");
+  const [displayName, setDisplayName] = useState((user?.settings as any)?.displayName || user?.firstName || "");
   const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
 
   useEffect(() => {
@@ -99,7 +99,7 @@ export default function Settings() {
                   />
                 ) : (
                   <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-2xl">
-                    {user?.firstName?.[0] || <User className="w-8 h-8" />}
+                    {((user?.settings as any)?.displayName || user?.firstName)?.[0] || <User className="w-8 h-8" />}
                   </div>
                 )}
                 <div>
@@ -125,7 +125,7 @@ export default function Settings() {
                   />
                   <Button
                     onClick={handleSaveProfile}
-                    disabled={updateSettings.isPending || displayName === user?.firstName}
+                    disabled={updateSettings.isPending || displayName === ((user?.settings as any)?.displayName || user?.firstName || "")}
                     data-testid="button-save-display-name"
                   >
                     {updateSettings.isPending ? "Saving…" : "Save"}

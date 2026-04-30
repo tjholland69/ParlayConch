@@ -98,6 +98,7 @@ export const leagues = pgTable("leagues", {
   minLegsPerParlay: integer("min_legs_per_parlay").default(3),
   maxLegsPerParlay: integer("max_legs_per_parlay").default(5),
   isDemo: boolean("is_demo").default(false),
+  insightsEnabled: boolean("insights_enabled").default(false),
   lieutenantPermissions: jsonb("lieutenant_permissions").$type<LieutenantPermissions>(),
   notificationSettings: jsonb("notification_settings").$type<LeagueNotificationSettings>(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -136,16 +137,50 @@ export const parlays = pgTable("parlays", {
   importBatchId: integer("import_batch_id"),
 });
 
+// Valid player prop types for reference
+export const PLAYER_PROP_TYPES = [
+  // Rushing
+  { value: "rush_yards",       label: "Rushing Yards" },
+  { value: "rush_tds",         label: "Rushing TDs" },
+  { value: "rush_attempts",    label: "Rush Attempts" },
+  // Receiving
+  { value: "rec_yards",        label: "Receiving Yards" },
+  { value: "rec_tds",          label: "Receiving TDs" },
+  { value: "receptions",       label: "Receptions" },
+  // Passing
+  { value: "pass_yards",       label: "Passing Yards" },
+  { value: "pass_tds",         label: "Passing TDs" },
+  { value: "pass_attempts",    label: "Pass Attempts" },
+  { value: "pass_completions", label: "Pass Completions" },
+  { value: "interceptions",    label: "Interceptions Thrown" },
+  // Scoring
+  { value: "anytime_td",       label: "Anytime TD Scorer" },
+  { value: "first_td",         label: "First TD Scorer" },
+  { value: "last_td",          label: "Last TD Scorer" },
+  // Kicking
+  { value: "kicking_pts",      label: "Kicking Points" },
+  { value: "fg_made",          label: "Field Goals Made" },
+  // Defense
+  { value: "sacks",            label: "Sacks" },
+  { value: "tackles",          label: "Tackles" },
+] as const;
+
+export type PlayerPropType = typeof PLAYER_PROP_TYPES[number]["value"];
+
 // Parlay legs - individual picks within a parlay
 export const parlayLegs = pgTable("parlay_legs", {
   id: serial("id").primaryKey(),
   parlayId: integer("parlay_id").notNull(),
-  gameId: integer("game_id").notNull(),
-  betType: text("bet_type").notNull(), // 'spread', 'moneyline', 'over', 'under'
-  pick: text("pick").notNull(), // 'home', 'away', 'over', 'under'
-  line: text("line"), // The line at time of pick (approximate if auto-filled)
+  gameId: integer("game_id"), // nullable — player prop bets may not reference a specific game
+  betType: text("bet_type").notNull(), // 'spread', 'moneyline', 'over', 'under', 'player_prop'
+  pick: text("pick").notNull(), // 'home', 'away', 'over', 'under', 'yes', 'no'
+  line: text("line"), // Spread/total value at time of pick (e.g. -3.5 for spread, 47.5 for total; blank for moneyline)
+  odds: text("odds"), // American-style odds at time of pick (e.g. -110, +130); stored separately from the line value
+  gameSegment: text("game_segment"), // Optional game portion the bet applies to (e.g. 'First Half', 'Second Quarter')
   result: text("result"), // 'win', 'loss', 'push', null
   oddsEnriched: boolean("odds_enriched").default(false), // true once odds/result have been auto-resolved
+  playerName: text("player_name"), // for player_prop bets: the player's name
+  propType: text("prop_type"),     // for player_prop bets: the prop category (e.g. 'rush_yards')
 });
 
 // Parlay week locks — tracks when a Parlay Maestro locks a week's submissions
@@ -290,7 +325,7 @@ export type UserStat = {
 };
 
 export type LeagueMemberWithUser = LeagueMember & {
-  user: { id: string; firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null };
+  user: { id: string; firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null; settings?: UserSettings | null };
 };
 
 export type LeagueWithMembers = League & {
@@ -301,9 +336,9 @@ export type LeagueWithMembers = League & {
 };
 
 export type ParlayWithLegs = Parlay & {
-  legs: (ParlayLeg & { game: Game })[];
+  legs: (ParlayLeg & { game: Game | null })[];
   week: Week;
-  user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null };
+  user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null; settings?: UserSettings | null };
 };
 
 export type LeagueStats = {

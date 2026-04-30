@@ -36,6 +36,12 @@ The database schema, defined using Drizzle ORM, includes tables for users, sessi
 ### Shared Code
 A `shared/` directory centralizes common code like Drizzle ORM schema definitions, API route definitions for type-safe communication, and authentication model definitions, used by both frontend and backend.
 
+### Integrations
+- **Replit Auth**: OpenID Connect authentication (primary)
+- **Email/Password**: Local auth via bcryptjs + passport-local
+- **Resend**: Transactional emails (member invites, notifications)
+- **OpenAI (Replit AI Integration)**: Powers the AI Betting Insights feature via Replit's managed model farm — no user API key required, billed to Replit credits. Uses `gpt-5-mini` for cost-efficient commentary generation.
+
 ### Key Features
 
 #### Parlay Week Locking
@@ -82,6 +88,75 @@ Allows the Parlay Maestro to import historical parlay data via CSV. The system i
 - **NativeWind**: Tailwind CSS for React Native.
 - **TanStack Query v5**: State management for mobile.
 - **@expo/vector-icons**: Icon library for mobile.
+
+## Authentication
+
+The app supports two login methods that can be used simultaneously:
+
+### 1. Email + Password (local auth)
+- Registration: `POST /api/auth/register` — `{ email, password, firstName? }`
+- Login: `POST /api/auth/login-local` — `{ email, password }`
+- Passwords are hashed with bcrypt (12 rounds) and stored in the `user_passwords` table
+- Rate limited to 20 attempts per 15 minutes per IP
+- Password rules: 8–128 characters
+- Sessions stored in PostgreSQL via `connect-pg-simple`
+- The session object has shape `{ claims: { sub, email }, localAuth: true }`
+
+### 2. Replit OIDC (unchanged)
+- Login: `GET /api/login` → Replit OpenID Connect flow
+- Logout: `GET /api/logout`
+- Token refresh is handled automatically
+
+### Combined `isAuthenticated` middleware
+Located at `server/replit_integrations/auth/combinedAuth.ts`.
+- Local sessions: checks `claims.sub` exists
+- Replit sessions: existing token expiry / refresh logic
+- All protected routes use this single middleware
+
+### New files
+- `server/replit_integrations/auth/localAuth.ts` — bcrypt helpers, validation schemas, rate limiter, LocalStrategy, register/login routes
+- `server/replit_integrations/auth/combinedAuth.ts` — unified `isAuthenticated` middleware
+- `shared/models/auth.ts` — added `userPasswords` table
+
+### Frontend
+- Landing page now shows Sign In / Sign Up buttons
+- Auth forms are rendered inline (no separate page routes)
+- "Continue with Replit" option appears on both forms
+- After successful auth, `useAuth()` query is invalidated so the app loads immediately
+
+## Super User (Application-Wide Admin)
+
+A `is_super_user` boolean column exists on the `users` table (default `false`). Any user with this flag set to `true` automatically passes all league-level permission checks (admin and lieutenant gates) across every league in the application. This role is intended for a very small set of trusted users (e.g., support staff) who need to act on behalf of any user in any league.
+
+**How to grant super user access:** Set `is_super_user = true` on the target row in the `users` table. This is intentionally a manual database operation — there is no UI or API for it.
+
+## Player Prop Bets
+
+Parlay legs can now represent player prop bets in addition to standard game bets (spread, moneyline, over/under).
+
+### Schema Changes
+- `parlay_legs.game_id` — now nullable (prop bets may not reference a specific game)
+- `parlay_legs.player_name` — the player's name (null for game bets)
+- `parlay_legs.prop_type` — the prop category (null for game bets); e.g. `rush_yards`, `rec_yards`, `pass_yards`, `pass_tds`, `receptions`, `anytime_td`, `first_td`, `last_td`, `interceptions`, `sacks`, `kicking_pts`, `fg_made`, etc.
+- `parlay_legs.bet_type` — extended with `'player_prop'`
+- `parlay_legs.pick` — extended with `'yes'` / `'no'` for scoring props (alongside existing `'over'`/`'under'`/`'home'`/`'away'`)
+
+### CSV Import Format
+Prop legs are imported via the standard CSV flow. Game identification (`home_team`/`away_team` or `game_id`) is optional for prop bets:
+```
+week_id,member_email,home_team,away_team,bet_type,pick,line,result,status,player_name,prop_type
+4,player@example.com,,,player_prop,over,72.5,,approved,Travis Kelce,rec_yards
+4,player@example.com,,,player_prop,yes,,,approved,Patrick Mahomes,anytime_td
+```
+
+### Enrichment
+Prop legs are skipped by the auto-enrichment service (no game-score formula can calculate them). They are immediately marked `odds_enriched = true` so they don't show up in every enrichment pass. Manual result entry (via the Edit Parlay dialog) is the intended way to set prop outcomes.
+
+### Display
+All UI that shows parlay legs handles `player_prop` bet types:
+- **LeagueDetail** and **History** pages show "Player Name — Prop Type" as the matchup label
+- Bet type badge shows "PROP" instead of "PLAYER_PROP"
+- Pick badge shows "Over 72.5", "Yes", "Under 45.5", etc.
 
 ## nflverse Data Integration
 
