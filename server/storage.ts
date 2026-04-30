@@ -200,7 +200,7 @@ export class DatabaseStorage implements IStorage {
 
       return {
         userId: user.id,
-        username: user.firstName || user.email || 'Unknown',
+        username: (user.settings as any)?.displayName || user.firstName || user.email || 'Unknown',
         profileImageUrl: user.profileImageUrl,
         wins,
         losses,
@@ -229,7 +229,7 @@ export class DatabaseStorage implements IStorage {
 
       return {
         userId: user.id,
-        username: user.firstName || user.email || 'Unknown',
+        username: (user.settings as any)?.displayName || user.firstName || user.email || 'Unknown',
         profileImageUrl: user.profileImageUrl,
         wins,
         losses,

@@ -865,7 +865,7 @@ export async function registerRoutes(
           return {
             email,
             status: "added" as const,
-            username: existingUser.firstName || existingUser.email,
+            username: (existingUser.settings as any)?.displayName || existingUser.firstName || existingUser.email,
           };
         })
       );
