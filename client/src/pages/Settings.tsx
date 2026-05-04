@@ -16,6 +16,17 @@ import type { UserNotificationPreferences } from "@shared/schema";
 
 const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
 
+const COLOR_PRESETS = [
+  { label: "Blue", value: "221 83% 53%" },
+  { label: "Green", value: "142 70% 50%" },
+  { label: "Purple", value: "262 80% 60%" },
+  { label: "Orange", value: "25 90% 55%" },
+  { label: "Red", value: "0 72% 55%" },
+  { label: "Teal", value: "175 70% 45%" },
+  { label: "Pink", value: "330 80% 60%" },
+  { label: "Amber", value: "38 92% 50%" },
+];
+
 export default function Settings() {
   const { user } = useAuth();
   const setUserDemo = useSetUserDemo();
@@ -25,14 +36,24 @@ export default function Settings() {
 
   const [displayName, setDisplayName] = useState((user?.settings as any)?.displayName || user?.firstName || "");
   const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
+  const [selectedColor, setSelectedColor] = useState<string>((user?.settings as any)?.primaryColor || "221 83% 53%");
 
   useEffect(() => {
     const stored = (user?.settings as any)?.notificationPreferences;
     if (stored) setNotifPrefs({ ...DEFAULT_PREFS, ...stored });
   }, [user]);
 
+  useEffect(() => {
+    const savedColor = (user?.settings as any)?.primaryColor;
+    if (savedColor) setSelectedColor(savedColor);
+  }, [user]);
+
   const handleSaveProfile = () => {
     updateSettings.mutate({ displayName });
+  };
+
+  const handleSaveColor = () => {
+    updateSettings.mutate({ primaryColor: selectedColor });
   };
 
   // Determine the user's highest role across all their leagues
@@ -159,21 +180,65 @@ export default function Settings() {
         <TabsContent value="preferences" className="space-y-4">
           <Card className="bg-card/50 border-white/5">
             <CardHeader>
-              <CardTitle>Display Preferences</CardTitle>
-              <CardDescription>Customize how the app looks and behaves for you</CardDescription>
+              <CardTitle>Accent Color</CardTitle>
+              <CardDescription>Choose your preferred accent color — applied consistently across the entire app including the login page</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="grid grid-cols-4 gap-3">
+                {COLOR_PRESETS.map((preset) => {
+                  const isSelected = selectedColor === preset.value;
+                  return (
+                    <button
+                      key={preset.value}
+                      onClick={() => setSelectedColor(preset.value)}
+                      className={cn(
+                        "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all",
+                        isSelected
+                          ? "border-white/40 bg-white/10 scale-105"
+                          : "border-white/5 bg-white/5 hover:bg-white/10 hover:border-white/20"
+                      )}
+                      data-testid={`color-preset-${preset.label.toLowerCase()}`}
+                    >
+                      <div
+                        className="w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-background transition-all"
+                        style={{
+                          backgroundColor: `hsl(${preset.value})`,
+                          ringColor: isSelected ? `hsl(${preset.value})` : "transparent",
+                          outline: isSelected ? `2px solid hsl(${preset.value})` : "none",
+                          outlineOffset: "2px",
+                        }}
+                      />
+                      <span className="text-xs text-muted-foreground">{preset.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <div className="flex-1 p-3 rounded-xl bg-white/5 border border-white/5 flex items-center gap-3">
+                  <div
+                    className="w-5 h-5 rounded-full shrink-0"
+                    style={{ backgroundColor: `hsl(${selectedColor})` }}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {COLOR_PRESETS.find(p => p.value === selectedColor)?.label ?? "Custom"} selected
+                  </span>
+                </div>
+                <Button
+                  onClick={handleSaveColor}
+                  disabled={updateSettings.isPending || selectedColor === ((user?.settings as any)?.primaryColor || "221 83% 53%")}
+                  data-testid="button-save-color"
+                >
+                  {updateSettings.isPending ? "Saving…" : "Apply"}
+                </Button>
+              </div>
+
+              <Separator className="border-white/5" />
+
               <div className="flex items-center justify-between py-3 border-b border-white/5">
                 <div>
                   <p className="font-medium text-sm">Theme</p>
                   <p className="text-xs text-muted-foreground">Light, dark, or system default</p>
-                </div>
-                <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
-              </div>
-              <div className="flex items-center justify-between py-3 border-b border-white/5">
-                <div>
-                  <p className="font-medium text-sm">Default Week View</p>
-                  <p className="text-xs text-muted-foreground">Start on current week or last viewed</p>
                 </div>
                 <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
               </div>

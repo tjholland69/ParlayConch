@@ -43,6 +43,7 @@ export type UserSettings = {
   displayName?: string;
   notificationPreferences?: UserNotificationPreferences;
   skipImportInstructions?: boolean;
+  primaryColor?: string;
 };
 
 export type LeagueNotificationSettings = {
