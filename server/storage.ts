@@ -74,6 +74,7 @@ export interface IStorage {
   // Demo flags
   setUserDemoFlag(userId: string, isDemo: boolean): Promise<void>;
   setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void>;
+  setLeagueDemoWeekData(leagueId: number, useDemoWeekData: boolean): Promise<void>;
 
   // User settings
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void>;
@@ -660,6 +661,10 @@ export class DatabaseStorage implements IStorage {
 
   async setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void> {
     await db.update(leagues).set({ isDemo }).where(eq(leagues.id, leagueId));
+  }
+
+  async setLeagueDemoWeekData(leagueId: number, useDemoWeekData: boolean): Promise<void> {
+    await db.update(leagues).set({ useDemoWeekData }).where(eq(leagues.id, leagueId));
   }
 
   async updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void> {

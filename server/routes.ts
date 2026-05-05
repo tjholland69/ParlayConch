@@ -988,6 +988,29 @@ export async function registerRoutes(
     }
   });
 
+  app.patch("/api/leagues/:id/demo-week-data", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const { useDemoWeekData } = z.object({ useDemoWeekData: z.boolean() }).parse(req.body);
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Only the Parlay Maestro can change this setting" });
+      }
+
+      const league = await storage.getLeague(leagueId);
+      if (!league?.isDemo) {
+        return res.status(400).json({ message: "Dummy week data can only be enabled on demo leagues" });
+      }
+
+      await storage.setLeagueDemoWeekData(leagueId, useDemoWeekData);
+      res.json({ success: true, useDemoWeekData });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   // ===== PARLAY EDIT (Admin only, for imported/manual entries) =====
   app.patch("/api/parlays/:id", isAuthenticated, async (req, res) => {
     try {
