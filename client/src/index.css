@@ -57,6 +57,11 @@
   }
 }
 
+@keyframes slide-progress {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+
 @layer utilities {
   .text-glow {
     text-shadow: 0 0 20px hsl(var(--primary) / 0.5);

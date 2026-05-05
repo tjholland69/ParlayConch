@@ -2,8 +2,8 @@ import { useStats } from "@/hooks/use-bets";
 import { StatsChart } from "@/components/StatsChart";
 import { NewsFeed } from "@/components/NewsFeed";
 import { BettingInsights } from "@/components/BettingInsights";
-import { Trophy, TrendingUp, AlertCircle, Medal } from "lucide-react";
-import { Skeleton } from "@/components/ui/skeleton";
+import { HeroSlider } from "@/components/HeroSlider";
+import { Trophy, TrendingUp, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function Dashboard() {
@@ -12,7 +12,7 @@ export default function Dashboard() {
   if (isLoading) {
     return (
       <div className="space-y-8 animate-pulse p-6">
-        <div className="h-48 rounded-2xl bg-white/5" />
+        <div className="h-64 rounded-3xl bg-white/5" />
         <div className="h-64 rounded-2xl bg-white/5" />
       </div>
     );
@@ -28,54 +28,10 @@ export default function Dashboard() {
     );
   }
 
-  if (!stats?.length) {
-    return (
-      <div className="p-6 text-center">
-        <h2 className="text-xl font-bold">No stats available yet.</h2>
-        <p className="text-muted-foreground">Start picking games to see the leaderboard!</p>
-      </div>
-    );
-  }
-
-  const topPlayer = stats.reduce((prev, current) => 
-    (prev.winRate > current.winRate) ? prev : current
-  );
-
   return (
     <div className="max-w-7xl mx-auto space-y-8 pb-12">
-      {/* Hero Card */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary/20 via-background to-background border border-primary/20 p-8 md:p-12">
-        <div className="absolute top-0 right-0 p-12 opacity-10 pointer-events-none">
-          <Trophy className="w-64 h-64 rotate-12" />
-        </div>
-        
-        <div className="relative z-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-bold uppercase tracking-widest mb-4">
-            <Medal className="w-4 h-4" />
-            Current Leader
-          </div>
-          <h1 className="text-4xl md:text-6xl font-display font-bold mb-2">
-            {topPlayer.username}
-          </h1>
-          <div className="flex items-end gap-2">
-            <span className="text-5xl md:text-7xl font-mono font-bold text-primary text-glow">
-              {topPlayer.winRate}%
-            </span>
-            <span className="text-muted-foreground font-mono mb-2 md:mb-3">Win Rate</span>
-          </div>
-          
-          <div className="mt-8 flex gap-8">
-            <div>
-              <p className="text-muted-foreground text-sm uppercase tracking-wider mb-1">Wins</p>
-              <p className="text-2xl font-mono font-bold text-white">{topPlayer.wins}</p>
-            </div>
-            <div>
-              <p className="text-muted-foreground text-sm uppercase tracking-wider mb-1">Losses</p>
-              <p className="text-2xl font-mono font-bold text-white">{topPlayer.losses}</p>
-            </div>
-          </div>
-        </div>
-      </div>
+      {/* Hero Slider */}
+      <HeroSlider globalStats={stats ?? []} />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Leaderboard */}
@@ -88,7 +44,7 @@ export default function Dashboard() {
           </div>
           
           <div className="space-y-2">
-            {stats.sort((a, b) => b.winRate - a.winRate).map((stat, i) => (
+            {(stats ?? []).slice().sort((a, b) => b.winRate - a.winRate).map((stat, i) => (
               <div 
                 key={stat.userId}
                 className={cn(

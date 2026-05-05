@@ -205,7 +205,8 @@ export class DatabaseStorage implements IStorage {
         wins,
         losses,
         pushes,
-        winRate
+        winRate,
+        region: (user.settings as any)?.region || null,
       };
     }).sort((a, b) => b.winRate - a.winRate);
   }
@@ -234,7 +235,8 @@ export class DatabaseStorage implements IStorage {
         wins,
         losses,
         pushes,
-        winRate
+        winRate,
+        region: (user.settings as any)?.region || null,
       };
     }).sort((a, b) => b.winRate - a.winRate);
   }

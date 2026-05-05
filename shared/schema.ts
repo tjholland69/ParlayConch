@@ -44,6 +44,7 @@ export type UserSettings = {
   notificationPreferences?: UserNotificationPreferences;
   skipImportInstructions?: boolean;
   primaryColor?: string;
+  region?: "US" | "EMEA" | "APAC";
 };
 
 export type LeagueNotificationSettings = {
@@ -324,6 +325,7 @@ export type UserStat = {
   losses: number;
   pushes: number;
   winRate: number;
+  region?: string | null;
 };
 
 export type LeagueMemberWithUser = LeagueMember & {

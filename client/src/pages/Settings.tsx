@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star } from "lucide-react";
+import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import type { UserNotificationPreferences } from "@shared/schema";
@@ -37,6 +37,7 @@ export default function Settings() {
   const [displayName, setDisplayName] = useState((user?.settings as any)?.displayName || user?.firstName || "");
   const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
   const [selectedColor, setSelectedColor] = useState<string>((user?.settings as any)?.primaryColor || "221 83% 53%");
+  const [selectedRegion, setSelectedRegion] = useState<string>((user?.settings as any)?.region || "");
 
   useEffect(() => {
     const stored = (user?.settings as any)?.notificationPreferences;
@@ -48,12 +49,21 @@ export default function Settings() {
     if (savedColor) setSelectedColor(savedColor);
   }, [user]);
 
+  useEffect(() => {
+    const savedRegion = (user?.settings as any)?.region;
+    if (savedRegion) setSelectedRegion(savedRegion);
+  }, [user]);
+
   const handleSaveProfile = () => {
     updateSettings.mutate({ displayName });
   };
 
   const handleSaveColor = () => {
     updateSettings.mutate({ primaryColor: selectedColor });
+  };
+
+  const handleSaveRegion = () => {
+    updateSettings.mutate({ region: selectedRegion || null });
   };
 
   // Determine the user's highest role across all their leagues
@@ -155,6 +165,51 @@ export default function Settings() {
                 <p className="text-xs text-muted-foreground">
                   This name appears in league standings and parlay lists
                 </p>
+              </div>
+
+              <Separator className="border-white/5" />
+
+              {/* Region */}
+              <div className="space-y-3">
+                <div>
+                  <Label className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5" />
+                    Region
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Used to show you on regional leaderboards on the dashboard
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {[
+                    { key: "US", flag: "🇺🇸", label: "US" },
+                    { key: "EMEA", flag: "🌍", label: "EMEA" },
+                    { key: "APAC", flag: "🌏", label: "APAC" },
+                  ].map(({ key, flag, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => setSelectedRegion(selectedRegion === key ? "" : key)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all",
+                        selectedRegion === key
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10"
+                      )}
+                      data-testid={`button-region-${key.toLowerCase()}`}
+                    >
+                      <span>{flag}</span>
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={handleSaveRegion}
+                  disabled={updateSettings.isPending || selectedRegion === ((user?.settings as any)?.region || "")}
+                  data-testid="button-save-region"
+                >
+                  {updateSettings.isPending ? "Saving…" : "Save Region"}
+                </Button>
               </div>
 
               <Separator className="border-white/5" />
