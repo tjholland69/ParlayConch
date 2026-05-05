@@ -9,12 +9,23 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star } from "lucide-react";
+import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import type { UserNotificationPreferences } from "@shared/schema";
 
 const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
+
+const COLOR_PRESETS = [
+  { label: "Blue", value: "221 83% 53%" },
+  { label: "Green", value: "142 70% 50%" },
+  { label: "Purple", value: "262 80% 60%" },
+  { label: "Orange", value: "25 90% 55%" },
+  { label: "Red", value: "0 72% 55%" },
+  { label: "Teal", value: "175 70% 45%" },
+  { label: "Pink", value: "330 80% 60%" },
+  { label: "Amber", value: "38 92% 50%" },
+];
 
 export default function Settings() {
   const { user } = useAuth();
@@ -25,14 +36,34 @@ export default function Settings() {
 
   const [displayName, setDisplayName] = useState((user?.settings as any)?.displayName || user?.firstName || "");
   const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
+  const [selectedColor, setSelectedColor] = useState<string>((user?.settings as any)?.primaryColor || "221 83% 53%");
+  const [selectedRegion, setSelectedRegion] = useState<string>((user?.settings as any)?.region || "");
 
   useEffect(() => {
     const stored = (user?.settings as any)?.notificationPreferences;
     if (stored) setNotifPrefs({ ...DEFAULT_PREFS, ...stored });
   }, [user]);
 
+  useEffect(() => {
+    const savedColor = (user?.settings as any)?.primaryColor;
+    if (savedColor) setSelectedColor(savedColor);
+  }, [user]);
+
+  useEffect(() => {
+    const savedRegion = (user?.settings as any)?.region;
+    if (savedRegion) setSelectedRegion(savedRegion);
+  }, [user]);
+
   const handleSaveProfile = () => {
     updateSettings.mutate({ displayName });
+  };
+
+  const handleSaveColor = () => {
+    updateSettings.mutate({ primaryColor: selectedColor });
+  };
+
+  const handleSaveRegion = () => {
+    updateSettings.mutate({ region: selectedRegion || null });
   };
 
   // Determine the user's highest role across all their leagues
@@ -138,6 +169,51 @@ export default function Settings() {
 
               <Separator className="border-white/5" />
 
+              {/* Region */}
+              <div className="space-y-3">
+                <div>
+                  <Label className="flex items-center gap-1.5">
+                    <MapPin className="w-3.5 h-3.5" />
+                    Region
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Used to show you on regional leaderboards on the dashboard
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  {[
+                    { key: "US", flag: "🇺🇸", label: "US" },
+                    { key: "EMEA", flag: "🌍", label: "EMEA" },
+                    { key: "APAC", flag: "🌏", label: "APAC" },
+                  ].map(({ key, flag, label }) => (
+                    <button
+                      key={key}
+                      onClick={() => setSelectedRegion(selectedRegion === key ? "" : key)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all",
+                        selectedRegion === key
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10"
+                      )}
+                      data-testid={`button-region-${key.toLowerCase()}`}
+                    >
+                      <span>{flag}</span>
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  size="sm"
+                  onClick={handleSaveRegion}
+                  disabled={updateSettings.isPending || selectedRegion === ((user?.settings as any)?.region || "")}
+                  data-testid="button-save-region"
+                >
+                  {updateSettings.isPending ? "Saving…" : "Save Region"}
+                </Button>
+              </div>
+
+              <Separator className="border-white/5" />
+
               {/* Email (read-only) */}
               <div className="space-y-2">
                 <Label>Email</Label>
@@ -159,21 +235,65 @@ export default function Settings() {
         <TabsContent value="preferences" className="space-y-4">
           <Card className="bg-card/50 border-white/5">
             <CardHeader>
-              <CardTitle>Display Preferences</CardTitle>
-              <CardDescription>Customize how the app looks and behaves for you</CardDescription>
+              <CardTitle>Accent Color</CardTitle>
+              <CardDescription>Choose your preferred accent color — applied consistently across the entire app including the login page</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              <div className="grid grid-cols-4 gap-3">
+                {COLOR_PRESETS.map((preset) => {
+                  const isSelected = selectedColor === preset.value;
+                  return (
+                    <button
+                      key={preset.value}
+                      onClick={() => setSelectedColor(preset.value)}
+                      className={cn(
+                        "flex flex-col items-center gap-2 p-3 rounded-xl border transition-all",
+                        isSelected
+                          ? "border-white/40 bg-white/10 scale-105"
+                          : "border-white/5 bg-white/5 hover:bg-white/10 hover:border-white/20"
+                      )}
+                      data-testid={`color-preset-${preset.label.toLowerCase()}`}
+                    >
+                      <div
+                        className="w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-background transition-all"
+                        style={{
+                          backgroundColor: `hsl(${preset.value})`,
+                          ringColor: isSelected ? `hsl(${preset.value})` : "transparent",
+                          outline: isSelected ? `2px solid hsl(${preset.value})` : "none",
+                          outlineOffset: "2px",
+                        }}
+                      />
+                      <span className="text-xs text-muted-foreground">{preset.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <div className="flex-1 p-3 rounded-xl bg-white/5 border border-white/5 flex items-center gap-3">
+                  <div
+                    className="w-5 h-5 rounded-full shrink-0"
+                    style={{ backgroundColor: `hsl(${selectedColor})` }}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {COLOR_PRESETS.find(p => p.value === selectedColor)?.label ?? "Custom"} selected
+                  </span>
+                </div>
+                <Button
+                  onClick={handleSaveColor}
+                  disabled={updateSettings.isPending || selectedColor === ((user?.settings as any)?.primaryColor || "221 83% 53%")}
+                  data-testid="button-save-color"
+                >
+                  {updateSettings.isPending ? "Saving…" : "Apply"}
+                </Button>
+              </div>
+
+              <Separator className="border-white/5" />
+
               <div className="flex items-center justify-between py-3 border-b border-white/5">
                 <div>
                   <p className="font-medium text-sm">Theme</p>
                   <p className="text-xs text-muted-foreground">Light, dark, or system default</p>
-                </div>
-                <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
-              </div>
-              <div className="flex items-center justify-between py-3 border-b border-white/5">
-                <div>
-                  <p className="font-medium text-sm">Default Week View</p>
-                  <p className="text-xs text-muted-foreground">Start on current week or last viewed</p>
                 </div>
                 <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
               </div>

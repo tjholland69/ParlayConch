@@ -43,6 +43,8 @@ export type UserSettings = {
   displayName?: string;
   notificationPreferences?: UserNotificationPreferences;
   skipImportInstructions?: boolean;
+  primaryColor?: string;
+  region?: "US" | "EMEA" | "APAC";
 };
 
 export type LeagueNotificationSettings = {
@@ -98,6 +100,7 @@ export const leagues = pgTable("leagues", {
   minLegsPerParlay: integer("min_legs_per_parlay").default(3),
   maxLegsPerParlay: integer("max_legs_per_parlay").default(5),
   isDemo: boolean("is_demo").default(false),
+  useDemoWeekData: boolean("use_demo_week_data").default(false),
   insightsEnabled: boolean("insights_enabled").default(false),
   lieutenantPermissions: jsonb("lieutenant_permissions").$type<LieutenantPermissions>(),
   notificationSettings: jsonb("notification_settings").$type<LeagueNotificationSettings>(),
@@ -323,6 +326,7 @@ export type UserStat = {
   losses: number;
   pushes: number;
   winRate: number;
+  region?: string | null;
 };
 
 export type LeagueMemberWithUser = LeagueMember & {

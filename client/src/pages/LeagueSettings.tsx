@@ -9,6 +9,7 @@ import {
   useSetMemberRole,
   useUpdateLieutenantPermissions,
   useSetLeagueDemo,
+  useSetLeagueDemoWeekData,
   useSendLeagueAnnouncement,
   useUpdateLeagueNotificationSettings,
 } from "@/hooks/use-bets";
@@ -161,6 +162,7 @@ export default function LeagueSettings() {
   const setMemberRole = useSetMemberRole(leagueId);
   const updatePerms = useUpdateLieutenantPermissions(leagueId);
   const setLeagueDemo = useSetLeagueDemo(leagueId);
+  const setDemoWeekData = useSetLeagueDemoWeekData(leagueId);
   const sendAnnouncement = useSendLeagueAnnouncement(leagueId);
   const updateNotifSettings = useUpdateLeagueNotificationSettings(leagueId);
 
@@ -214,6 +216,15 @@ export default function LeagueSettings() {
   }
 
   const lieutenants = members?.filter((m) => m.role === "lieutenant") || [];
+
+  const roleOrder: Record<string, number> = { admin: 0, lieutenant: 1, member: 2 };
+  const getMemberDisplayName = (m: LeagueMemberWithUser) =>
+    (m.user.settings as any)?.displayName || m.user.firstName || m.user.email || "";
+  const sortedMembers = [...(members || [])].sort((a, b) => {
+    const roleDiff = (roleOrder[a.role ?? "member"] ?? 2) - (roleOrder[b.role ?? "member"] ?? 2);
+    if (roleDiff !== 0) return roleDiff;
+    return getMemberDisplayName(a).localeCompare(getMemberDisplayName(b));
+  });
 
   const handleSaveGeneral = () => {
     updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled });
@@ -447,7 +458,7 @@ export default function LeagueSettings() {
                 </div>
               ) : (
                 <div className="space-y-2" data-testid="list-members">
-                  {members?.map((member) => (
+                  {sortedMembers.map((member) => (
                     <MemberRow
                       key={member.userId}
                       member={member}
@@ -690,6 +701,43 @@ export default function LeagueSettings() {
               </div>
             </CardContent>
           </Card>
+
+          {league.isDemo && (
+            <Card className="bg-card/50 border-white/5 border-yellow-500/20">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FlaskConical className="w-5 h-5 text-yellow-400" />
+                  Dummy Weekly Data
+                </CardTitle>
+                <CardDescription>
+                  When enabled, picks screens (like Quick Pick) will display a sample dataset from Week 14 of the 2024 season instead of live data
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between p-4 rounded-xl bg-yellow-500/5 border border-yellow-500/20">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm">Use Dummy Week Data</p>
+                      {league.useDemoWeekData && (
+                        <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4">
+                          ACTIVE
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Sample data (Week 14 · 2024) will replace the live picks feed for all members of this demo league
+                    </p>
+                  </div>
+                  <Switch
+                    checked={!!league.useDemoWeekData}
+                    onCheckedChange={(checked) => setDemoWeekData.mutate(checked)}
+                    disabled={setDemoWeekData.isPending}
+                    data-testid="switch-demo-week-data"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="bg-card/50 border-white/5">
             <CardHeader>

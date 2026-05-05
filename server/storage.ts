@@ -74,6 +74,7 @@ export interface IStorage {
   // Demo flags
   setUserDemoFlag(userId: string, isDemo: boolean): Promise<void>;
   setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void>;
+  setLeagueDemoWeekData(leagueId: number, useDemoWeekData: boolean): Promise<void>;
 
   // User settings
   updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void>;
@@ -200,12 +201,13 @@ export class DatabaseStorage implements IStorage {
 
       return {
         userId: user.id,
-        username: user.firstName || user.email || 'Unknown',
+        username: (user.settings as any)?.displayName || user.firstName || user.email || 'Unknown',
         profileImageUrl: user.profileImageUrl,
         wins,
         losses,
         pushes,
-        winRate
+        winRate,
+        region: (user.settings as any)?.region || null,
       };
     }).sort((a, b) => b.winRate - a.winRate);
   }
@@ -229,12 +231,13 @@ export class DatabaseStorage implements IStorage {
 
       return {
         userId: user.id,
-        username: user.firstName || user.email || 'Unknown',
+        username: (user.settings as any)?.displayName || user.firstName || user.email || 'Unknown',
         profileImageUrl: user.profileImageUrl,
         wins,
         losses,
         pushes,
-        winRate
+        winRate,
+        region: (user.settings as any)?.region || null,
       };
     }).sort((a, b) => b.winRate - a.winRate);
   }
@@ -658,6 +661,10 @@ export class DatabaseStorage implements IStorage {
 
   async setLeagueDemoFlag(leagueId: number, isDemo: boolean): Promise<void> {
     await db.update(leagues).set({ isDemo }).where(eq(leagues.id, leagueId));
+  }
+
+  async setLeagueDemoWeekData(leagueId: number, useDemoWeekData: boolean): Promise<void> {
+    await db.update(leagues).set({ useDemoWeekData }).where(eq(leagues.id, leagueId));
   }
 
   async updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void> {

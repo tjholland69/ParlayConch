@@ -145,12 +145,12 @@ export default function LeagueDetailScreen() {
                         <View className="flex-row items-center gap-2">
                           <Avatar
                             src={parlay.user?.profileImageUrl}
-                            name={parlay.user?.firstName ?? parlay.user?.email}
+                            name={(parlay.user?.settings as any)?.displayName ?? parlay.user?.firstName ?? parlay.user?.email}
                             size={32}
                           />
                           <View>
                             <Text className="text-foreground font-semibold text-sm">
-                              {parlay.user?.firstName ?? parlay.user?.email ?? "Unknown"}
+                              {(parlay.user?.settings as any)?.displayName ?? parlay.user?.firstName ?? parlay.user?.email ?? "Unknown"}
                             </Text>
                             <Text className="text-muted-foreground text-xs capitalize">
                               {parlay.status}
@@ -215,15 +215,17 @@ export default function LeagueDetailScreen() {
                       <View className="flex-row items-center gap-3">
                         <Avatar
                           src={member.user?.profileImageUrl}
-                          name={member.user?.firstName ?? member.user?.email}
+                          name={(member.user?.settings as any)?.displayName ?? member.user?.firstName ?? member.user?.email}
                           size={36}
                         />
                         <View className="flex-1">
                           <View className="flex-row items-center gap-2 flex-wrap">
                             <Text className="text-foreground font-medium text-sm">
-                              {member.user?.firstName
-                                ? `${member.user.firstName}${member.user.lastName ? " " + member.user.lastName : ""}`
-                                : member.user?.email ?? "Unknown"}
+                              {(member.user?.settings as any)?.displayName
+                                ? (member.user.settings as any).displayName
+                                : member.user?.firstName
+                                  ? `${member.user.firstName}${member.user.lastName ? " " + member.user.lastName : ""}`
+                                  : member.user?.email ?? "Unknown"}
                             </Text>
                             {member.user?.isDemo && <Badge variant="warning">DEMO</Badge>}
                           </View>
@@ -256,11 +258,11 @@ export default function LeagueDetailScreen() {
                       <View className="flex-row items-center gap-3 mb-3">
                         <Avatar
                           src={stat.user?.profileImageUrl}
-                          name={stat.user?.firstName ?? stat.user?.email}
+                          name={(stat.user?.settings as any)?.displayName ?? stat.user?.firstName ?? stat.user?.email}
                           size={36}
                         />
                         <Text className="text-foreground font-semibold text-sm">
-                          {stat.user?.firstName ?? stat.user?.email ?? "Unknown"}
+                          {(stat.user?.settings as any)?.displayName ?? stat.user?.firstName ?? stat.user?.email ?? "Unknown"}
                         </Text>
                       </View>
                       <View className="flex-row justify-between">

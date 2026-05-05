@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ActForBar } from "@/components/ActForBar";
+import { useEffect } from "react";
 
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
@@ -19,8 +20,26 @@ import LeagueSettings from "@/pages/LeagueSettings";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 
+function useApplyPrimaryColor(primaryColor: string | undefined) {
+  useEffect(() => {
+    const root = document.documentElement;
+    if (primaryColor) {
+      root.style.setProperty("--primary", primaryColor);
+      root.style.setProperty("--ring", primaryColor);
+      const lNum = parseFloat(primaryColor.split(" ")[2]);
+      const foreground = lNum > 55 ? "220 15% 10%" : "0 0% 100%";
+      root.style.setProperty("--primary-foreground", foreground);
+    } else {
+      root.style.removeProperty("--primary");
+      root.style.removeProperty("--ring");
+      root.style.removeProperty("--primary-foreground");
+    }
+  }, [primaryColor]);
+}
+
 function Router() {
   const { user, isLoading } = useAuth();
+  useApplyPrimaryColor((user?.settings as any)?.primaryColor);
 
   if (isLoading) {
     return (

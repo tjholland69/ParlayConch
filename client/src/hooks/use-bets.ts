@@ -557,6 +557,39 @@ export function useSetLeagueDemo(leagueId: number) {
   });
 }
 
+export function useSetLeagueDemoWeekData(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (useDemoWeekData: boolean) => {
+      const res = await fetch(`/api/leagues/${leagueId}/demo-week-data`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ useDemoWeekData }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Failed to update setting" }));
+        throw new Error(err.message);
+      }
+      return res.json();
+    },
+    onSuccess: (_, useDemoWeekData) => {
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+      toast({
+        title: useDemoWeekData ? "Dummy week data enabled" : "Dummy week data disabled",
+        description: useDemoWeekData
+          ? "Picks screens will use Week 14 (2024) sample data."
+          : "Picks screens will use live data.",
+      });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
 // Parlay week locking
 export function useWeekLockStatus(leagueId: number, weekId: number) {
   return useQuery<WeekLockStatus>({
