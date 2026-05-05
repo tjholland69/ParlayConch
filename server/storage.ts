@@ -188,28 +188,42 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getStats(): Promise<UserStat[]> {
-    const allUsers = await db.select().from(users);
-    const allParlays = await db.select().from(parlays);
+    const rows = await db
+      .select({
+        userId: users.id,
+        firstName: users.firstName,
+        email: users.email,
+        profileImageUrl: users.profileImageUrl,
+        settings: users.settings,
+        wins:   sql<number>`count(*) filter (where ${parlays.status} = 'win')`,
+        losses: sql<number>`count(*) filter (where ${parlays.status} = 'loss')`,
+        pushes: sql<number>`count(*) filter (where ${parlays.status} = 'push')`,
+      })
+      .from(users)
+      .leftJoin(parlays, eq(parlays.userId, users.id))
+      .where(sql`${users.isDemo} is not true`)
+      .groupBy(users.id);
 
-    return allUsers.map(user => {
-      const userParlays = allParlays.filter(p => p.userId === user.id && ['win', 'loss', 'push'].includes(p.status || ''));
-      const wins = userParlays.filter(p => p.status === 'win').length;
-      const losses = userParlays.filter(p => p.status === 'loss').length;
-      const pushes = userParlays.filter(p => p.status === 'push').length;
-      const totalDecided = wins + losses;
-      const winRate = totalDecided > 0 ? (wins / totalDecided) * 100 : 0;
-
-      return {
-        userId: user.id,
-        username: (user.settings as any)?.displayName || user.firstName || user.email || 'Unknown',
-        profileImageUrl: user.profileImageUrl,
-        wins,
-        losses,
-        pushes,
-        winRate,
-        region: (user.settings as any)?.region || null,
-      };
-    }).sort((a, b) => b.winRate - a.winRate);
+    return rows
+      .map(row => {
+        const wins = Number(row.wins);
+        const losses = Number(row.losses);
+        const pushes = Number(row.pushes);
+        const totalDecided = wins + losses;
+        const winRate = totalDecided > 0 ? (wins / totalDecided) * 100 : 0;
+        const settings = row.settings as any;
+        return {
+          userId: row.userId,
+          username: settings?.displayName || row.firstName || row.email || 'Unknown',
+          profileImageUrl: row.profileImageUrl,
+          wins,
+          losses,
+          pushes,
+          winRate,
+          region: settings?.region || null,
+        };
+      })
+      .sort((a, b) => b.winRate - a.winRate);
   }
 
   async getLeagueStats(leagueId: number): Promise<UserStat[]> {
@@ -445,8 +459,8 @@ export class DatabaseStorage implements IStorage {
     }
 
     // Insert legs
-    for (const leg of legs) {
-      await db.insert(parlayLegs).values({ ...leg, parlayId: parlayRecord.id });
+    if (legs.length > 0) {
+      await db.insert(parlayLegs).values(legs.map(leg => ({ ...leg, parlayId: parlayRecord.id })));
     }
 
     return parlayRecord;
@@ -495,10 +509,10 @@ export class DatabaseStorage implements IStorage {
     const parlayIds = leagueParlays.map(({ parlay }) => parlay.id);
     const allLegs = await db.select({ leg: parlayLegs, game: games })
       .from(parlayLegs)
-      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
       .where(inArray(parlayLegs.parlayId, parlayIds));
 
-    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game })[]>();
+    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
     for (const { leg, game } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
       existing.push({ ...leg, game });
@@ -542,12 +556,12 @@ export class DatabaseStorage implements IStorage {
     const [allLegs, allWeeks] = await Promise.all([
       db.select({ leg: parlayLegs, game: games })
         .from(parlayLegs)
-        .innerJoin(games, eq(parlayLegs.gameId, games.id))
+        .leftJoin(games, eq(parlayLegs.gameId, games.id))
         .where(inArray(parlayLegs.parlayId, parlayIds)),
       db.select().from(weeks).where(inArray(weeks.id, weekIds)),
     ]);
 
-    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game })[]>();
+    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
     for (const { leg, game } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
       existing.push({ ...leg, game });
