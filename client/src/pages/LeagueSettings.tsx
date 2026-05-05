@@ -215,6 +215,15 @@ export default function LeagueSettings() {
 
   const lieutenants = members?.filter((m) => m.role === "lieutenant") || [];
 
+  const roleOrder: Record<string, number> = { admin: 0, lieutenant: 1, member: 2 };
+  const getMemberDisplayName = (m: LeagueMemberWithUser) =>
+    (m.user.settings as any)?.displayName || m.user.firstName || m.user.email || "";
+  const sortedMembers = [...(members || [])].sort((a, b) => {
+    const roleDiff = (roleOrder[a.role ?? "member"] ?? 2) - (roleOrder[b.role ?? "member"] ?? 2);
+    if (roleDiff !== 0) return roleDiff;
+    return getMemberDisplayName(a).localeCompare(getMemberDisplayName(b));
+  });
+
   const handleSaveGeneral = () => {
     updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled });
   };
@@ -447,7 +456,7 @@ export default function LeagueSettings() {
                 </div>
               ) : (
                 <div className="space-y-2" data-testid="list-members">
-                  {members?.map((member) => (
+                  {sortedMembers.map((member) => (
                     <MemberRow
                       key={member.userId}
                       member={member}
