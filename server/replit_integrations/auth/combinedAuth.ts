@@ -17,6 +17,9 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
     return next();
   }
 
-  // Replit OIDC session (handles token refresh)
+  // Replit OIDC session (handles token refresh) — only available on Replit
+  if (!process.env.REPL_ID) {
+    return res.status(401).json({ message: "Unauthorized" });
+  }
   return replitIsAuthenticated(req, res, next);
 };
