@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useCallback } from "react";
 import type { UserStat } from "@shared/schema";
 import { useLeagues, useLeagueStats } from "@/hooks/use-bets";
 import { Trophy, Medal, Globe2, MapPin, Users, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
@@ -13,8 +13,6 @@ const REGIONS: { key: Region; flag: string; label: string }[] = [
 ];
 
 const SLIDE_LABELS = ["My Leagues", "Regional", "Global"];
-
-const AUTO_ADVANCE_MS = 6000;
 
 interface HeroSliderProps {
   globalStats: UserStat[];
@@ -169,48 +167,18 @@ function RegionalSlideContent({ globalStats }: { globalStats: UserStat[] }) {
 
 export function HeroSlider({ globalStats }: HeroSliderProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
-  const [isPaused, setIsPaused] = useState(false);
-  const [progressKey, setProgressKey] = useState(0);
-  const pauseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const totalSlides = 3;
-
-  const pauseAndResume = useCallback(() => {
-    setIsPaused(true);
-    if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
-    pauseTimeoutRef.current = setTimeout(() => setIsPaused(false), 5000);
-  }, []);
 
   const goToSlide = useCallback((index: number) => {
     setCurrentSlide(index);
-    setProgressKey((k) => k + 1);
-    pauseAndResume();
-  }, [pauseAndResume]);
+  }, []);
 
   const prev = useCallback(() => {
     setCurrentSlide((s) => (s - 1 + totalSlides) % totalSlides);
-    setProgressKey((k) => k + 1);
-    pauseAndResume();
-  }, [pauseAndResume]);
+  }, []);
 
   const next = useCallback(() => {
     setCurrentSlide((s) => (s + 1) % totalSlides);
-    setProgressKey((k) => k + 1);
-    pauseAndResume();
-  }, [pauseAndResume]);
-
-  useEffect(() => {
-    if (isPaused) return;
-    const interval = setInterval(() => {
-      setCurrentSlide((s) => (s + 1) % totalSlides);
-      setProgressKey((k) => k + 1);
-    }, AUTO_ADVANCE_MS);
-    return () => clearInterval(interval);
-  }, [isPaused]);
-
-  useEffect(() => {
-    return () => {
-      if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
-    };
   }, []);
 
   const globalTopPlayer = globalStats.length
@@ -218,14 +186,7 @@ export function HeroSlider({ globalStats }: HeroSliderProps) {
     : null;
 
   return (
-    <div
-      className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary/20 via-background to-background border border-primary/20"
-      onMouseEnter={() => {
-        setIsPaused(true);
-        if (pauseTimeoutRef.current) clearTimeout(pauseTimeoutRef.current);
-      }}
-      onMouseLeave={() => setIsPaused(false)}
-    >
+    <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary/20 via-background to-background border border-primary/20">
       <div className="absolute top-0 right-0 p-12 opacity-10 pointer-events-none">
         <Trophy className="w-64 h-64 rotate-12" />
       </div>
@@ -298,15 +259,6 @@ export function HeroSlider({ globalStats }: HeroSliderProps) {
         ))}
       </div>
 
-      {!isPaused && (
-        <div className="absolute bottom-0 left-0 h-0.5 w-full bg-primary/20">
-          <div
-            key={progressKey}
-            className="h-full bg-primary"
-            style={{ animation: `slide-progress ${AUTO_ADVANCE_MS}ms linear forwards` }}
-          />
-        </div>
-      )}
     </div>
   );
 }
