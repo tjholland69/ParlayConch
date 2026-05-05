@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { UserStat } from "@shared/schema";
 import { useLeagues, useLeagueStats } from "@/hooks/use-bets";
 import { Trophy, Medal, Globe2, MapPin, Users, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
