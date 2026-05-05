@@ -34,7 +34,7 @@ export function StatsChart({ data }: StatsChartProps) {
             dataKey="username" 
             type="category" 
             width={80} 
-            tick={{ fill: '#94a3b8', fontSize: 12, fontFamily: 'var(--font-display)' }}
+            tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 12, fontFamily: 'var(--font-display)' }}
             axisLine={false}
             tickLine={false}
           />

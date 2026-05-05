@@ -10,32 +10,25 @@
   --font-body: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 
-  /* Theme: Dark NFL / Sports Analytics */
-  /* Background: Deep Slate/Charcoal */
+  /* Theme: Dark NFL / Sports Analytics (default) */
   --background: 220 15% 10%;
   --foreground: 210 20% 98%;
 
-  /* Primary: Blue (matches login page) */
   --primary: 221 83% 53%;
   --primary-foreground: 0 0% 100%;
 
-  /* Secondary: Muted Slate */
   --secondary: 215 15% 18%;
   --secondary-foreground: 210 20% 98%;
 
-  /* Accent: Electric Blue for highlights */
   --accent: 190 90% 50%;
   --accent-foreground: 195 80% 10%;
 
-  /* Destructive: Warning Red */
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 98%;
 
-  /* Muted */
   --muted: 215 15% 18%;
   --muted-foreground: 215 20% 65%;
 
-  /* Cards & Borders */
   --card: 220 15% 13%;
   --card-foreground: 210 20% 98%;
   --border: 215 15% 20%;
@@ -45,6 +38,56 @@
   --radius: 0.75rem;
 }
 
+/* ── Light theme ─────────────────────────────────────────── */
+:root[data-theme="light"] {
+  --background: 220 20% 96%;
+  --foreground: 220 20% 8%;
+
+  --primary: 221 83% 48%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 220 15% 88%;
+  --secondary-foreground: 220 20% 15%;
+
+  --accent: 190 80% 32%;
+  --accent-foreground: 0 0% 100%;
+
+  --destructive: 0 84% 52%;
+  --destructive-foreground: 0 0% 100%;
+
+  --muted: 220 15% 90%;
+  --muted-foreground: 220 12% 40%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 220 20% 8%;
+  --border: 220 15% 82%;
+  --input: 220 15% 82%;
+  --ring: 221 83% 48%;
+}
+
+/* ── Light theme: remap white-based overlays to dark overlays ── */
+[data-theme="light"] .bg-white\/5  { background-color: rgb(0 0 0 / 0.04) !important; }
+[data-theme="light"] .bg-white\/10 { background-color: rgb(0 0 0 / 0.07) !important; }
+[data-theme="light"] .bg-white\/20 { background-color: rgb(0 0 0 / 0.10) !important; }
+
+[data-theme="light"] .border-white\/5  { border-color: rgb(0 0 0 / 0.08) !important; }
+[data-theme="light"] .border-white\/10 { border-color: rgb(0 0 0 / 0.12) !important; }
+[data-theme="light"] .border-white\/20 { border-color: rgb(0 0 0 / 0.18) !important; }
+
+[data-theme="light"] .hover\:bg-white\/5:hover  { background-color: rgb(0 0 0 / 0.05) !important; }
+[data-theme="light"] .hover\:bg-white\/10:hover { background-color: rgb(0 0 0 / 0.09) !important; }
+[data-theme="light"] .hover\:border-white\/20:hover { border-color: rgb(0 0 0 / 0.18) !important; }
+
+/* Active state borders on color picker tiles */
+[data-theme="light"] .border-white\/40 { border-color: rgb(0 0 0 / 0.30) !important; }
+
+/* Sidebar/top-bar backdrop in light */
+[data-theme="light"] .bg-background\/80 { background-color: hsl(var(--background) / 0.85) !important; }
+
+/* Recharts chart axis ticks & tooltip border */
+[data-theme="light"] .recharts-text { fill: hsl(var(--muted-foreground)) !important; }
+[data-theme="light"] .recharts-cartesian-axis-tick text { fill: hsl(var(--muted-foreground)) !important; }
+
 @layer base {
   body {
     @apply bg-background text-foreground antialiased selection:bg-primary/30 selection:text-primary-foreground;
@@ -53,7 +96,7 @@
 
   h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-display);
-    @apply tracking-tight font-bold text-white uppercase;
+    @apply tracking-tight font-bold text-foreground uppercase;
   }
 }
 
@@ -65,6 +108,10 @@
 @layer utilities {
   .text-glow {
     text-shadow: 0 0 20px hsl(var(--primary) / 0.5);
+  }
+
+  [data-theme="light"] .text-glow {
+    text-shadow: 0 0 16px hsl(var(--primary) / 0.35);
   }
   
   .glass-panel {

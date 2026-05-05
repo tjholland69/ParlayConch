@@ -37,9 +37,35 @@ function useApplyPrimaryColor(primaryColor: string | undefined) {
   }, [primaryColor]);
 }
 
+function useApplyTheme(theme: string | undefined) {
+  useEffect(() => {
+    const root = document.documentElement;
+
+    const apply = (isDark: boolean) => {
+      root.setAttribute("data-theme", isDark ? "dark" : "light");
+    };
+
+    if (!theme || theme === "dark") {
+      apply(true);
+      return;
+    }
+    if (theme === "light") {
+      apply(false);
+      return;
+    }
+    // "system" — follow OS preference
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    apply(mq.matches);
+    const handler = (e: MediaQueryListEvent) => apply(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [theme]);
+}
+
 function Router() {
   const { user, isLoading } = useAuth();
   useApplyPrimaryColor((user?.settings as any)?.primaryColor);
+  useApplyTheme((user?.settings as any)?.theme);
 
   if (isLoading) {
     return (

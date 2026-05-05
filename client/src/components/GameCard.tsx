@@ -24,7 +24,7 @@ export function GameCard({ game, onPick, isPending }: GameCardProps) {
     let textStyles = "text-muted-foreground";
     
     if (isSelected) {
-      variantStyles = "bg-primary/20 border-primary shadow-[0_0_15px_rgba(34,197,94,0.2)]";
+      variantStyles = "bg-primary/20 border-primary ring-2 ring-primary/20";
       textStyles = "text-primary font-bold";
     }
 

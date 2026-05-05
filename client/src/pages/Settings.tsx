@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin } from "lucide-react";
+import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin, Moon, Sun, Monitor } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import type { UserNotificationPreferences } from "@shared/schema";
@@ -38,6 +38,7 @@ export default function Settings() {
   const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
   const [selectedColor, setSelectedColor] = useState<string>((user?.settings as any)?.primaryColor || "221 83% 53%");
   const [selectedRegion, setSelectedRegion] = useState<string>((user?.settings as any)?.region || "");
+  const [selectedTheme, setSelectedTheme] = useState<"dark" | "light" | "system">((user?.settings as any)?.theme || "dark");
 
   useEffect(() => {
     const stored = (user?.settings as any)?.notificationPreferences;
@@ -54,12 +55,22 @@ export default function Settings() {
     if (savedRegion) setSelectedRegion(savedRegion);
   }, [user]);
 
+  useEffect(() => {
+    const savedTheme = (user?.settings as any)?.theme;
+    if (savedTheme) setSelectedTheme(savedTheme);
+  }, [user]);
+
   const handleSaveProfile = () => {
     updateSettings.mutate({ displayName });
   };
 
   const handleSaveColor = () => {
     updateSettings.mutate({ primaryColor: selectedColor });
+  };
+
+  const handleSaveTheme = (theme: "dark" | "light" | "system") => {
+    setSelectedTheme(theme);
+    updateSettings.mutate({ theme });
   };
 
   const handleSaveRegion = () => {
@@ -240,7 +251,7 @@ export default function Settings() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid grid-cols-4 gap-3">
-                {COLOR_PRESETS.map((preset) => {
+                {COLOR_PRESETS.filter(p => !(selectedTheme === "light" && p.label === "Teal")).map((preset) => {
                   const isSelected = selectedColor === preset.value;
                   return (
                     <button
@@ -290,12 +301,37 @@ export default function Settings() {
 
               <Separator className="border-white/5" />
 
-              <div className="flex items-center justify-between py-3 border-b border-white/5">
+              {/* Theme selector */}
+              <div className="space-y-3">
                 <div>
                   <p className="font-medium text-sm">Theme</p>
-                  <p className="text-xs text-muted-foreground">Light, dark, or system default</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Choose how the app looks</p>
                 </div>
-                <Badge variant="outline" className="text-muted-foreground">Coming soon</Badge>
+                <div className="grid grid-cols-3 gap-2">
+                  {([
+                    { key: "dark" as const, label: "Dark", Icon: Moon },
+                    { key: "light" as const, label: "Light", Icon: Sun },
+                    { key: "system" as const, label: "System", Icon: Monitor },
+                  ]).map(({ key, label, Icon }) => {
+                    const active = selectedTheme === key;
+                    return (
+                      <button
+                        key={key}
+                        onClick={() => handleSaveTheme(key)}
+                        className={cn(
+                          "flex flex-col items-center gap-2 py-4 rounded-xl border text-sm font-medium transition-all",
+                          active
+                            ? "bg-primary/15 border-primary text-primary"
+                            : "bg-white/5 border-white/5 text-muted-foreground hover:bg-white/10 hover:border-white/20 hover:text-foreground"
+                        )}
+                        data-testid={`button-theme-${key}`}
+                      >
+                        <Icon className="w-5 h-5" />
+                        <span className="text-xs">{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div className="flex items-center justify-between py-3">
                 <div>

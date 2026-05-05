@@ -55,7 +55,7 @@ export function Sidebar() {
                 "flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 cursor-pointer group",
                 location === item.href
                   ? "bg-primary text-primary-foreground font-bold shadow-lg shadow-primary/20"
-                  : "text-muted-foreground hover:bg-white/5 hover:text-white"
+                  : "text-muted-foreground hover:bg-white/5 hover:text-foreground"
               )}
               onClick={() => setOpen(false)}
               data-testid={`nav-${item.label.toLowerCase().replace(' ', '-')}`}
@@ -82,7 +82,7 @@ export function Sidebar() {
             )}
             <div className="overflow-hidden flex-1 min-w-0">
               <div className="flex items-center gap-2">
-                <p className="text-sm font-bold truncate text-white">
+                <p className="text-sm font-bold truncate text-foreground">
                   {(user?.settings as any)?.displayName || user?.firstName || 'Player'}
                 </p>
                 {user?.isDemo && (

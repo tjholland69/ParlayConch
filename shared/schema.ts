@@ -45,6 +45,7 @@ export type UserSettings = {
   skipImportInstructions?: boolean;
   primaryColor?: string;
   region?: "US" | "EMEA" | "APAC";
+  theme?: "dark" | "light" | "system";
 };
 
 export type LeagueNotificationSettings = {
