@@ -3,10 +3,17 @@ import { db } from "../db";
 import { parlayLegs, parlays, games, leagueMembers } from "@shared/schema";
 import { eq, and, inArray } from "drizzle-orm";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+let _openai: OpenAI | null = null;
+function getOpenAI(): OpenAI | null {
+  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return null;
+  if (!_openai) {
+    _openai = new OpenAI({
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+    });
+  }
+  return _openai;
+}
 
 export type InsightFocus = "general" | "bet_types" | "teams" | "props" | "trends";
 
@@ -308,8 +315,13 @@ async function generateCommentary(
       : "You haven't logged any picks yet. Once you submit some parlays, you'll see personalized betting insights here.";
   }
 
+  const client = getOpenAI();
+  if (!client) {
+    return "AI insights are not available in this environment. Set AI_INTEGRATIONS_OPENAI_API_KEY to enable them.";
+  }
+
   const prompt = buildPrompt(stats, focus);
-  const response = await openai.chat.completions.create({
+  const response = await client.chat.completions.create({
     model: "gpt-5-mini",
     messages: [{ role: "user", content: prompt }],
     max_completion_tokens: 400,
