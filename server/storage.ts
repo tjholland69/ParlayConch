@@ -58,10 +58,15 @@ export interface IStorage {
   createParlay(userId: string, parlay: InsertParlay, legs: InsertParlayLeg[]): Promise<Parlay>;
   getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
+  getAllLeagueParlays(leagueId: number): Promise<ParlayWithLegs[]>;
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
   getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]>;
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string; notes?: string | null }[] }): Promise<Parlay>;
+  deleteParlay(parlayId: number): Promise<void>;
+  deleteParlayLeg(legId: number): Promise<void>;
+  updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg>;
+  addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'>): Promise<ParlayLeg>;
 
   // Imports
   createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
@@ -603,6 +608,61 @@ export class DatabaseStorage implements IStorage {
       const [parlay] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
       return parlay;
     });
+  }
+
+  async getAllLeagueParlays(leagueId: number): Promise<ParlayWithLegs[]> {
+    const leagueParlays = await db.select({ parlay: parlays, user: users })
+      .from(parlays)
+      .innerJoin(users, eq(parlays.userId, users.id))
+      .where(eq(parlays.leagueId, leagueId))
+      .orderBy(desc(parlays.createdAt));
+
+    if (leagueParlays.length === 0) return [];
+
+    const parlayIds = leagueParlays.map(({ parlay }) => parlay.id);
+    const weekIds = [...new Set(leagueParlays.map(({ parlay }) => parlay.weekId))];
+
+    const [allLegs, allWeeks] = await Promise.all([
+      db.select({ leg: parlayLegs, game: games })
+        .from(parlayLegs)
+        .leftJoin(games, eq(parlayLegs.gameId, games.id))
+        .where(inArray(parlayLegs.parlayId, parlayIds)),
+      db.select().from(weeks).where(inArray(weeks.id, weekIds)),
+    ]);
+
+    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
+    for (const { leg, game } of allLegs) {
+      const existing = legsByParlayId.get(leg.parlayId) ?? [];
+      existing.push({ ...leg, game });
+      legsByParlayId.set(leg.parlayId, existing);
+    }
+    const weekById = new Map(allWeeks.map(w => [w.id, w]));
+
+    return leagueParlays.map(({ parlay, user }) => ({
+      ...parlay,
+      legs: legsByParlayId.get(parlay.id) ?? [],
+      week: weekById.get(parlay.weekId)!,
+      user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any },
+    }));
+  }
+
+  async deleteParlay(parlayId: number): Promise<void> {
+    await db.delete(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
+    await db.delete(parlays).where(eq(parlays.id, parlayId));
+  }
+
+  async deleteParlayLeg(legId: number): Promise<void> {
+    await db.delete(parlayLegs).where(eq(parlayLegs.id, legId));
+  }
+
+  async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg> {
+    const [updated] = await db.update(parlayLegs).set(updates).where(eq(parlayLegs.id, legId)).returning();
+    return updated;
+  }
+
+  async addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'>): Promise<ParlayLeg> {
+    const [newLeg] = await db.insert(parlayLegs).values({ ...leg, parlayId }).returning();
+    return newLeg;
   }
 
   // Imports

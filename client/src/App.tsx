@@ -17,6 +17,7 @@ import History from "@/pages/History";
 import Leagues from "@/pages/Leagues";
 import LeagueDetail from "@/pages/LeagueDetail";
 import LeagueSettings from "@/pages/LeagueSettings";
+import DemoDataEditor from "@/pages/DemoDataEditor";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 
@@ -103,6 +104,7 @@ function Router() {
             <Route path="/history" component={History} />
             <Route path="/leagues" component={Leagues} />
             <Route path="/leagues/:id/settings" component={LeagueSettings} />
+            <Route path="/leagues/:id/demo-data" component={DemoDataEditor} />
             <Route path="/leagues/:id" component={LeagueDetail} />
             <Route path="/settings" component={Settings} />
             <Route component={NotFound} />

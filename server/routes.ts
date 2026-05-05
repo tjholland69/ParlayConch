@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { pool, db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
-import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers } from "@shared/schema";
+import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs } from "@shared/schema";
 import { ilike, eq, and } from "drizzle-orm";
 import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
@@ -1030,6 +1030,94 @@ export async function registerRoutes(
       const { status, legs } = req.body;
       const updated = await storage.updateParlay(parlayId, { status, legs });
       res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ===== DEMO DATA EDITOR (Admin + Demo League only) =====
+
+  // Helper: verify admin of a demo league
+  async function requireDemoAdmin(req: any, res: any, leagueId: number): Promise<string | null> {
+    const userId = (req.user as any).claims.sub;
+    const league = await storage.getLeague(leagueId);
+    if (!league) { res.status(404).json({ message: "League not found" }); return null; }
+    if (!league.isDemo) { res.status(403).json({ message: "Data editor only available in demo leagues" }); return null; }
+    const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+    if (!isAdmin) { res.status(403).json({ message: "Only the Parlay Maestro can use the data editor" }); return null; }
+    return userId;
+  }
+
+  app.get("/api/leagues/:id/parlays/all", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const allParlays = await storage.getAllLeagueParlays(leagueId);
+      res.json(allParlays);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/parlays/:id", isAuthenticated, async (req, res) => {
+    try {
+      const parlayId = Number(req.params.id);
+      const parlay = await storage.getParlay(parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      if (!uid) return;
+      await storage.deleteParlay(parlayId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/parlay-legs/:legId", isAuthenticated, async (req, res) => {
+    try {
+      const legId = Number(req.params.legId);
+      const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+      if (!leg) return res.status(404).json({ message: "Leg not found" });
+      const parlay = await storage.getParlay(leg.parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      if (!uid) return;
+      await storage.deleteParlayLeg(legId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/parlay-legs/:legId", isAuthenticated, async (req, res) => {
+    try {
+      const legId = Number(req.params.legId);
+      const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+      if (!leg) return res.status(404).json({ message: "Leg not found" });
+      const parlay = await storage.getParlay(leg.parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      if (!uid) return;
+      const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment } = req.body;
+      const updated = await storage.updateParlayLeg(legId, { betType, pick, line, odds, result, playerName, propType, notes, gameSegment });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/parlays/:id/legs", isAuthenticated, async (req, res) => {
+    try {
+      const parlayId = Number(req.params.id);
+      const parlay = await storage.getParlay(parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      if (!uid) return;
+      const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment } = req.body;
+      if (!betType || !pick) return res.status(400).json({ message: "betType and pick are required" });
+      const newLeg = await storage.addParlayLeg(parlayId, { betType, pick, line, odds, result, playerName, propType, notes, gameSegment });
+      res.json(newLeg);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

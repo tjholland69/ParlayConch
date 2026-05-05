@@ -197,6 +197,14 @@ export default function LeagueDetail() {
                   <Upload className="w-4 h-4 mr-2" />
                   Import History
                 </Button>
+                {league.isDemo && (
+                  <Link href={`/leagues/${leagueId}/demo-data`}>
+                    <Button variant="outline" className="border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10" data-testid="button-demo-data-editor">
+                      <Edit className="w-4 h-4 mr-2" />
+                      Data Editor
+                    </Button>
+                  </Link>
+                )}
                 <Link href={`/leagues/${leagueId}/settings`}>
                   <Button variant="outline" data-testid="button-league-settings">
                     <Settings className="w-4 h-4 mr-2" />

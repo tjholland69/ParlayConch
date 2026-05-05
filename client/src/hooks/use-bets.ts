@@ -654,3 +654,117 @@ export function useUnlockWeekParlay(leagueId: number, weekId: number) {
     },
   });
 }
+
+// ===== DEMO DATA EDITOR HOOKS =====
+
+export function useAllLeagueParlays(leagueId: number) {
+  return useQuery<ParlayWithLegs[]>({
+    queryKey: ['/api/leagues', leagueId, 'parlays', 'all'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlays/all`, { credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    enabled: !!leagueId,
+  });
+}
+
+export function useDeleteParlay(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (parlayId: number) => {
+      const res = await fetch(`/api/parlays/${parlayId}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Parlay Deleted" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useDeleteParlayLeg(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (legId: number) => {
+      const res = await fetch(`/api/parlay-legs/${legId}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Leg Removed" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useUpdateParlayLeg(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ legId, updates }: { legId: number; updates: Record<string, any> }) => {
+      const res = await fetch(`/api/parlay-legs/${legId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updates),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Leg Updated" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useUpdateParlayStatus(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ parlayId, status }: { parlayId: number; status: string }) => {
+      const res = await fetch(`/api/parlays/${parlayId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Status Updated" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useAddParlayLeg(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ parlayId, leg }: { parlayId: number; leg: Record<string, any> }) => {
+      const res = await fetch(`/api/parlays/${parlayId}/legs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(leg),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Leg Added" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
