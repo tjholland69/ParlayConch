@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb, real, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb, real, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { users } from "./models/auth";
@@ -88,7 +88,9 @@ export const games = pgTable("games", {
   weather: text("weather"),
   homeRecord: text("home_record"),
   awayRecord: text("away_record"),
-});
+}, (table) => [
+  index("games_week_id_idx").on(table.weekId),
+]);
 
 // Leagues - groups of users
 export const leagues = pgTable("leagues", {
@@ -114,7 +116,10 @@ export const leagueMembers = pgTable("league_members", {
   userId: varchar("user_id").notNull(),
   role: text("role").default("member"), // 'admin', 'member'
   joinedAt: timestamp("joined_at").defaultNow(),
-});
+}, (table) => [
+  index("league_members_league_id_idx").on(table.leagueId),
+  index("league_members_user_id_idx").on(table.userId),
+]);
 
 // Import batches - tracks CSV imports
 export const importBatches = pgTable("import_batches", {
@@ -138,7 +143,9 @@ export const parlays = pgTable("parlays", {
   createdAt: timestamp("created_at").defaultNow(),
   source: text("source").default("live"), // 'live', 'imported'
   importBatchId: integer("import_batch_id"),
-});
+}, (table) => [
+  index("parlays_user_league_week_idx").on(table.userId, table.leagueId, table.weekId),
+]);
 
 // Valid player prop types for reference
 export const PLAYER_PROP_TYPES = [
@@ -185,7 +192,9 @@ export const parlayLegs = pgTable("parlay_legs", {
   playerName: text("player_name"), // for player_prop bets: the player's name
   propType: text("prop_type"),     // for player_prop bets: the prop category (e.g. 'rush_yards')
   notes: text("notes"),            // free-text note, display only
-});
+}, (table) => [
+  index("parlay_legs_parlay_id_idx").on(table.parlayId),
+]);
 
 // Parlay week locks — tracks when a Parlay Maestro locks a week's submissions
 export const leagueWeekLocks = pgTable("league_week_locks", {
@@ -207,7 +216,9 @@ export const notifications = pgTable("notifications", {
   message: text("message"),
   isRead: boolean("is_read").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => [
+  index("notifications_user_id_idx").on(table.userId),
+]);
 
 // Legacy bets table (keep for backward compatibility)
 export const bets = pgTable("bets", {
