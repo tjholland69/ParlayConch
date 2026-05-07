@@ -37,7 +37,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <TabIcon name="trophy-outline" color={color} size={size} />
           ),
-          headerTitle: "Parlay.Club",
+          headerTitle: "Parlay.Conch",
         }}
       />
       <Tabs.Screen

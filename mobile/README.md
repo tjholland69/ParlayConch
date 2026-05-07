@@ -1,4 +1,4 @@
-# Parlay.Club — iOS Mobile App
+# Parlay.Conch — iOS Mobile App
 
 React Native / Expo project that shares schema types and API patterns with the web app.
 

@@ -39,7 +39,7 @@ export default function LoginScreen() {
         <View className="w-20 h-20 rounded-2xl bg-primary items-center justify-center mb-6">
           <Text className="text-4xl font-bold text-background">P</Text>
         </View>
-        <Text className="text-3xl font-bold text-foreground mb-2">Parlay.Club</Text>
+        <Text className="text-3xl font-bold text-foreground mb-2">Parlay.Conch</Text>
         <Text className="text-muted-foreground text-center text-base">
           Track your NFL parlay picks with your league
         </Text>
