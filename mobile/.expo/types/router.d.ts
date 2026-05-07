@@ -1,0 +1,14 @@
+/* eslint-disable */
+import * as Router from 'expo-router';
+
+export * from 'expo-router';
+
+declare module 'expo-router' {
+  export namespace ExpoRouter {
+    export interface __routes<T extends string = string> extends Record<string, unknown> {
+      StaticRoutes: `/` | `/(tabs)` | `/(tabs)/leagues` | `/(tabs)/picks` | `/(tabs)/settings` | `/_sitemap` | `/leagues` | `/login` | `/picks` | `/settings`;
+      DynamicRoutes: `/leagues/${Router.SingleRoutePart<T>}`;
+      DynamicRouteTemplate: `/leagues/[id]`;
+    }
+  }
+}
