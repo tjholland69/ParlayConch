@@ -4,6 +4,8 @@ import {
   Pressable,
   ActivityIndicator,
   StyleSheet,
+  Image,
+  useWindowDimensions,
 } from "react-native";
 import { useState } from "react";
 import * as WebBrowser from "expo-web-browser";
@@ -16,9 +18,28 @@ import { StatusBar } from "expo-status-bar";
 
 WebBrowser.maybeCompleteAuthSession();
 
+const FEATURES = [
+  {
+    icon: "people" as const,
+    title: "Leagues",
+    desc: "Create or join leagues with your crew",
+  },
+  {
+    icon: "checkmark-circle" as const,
+    title: "Weekly Picks",
+    desc: "Lock in your parlay picks every week",
+  },
+  {
+    icon: "bar-chart" as const,
+    title: "Leaderboard",
+    desc: "See who really knows the game",
+  },
+];
+
 export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const queryClient = useQueryClient();
+  const { width } = useWindowDimensions();
 
   async function handleLogin() {
     setLoading(true);
@@ -39,6 +60,8 @@ export default function LoginScreen() {
     }
   }
 
+  const isLandscape = width > 600;
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -47,34 +70,34 @@ export default function LoginScreen() {
       <View style={styles.circleTopRight} />
       <View style={styles.circleBottomLeft} />
 
-      {/* Logo mark */}
-      <View style={styles.logoSection}>
+      {/* Logo section */}
+      <View style={[styles.logoSection, isLandscape && styles.logoSectionLandscape]}>
         <View style={styles.logoMark}>
-          <View style={styles.logoInner}>
-            <Ionicons name="trophy" size={36} color="#2563eb" />
-          </View>
+          <Image
+            source={require("../../assets/icon.png")}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
         </View>
-
-        <Text style={styles.appName}>PARLAY.CONCH</Text>
+        <Text style={styles.appName}>PARLAYCONCH</Text>
         <Text style={styles.tagline}>
           Weekly NFL parlays.{"\n"}Track picks with your crew.
         </Text>
       </View>
 
-      {/* Feature pills */}
-      <View style={styles.pillsRow}>
-        <View style={styles.pill}>
-          <Ionicons name="people-outline" size={14} color="#94a3b8" />
-          <Text style={styles.pillText}>Leagues</Text>
-        </View>
-        <View style={styles.pill}>
-          <Ionicons name="checkmark-circle-outline" size={14} color="#94a3b8" />
-          <Text style={styles.pillText}>Weekly Picks</Text>
-        </View>
-        <View style={styles.pill}>
-          <Ionicons name="bar-chart-outline" size={14} color="#94a3b8" />
-          <Text style={styles.pillText}>Leaderboard</Text>
-        </View>
+      {/* Feature tiles — stacked vertically */}
+      <View style={[styles.featureList, isLandscape && styles.featureListLandscape]}>
+        {FEATURES.map((feature) => (
+          <View key={feature.title} style={styles.featureTile}>
+            <View style={styles.featureIconWrap}>
+              <Ionicons name={feature.icon} size={18} color="#2563eb" />
+            </View>
+            <View style={styles.featureText}>
+              <Text style={styles.featureTitle}>{feature.title}</Text>
+              <Text style={styles.featureDesc}>{feature.desc}</Text>
+            </View>
+          </View>
+        ))}
       </View>
 
       {/* CTA */}
@@ -82,7 +105,10 @@ export default function LoginScreen() {
         <Pressable
           onPress={handleLogin}
           disabled={loading}
-          style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}
+          style={({ pressed }) => [
+            styles.primaryButton,
+            pressed && styles.primaryButtonPressed,
+          ]}
           testID="button-login"
         >
           {loading ? (
@@ -90,7 +116,7 @@ export default function LoginScreen() {
           ) : (
             <>
               <Ionicons name="log-in-outline" size={20} color="#ffffff" />
-              <Text style={styles.primaryButtonText}>Sign In</Text>
+              <Text style={styles.primaryButtonText}>Sign In with Replit</Text>
             </>
           )}
         </Pressable>
@@ -131,9 +157,14 @@ const styles = StyleSheet.create({
     backgroundColor: "#0ea5e9",
     opacity: 0.06,
   },
+
+  /* Logo */
   logoSection: {
     alignItems: "center",
-    marginBottom: 48,
+    marginBottom: 32,
+  },
+  logoSectionLandscape: {
+    marginBottom: 16,
   },
   logoMark: {
     width: 88,
@@ -144,60 +175,83 @@ const styles = StyleSheet.create({
     borderColor: "#2a3447",
     alignItems: "center",
     justifyContent: "center",
-    marginBottom: 28,
+    marginBottom: 20,
+    overflow: "hidden",
     shadowColor: "#2563eb",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 16,
   },
-  logoInner: {
-    width: 64,
-    height: 64,
-    borderRadius: 16,
-    backgroundColor: "#1e2a3b",
-    alignItems: "center",
-    justifyContent: "center",
+  logoImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 18,
   },
   appName: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "800",
     color: "#f1f5f9",
     letterSpacing: 3,
-    marginBottom: 12,
+    marginBottom: 8,
   },
   tagline: {
-    fontSize: 15,
+    fontSize: 14,
     color: "#94a3b8",
     textAlign: "center",
-    lineHeight: 22,
+    lineHeight: 20,
   },
-  pillsRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 56,
-    flexWrap: "wrap",
-    justifyContent: "center",
+
+  /* Feature list — stacked vertically */
+  featureList: {
+    width: "100%",
+    gap: 10,
+    marginBottom: 40,
   },
-  pill: {
+  featureListLandscape: {
+    marginBottom: 20,
+  },
+  featureTile: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 14,
     backgroundColor: "#1c2538",
     borderWidth: 1,
     borderColor: "#2a3447",
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
   },
-  pillText: {
+  featureIconWrap: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    backgroundColor: "#1e2e4a",
+    borderWidth: 1,
+    borderColor: "#2563eb33",
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  featureText: {
+    flex: 1,
+  },
+  featureTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#f1f5f9",
+    marginBottom: 2,
+  },
+  featureDesc: {
     fontSize: 12,
-    color: "#94a3b8",
-    fontWeight: "500",
+    color: "#64748b",
+    lineHeight: 16,
   },
+
+  /* CTA */
   ctaSection: {
     width: "100%",
     alignItems: "center",
-    gap: 16,
+    gap: 14,
   },
   primaryButton: {
     width: "100%",
