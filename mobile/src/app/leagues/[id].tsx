@@ -5,6 +5,7 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
+  Linking,
   StyleSheet,
 } from "react-native";
 import { useLocalSearchParams, Stack } from "expo-router";
@@ -292,6 +293,16 @@ export default function LeagueDetailScreen() {
           {/* PARLAYS */}
           {activeTab === "parlays" && (
             <>
+              {activeWeek && !lockStatus?.isLocked && (
+                <Pressable
+                  style={({ pressed }) => [styles.submitBanner, pressed && styles.submitBannerPressed]}
+                  onPress={() => Linking.openURL("https://parlayconch.com")}
+                >
+                  <Ionicons name="create-outline" size={16} color="#2563eb" />
+                  <Text style={styles.submitBannerText}>Submit or edit your pick at parlayconch.com</Text>
+                  <Ionicons name="open-outline" size={14} color="#2563eb" />
+                </Pressable>
+              )}
               {parlaysLoading ? (
                 <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
               ) : !parlays || parlays.length === 0 ? (
@@ -428,6 +439,19 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { padding: 16 },
   tabLoader: { marginTop: 48 },
+  submitBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#1e2a3b",
+    borderWidth: 1,
+    borderColor: "#2563eb",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  submitBannerPressed: { opacity: 0.7 },
+  submitBannerText: { flex: 1, fontSize: 13, color: "#93c5fd", fontWeight: "500" },
   emptyState: { alignItems: "center", paddingVertical: 48, gap: 10 },
   emptyIcon: {
     width: 64,

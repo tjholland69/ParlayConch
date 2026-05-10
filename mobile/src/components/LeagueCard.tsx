@@ -73,10 +73,12 @@ export function LeagueCard({ league }: LeagueCardProps) {
             </View>
           )}
 
-          <View style={styles.metaItem}>
-            <Ionicons name="key-outline" size={13} color="#475569" />
-            <Text style={styles.inviteCode}>{league.inviteCode}</Text>
-          </View>
+          {league.isAdmin && (
+            <View style={styles.metaItem}>
+              <Ionicons name="key-outline" size={13} color="#475569" />
+              <Text style={styles.inviteCode}>{league.inviteCode}</Text>
+            </View>
+          )}
         </View>
       </View>
     </Pressable>
