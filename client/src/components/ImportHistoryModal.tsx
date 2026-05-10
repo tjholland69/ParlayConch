@@ -15,6 +15,7 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   leagueId: number;
+  onNavigate?: () => void;
 }
 
 interface CSVLeg {

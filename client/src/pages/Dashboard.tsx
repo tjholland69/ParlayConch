@@ -96,7 +96,7 @@ export default function Dashboard() {
             </h2>
           </div>
           <div className="flex-1 flex items-center justify-center">
-            <StatsChart data={stats} />
+            <StatsChart data={stats ?? []} />
           </div>
         </div>
       </div>

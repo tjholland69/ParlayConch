@@ -6,12 +6,17 @@ import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes
 import { z } from "zod";
 import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs } from "@shared/schema";
 import { ilike, eq, and } from "drizzle-orm";
-import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
+import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
+import { runOddsSyncQueued, startOddsSyncWorker } from "./jobs/odds-sync-queue";
+import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
+import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
+import { parseTicketImages } from "./services/screenshotParser";
+import multer from "multer";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
 async function hasLeaguePermission(leagueId: number, userId: string, permission: keyof LieutenantPermissions): Promise<boolean> {
@@ -28,10 +33,17 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  await connectSessionRedis();
+
   // Auth setup
   await setupAuth(app);
   registerAuthRoutes(app);
   registerLocalAuthRoutes(app);
+
+  if (isRedisConfigured()) {
+    startOddsSyncWorker();
+  }
+  registerRealtimeWebSocket(httpServer, app);
 
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
@@ -427,7 +439,7 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Only the Parlay Maestro can sync odds data" });
       }
 
-      const result = await syncGamesFromOddsApi(weekId);
+      const result = await runOddsSyncQueued(weekId);
       res.json({ message: `Synced games: ${result.added} added, ${result.updated} updated` });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -653,6 +665,55 @@ export async function registerRoutes(
       res.status(500).json({ message: err.message });
     }
   });
+
+  // ===== SCREENSHOT IMPORT — Parse images with OpenAI Vision =====
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024, files: 20 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}. Only image files are accepted.`));
+      }
+    },
+  });
+
+  app.post(
+    "/api/leagues/:leagueId/import/screenshots",
+    isAuthenticated,
+    upload.array("images", 20),
+    async (req, res) => {
+      try {
+        const leagueId = Number(req.params.leagueId);
+        const userId = (req.user as any).claims.sub;
+
+        const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+        const isSuperUser = await storage.isSuperUser(userId);
+        if (!isAdmin && !isSuperUser) {
+          return res.status(403).json({ message: "Parlay Maestro access required" });
+        }
+
+        const files = req.files as Express.Multer.File[];
+        if (!files || files.length === 0) {
+          return res.status(400).json({ message: "No image files uploaded" });
+        }
+
+        const tickets = await parseTicketImages(
+          files.map((f) => ({
+            buffer: f.buffer,
+            mimetype: f.mimetype,
+            originalname: f.originalname,
+          }))
+        );
+
+        res.json(tickets);
+      } catch (err: any) {
+        console.error("[Screenshot Import] error:", err);
+        res.status(500).json({ message: err.message ?? "Screenshot parsing failed" });
+      }
+    }
+  );
 
   // ===== MANUAL ENRICHMENT (Admin only) =====
   app.post("/api/leagues/:leagueId/enrich", isAuthenticated, async (req, res) => {
@@ -955,6 +1016,10 @@ export async function registerRoutes(
       const schema = z.object({
         approveRejectParlays: z.boolean(),
         editParlays: z.boolean(),
+        lockParlay: z.boolean(),
+        unlockParlay: z.boolean(),
+        unselectUserPick: z.boolean(),
+        approveMemberInvites: z.boolean(),
         importHistory: z.boolean(),
         markLeagueDemo: z.boolean(),
       });
@@ -1133,9 +1198,9 @@ export async function registerRoutes(
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
-      const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment } = req.body;
+      const { betType, pick, line, odds, playerName, propType, notes, gameSegment } = req.body;
       if (!betType || !pick) return res.status(400).json({ message: "betType and pick are required" });
-      const newLeg = await storage.addParlayLeg(parlayId, { betType, pick, line, odds, result, playerName, propType, notes, gameSegment });
+      const newLeg = await storage.addParlayLeg(parlayId, { betType, pick, line, odds, playerName, propType, notes, gameSegment });
       res.json(newLeg);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

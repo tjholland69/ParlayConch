@@ -127,7 +127,7 @@ export async function syncGameScoresFromNflverse(
   weekNumbers?: number[]
 ): Promise<{ updated: number; noMatch: number; alreadyFinal: number }> {
   console.log(`[nflverse] Fetching schedules for season ${season}…`);
-  const rows = (await fetchCsv(schedulesUrl())) as NflverseScheduleRow[];
+  const rows = (await fetchCsv(schedulesUrl())) as unknown as NflverseScheduleRow[];
 
   // Filter to the requested season (+ optional week filter)
   const relevant = rows.filter((r) => {
@@ -276,8 +276,8 @@ export async function syncPlayerStatsForGames(
     return { players: 0, stats: 0 };
   }
 
-  console.log(`[nflverse] Fetching player stats for season ${season}, week ${week}, teams: ${[...teamAbbrevs].join(", ")}…`);
-  const rows = (await fetchCsv(playerStatsUrl(season))) as NflversePlayerStatRow[];
+  console.log(`[nflverse] Fetching player stats for season ${season}, week ${week}, teams: ${Array.from(teamAbbrevs).join(", ")}…`);
+  const rows = (await fetchCsv(playerStatsUrl(season))) as unknown as NflversePlayerStatRow[];
 
   // Filter to our target week + teams
   const relevant = rows.filter(
