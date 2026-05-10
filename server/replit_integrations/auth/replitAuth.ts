@@ -6,7 +6,9 @@ import session from "express-session";
 import type { Express, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
+import { RedisStore } from "connect-redis";
 import { authStorage } from "./storage";
+import { getSessionRedis, redisKeyPrefix } from "../../redis-clients";
 
 const getOidcConfig = memoize(
   async () => {
@@ -20,13 +22,21 @@ const getOidcConfig = memoize(
 
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
-  const pgStore = connectPg(session);
-  const sessionStore = new pgStore({
-    conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
-    ttl: sessionTtl,
-    tableName: "sessions",
-  });
+  const redisClient = getSessionRedis();
+  const sessionStore = redisClient
+    ? new RedisStore({
+        client: redisClient,
+        prefix: `${redisKeyPrefix()}sess:`,
+      })
+    : (() => {
+        const pgStore = connectPg(session);
+        return new pgStore({
+          conString: process.env.DATABASE_URL,
+          createTableIfMissing: false,
+          ttl: sessionTtl,
+          tableName: "sessions",
+        });
+      })();
   return session({
     secret: process.env.SESSION_SECRET ?? "dev-secret-local",
     store: sessionStore,

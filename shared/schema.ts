@@ -5,6 +5,7 @@ import { users } from "./models/auth";
 
 // Export users and sessions from auth model
 export * from "./models/auth";
+export * from "./models/chat";
 
 export type LieutenantPermissions = {
   // Parlay management
@@ -70,7 +71,9 @@ export const weeks = pgTable("weeks", {
 
 export const games = pgTable("games", {
   id: serial("id").primaryKey(),
-  weekId: integer("week_id").notNull(),
+  weekId: integer("week_id")
+    .notNull()
+    .references(() => weeks.id, { onDelete: "cascade" }),
   homeTeam: text("home_team").notNull(),
   awayTeam: text("away_team").notNull(),
   spread: text("spread"),
@@ -113,8 +116,12 @@ export const leagues = pgTable("leagues", {
 // League memberships
 export const leagueMembers = pgTable("league_members", {
   id: serial("id").primaryKey(),
-  leagueId: integer("league_id").notNull(),
-  userId: varchar("user_id").notNull(),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   role: text("role").default("member"), // 'admin', 'member'
   joinedAt: timestamp("joined_at").defaultNow(),
 }, (table) => [
@@ -125,8 +132,12 @@ export const leagueMembers = pgTable("league_members", {
 // Import batches - tracks CSV imports
 export const importBatches = pgTable("import_batches", {
   id: serial("id").primaryKey(),
-  leagueId: integer("league_id").notNull(),
-  uploadedBy: varchar("uploaded_by").notNull(),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  uploadedBy: varchar("uploaded_by")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   originalFilename: text("original_filename").notNull(),
   recordCount: integer("record_count").default(0),
   uploadedAt: timestamp("uploaded_at").defaultNow(),
@@ -135,17 +146,27 @@ export const importBatches = pgTable("import_batches", {
 // Parlays - a user's weekly pick (replaces individual bets)
 export const parlays = pgTable("parlays", {
   id: serial("id").primaryKey(),
-  userId: varchar("user_id").notNull(),
-  leagueId: integer("league_id").notNull(),
-  weekId: integer("week_id").notNull(),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  weekId: integer("week_id")
+    .notNull()
+    .references(() => weeks.id, { onDelete: "restrict" }),
   status: text("status").default("pending"), // 'pending', 'approved', 'rejected', 'win', 'loss', 'push'
   approvedBy: varchar("approved_by"),
   approvedAt: timestamp("approved_at"),
   createdAt: timestamp("created_at").defaultNow(),
   source: text("source").default("live"), // 'live', 'imported'
-  importBatchId: integer("import_batch_id"),
+  importBatchId: integer("import_batch_id").references(() => importBatches.id, {
+    onDelete: "set null",
+  }),
 }, (table) => [
   index("parlays_user_league_week_idx").on(table.userId, table.leagueId, table.weekId),
+  index("parlays_league_week_idx").on(table.leagueId, table.weekId),
+  uniqueIndex("parlays_user_league_week_uidx").on(table.userId, table.leagueId, table.weekId),
 ]);
 
 // Valid player prop types for reference
@@ -181,8 +202,10 @@ export type PlayerPropType = typeof PLAYER_PROP_TYPES[number]["value"];
 // Parlay legs - individual picks within a parlay
 export const parlayLegs = pgTable("parlay_legs", {
   id: serial("id").primaryKey(),
-  parlayId: integer("parlay_id").notNull(),
-  gameId: integer("game_id"), // nullable — player prop bets may not reference a specific game
+  parlayId: integer("parlay_id")
+    .notNull()
+    .references(() => parlays.id, { onDelete: "cascade" }),
+  gameId: integer("game_id").references(() => games.id, { onDelete: "set null" }), // nullable — player prop bets may not reference a specific game
   betType: text("bet_type").notNull(), // 'spread', 'moneyline', 'over', 'under', 'player_prop'
   pick: text("pick").notNull(), // 'home', 'away', 'over', 'under', 'yes', 'no'
   line: text("line"), // Spread/total value at time of pick (e.g. -3.5 for spread, 47.5 for total; blank for moneyline)
@@ -200,9 +223,15 @@ export const parlayLegs = pgTable("parlay_legs", {
 // Parlay week locks — tracks when a Parlay Maestro locks a week's submissions
 export const leagueWeekLocks = pgTable("league_week_locks", {
   id: serial("id").primaryKey(),
-  leagueId: integer("league_id").notNull(),
-  weekId: integer("week_id").notNull(),
-  lockedBy: varchar("locked_by").notNull(),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  weekId: integer("week_id")
+    .notNull()
+    .references(() => weeks.id, { onDelete: "cascade" }),
+  lockedBy: varchar("locked_by")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   lockedAt: timestamp("locked_at").notNull().defaultNow(),
   hadMissingBets: boolean("had_missing_bets").notNull().default(false),
 });
@@ -210,8 +239,10 @@ export const leagueWeekLocks = pgTable("league_week_locks", {
 // In-app notifications
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),
-  userId: varchar("user_id").notNull(),
-  leagueId: integer("league_id"),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  leagueId: integer("league_id").references(() => leagues.id, { onDelete: "cascade" }),
   type: text("type").notNull(), // 'announcement', 'parlay_approved', 'parlay_rejected', 'reminder', 'system'
   title: text("title").notNull(),
   message: text("message"),
@@ -224,8 +255,12 @@ export const notifications = pgTable("notifications", {
 // Legacy bets table (keep for backward compatibility)
 export const bets = pgTable("bets", {
   id: serial("id").primaryKey(),
-  userId: varchar("user_id").notNull(),
-  gameId: integer("game_id").notNull(),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  gameId: integer("game_id")
+    .notNull()
+    .references(() => games.id, { onDelete: "cascade" }),
   pick: text("pick").notNull(),
   status: text("status").default('pending'),
   createdAt: timestamp("created_at").defaultNow(),
@@ -261,7 +296,9 @@ export const players = pgTable("players", {
 // Weekly player stats — only stored for players in games that were bet on
 export const playerWeekStats = pgTable("player_week_stats", {
   id: serial("id").primaryKey(),
-  playerId: integer("player_id").notNull(),
+  playerId: integer("player_id")
+    .notNull()
+    .references(() => players.id, { onDelete: "cascade" }),
   season: integer("season").notNull(),
   week: integer("week").notNull(),
   seasonType: text("season_type").default("REG"), // REG, POST, PRE
