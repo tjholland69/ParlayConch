@@ -36,16 +36,6 @@ const TAB_ICONS: Record<Tab, React.ComponentProps<typeof Ionicons>["name"]> = {
   stats: "bar-chart-outline",
 };
 
-function StatusDot({ status }: { status: string }) {
-  const color =
-    status === "approved"
-      ? "#22c55e"
-      : status === "rejected"
-      ? "#ef4444"
-      : "#f59e0b";
-  return <View style={[styles.statusDot, { backgroundColor: color }]} />;
-}
-
 function ParlayCard({ parlay }: { parlay: any }) {
   const name =
     parlay.user?.settings?.displayName ??
@@ -194,8 +184,8 @@ export default function LeagueDetailScreen() {
     enabled: !!leagueId,
   });
 
-  const { data: members, isLoading: membersLoading } = useLeagueMembersWithUsers(leagueId);
-  const { data: stats, isLoading: statsLoading } = useLeagueStats(leagueId);
+  const { data: members, isLoading: membersLoading, refetch: refetchMembers } = useLeagueMembersWithUsers(leagueId);
+  const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useLeagueStats(leagueId);
 
   const weekId = activeWeek?.id ?? 0;
   const {
@@ -206,7 +196,6 @@ export default function LeagueDetailScreen() {
   const { data: lockStatus } = useWeekLockStatus(leagueId, weekId);
 
   const leagueName = (league as any)?.name ?? "League";
-  const isLoading = leagueLoading || (activeTab === "parlays" && parlaysLoading);
 
   if (leagueLoading) {
     return (
@@ -234,7 +223,7 @@ export default function LeagueDetailScreen() {
             {activeWeek && (
               <View style={styles.weekPill}>
                 <Ionicons name="calendar-outline" size={12} color="#94a3b8" />
-                <Text style={styles.weekPillText}>{activeWeek.name}</Text>
+                <Text style={styles.weekPillText}>{activeWeek.label}</Text>
               </View>
             )}
             {lockStatus?.isLocked && (
@@ -249,9 +238,9 @@ export default function LeagueDetailScreen() {
               </View>
             )}
           </View>
-          {activeWeek?.deadline && (
+          {(activeWeek as any)?.deadline && (
             <Text style={styles.deadlineText}>
-              {format(new Date(activeWeek.deadline), "MMM d, h:mm a")}
+              {format(new Date((activeWeek as any).deadline), "MMM d, h:mm a")}
             </Text>
           )}
         </View>
@@ -286,8 +275,16 @@ export default function LeagueDetailScreen() {
           contentContainerStyle={styles.scrollContent}
           refreshControl={
             <RefreshControl
-              refreshing={parlaysLoading || membersLoading}
-              onRefresh={refetchParlays}
+              refreshing={
+                activeTab === "parlays" ? parlaysLoading :
+                activeTab === "members" ? membersLoading :
+                statsLoading
+              }
+              onRefresh={
+                activeTab === "parlays" ? refetchParlays :
+                activeTab === "members" ? refetchMembers :
+                refetchStats
+              }
               tintColor="#2563eb"
             />
           }
@@ -479,7 +476,6 @@ const styles = StyleSheet.create({
   legDot: { width: 7, height: 7, borderRadius: 4 },
   legText: { flex: 1, fontSize: 12, color: "#94a3b8" },
   legLine: { fontSize: 12, color: "#475569", fontWeight: "600" },
-  statusDot: { width: 8, height: 8, borderRadius: 4 },
 
   /* Member card */
   memberCard: {

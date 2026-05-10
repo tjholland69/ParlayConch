@@ -44,7 +44,7 @@ export async function apiRequest<T = unknown>(
   };
 
   if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
+    // Backend uses express-session cookie auth; Bearer is not checked server-side.
     headers["Cookie"] = `connect.sid=${token}`;
   }
 
