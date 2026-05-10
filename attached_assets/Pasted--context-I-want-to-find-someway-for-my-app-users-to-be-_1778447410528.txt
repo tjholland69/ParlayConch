@@ -1,0 +1,38 @@
+<context>
+I want to find someway for my app users to be able to backload in their parlay history without having to use the import csv template.  I have some more details on the below for how I'd like the interface and logic to work, but the overall functions I'm trying to perform are the following:
+
+1) Upload Screenshots - Some slick tool to upload screenshots of your sportsbook tickets in bulk as attachments
+
+2) Upload Validation - The app then parses all the data from the screenshots and gives the user some sort of interface to validate the data that the application has parsed out.  How granularly we'll allow the user to validate the tickets will be configurable.
+</context>
+
+<Upload Screenshots>
+    <functionality>
+        At a high level what I'm looking to accomplish is a somehting where you can drop screenshots of all your parlay tickets in to be scrubbbed and logged into the bets, parlays, and parlay_legs databases.  This specific part of the process is more concerned with taking the images being uploaded and parsing the data into a package which can be uplaoded by the application.  We don't want to aauto-upload all the picks right away, there should be some validation, but we'll cover those requirements in another part of this prompt.  the end goal of this is to take unstructured data in an image for, and parse it to a nice clean data set for our applicaiton to consume.
+    </functionality>
+    <gui>
+        This should be an interface where you can upload multiple artifacts for the engine to parse.  This will have to be able to pull files from your devices.  For a PC, it should be a simple 'Open from Folder' or 'Browse Folders' type of interface.  For the iOS app, we'll need to be able to pull form the user's Photos application on their device.  Once you upload all of the attachments, there should be an interface which confirms back the number of artifacts consumed by the 
+    </gui>
+    <corner_cases>
+       Sometimes if you have a large parlay ticket, it can't fit in to a screenshot easily.  So my workaround solution for that has been to take a video of my screen and scroll to show the full balance of the ticket.  I think we'll have to factor this into the workflow for those parlays that can't easily fit in as a screenshot.  
+    </corner_cases>
+</Upload Screenshots>
+
+
+<Upload Validation>
+    <functionality>
+        This should be done after parsing all the source data into a nice clean format for the application to consume.  Once the data has been parsed into our table, then we'll want to present it to the user in a tile like manner.  These tiles could be grouped at the parlay or individual bet level.  You should be able to validate the batch, or click on particular bet and update any information if it's incorrect.  It should also do a validation check that the bet is valid.  Criteria for bets with exceptions are outlined below in breach_criteria.  The exceptions should be corrected by the user, or cleared from the list of bets.
+    </functionality>
+    <breach_criteria>
+        -If the system can't find the game mentioned.  An example of that would be the home and away teams for that particular week aren't valid.
+        -If the system is missing data - an example of that would be we can't actually figure out the bet because of missing info
+        -The bet doesnt map to a valid user
+        -If should not breach if we can't find the odds for the pick.  If we cannot find the odds we wont block entry but rather allow the user to punch in a manual number
+    </breach_criteria>
+    <gui>
+        This should have a standardized view template, but the way we aggregate the data for checks will be configurable - which I can explain in further detail.  We should be able to roll up the bets by parlay or by the individual bet.  It should be some sort of slick interface where you can click a button and expand out the bets map.  I want something that presents smoothly on the expansion, primary goal here is to really speak to the user visually.
+    </gui>
+    <corner_cases>
+        None that I can think of presently.  Let me know your thoughts on this if you have any sugegstions.
+    </corner_cases>
+</Upload Validation>

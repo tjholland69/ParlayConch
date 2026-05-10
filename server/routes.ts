@@ -15,6 +15,8 @@ import { getUserInsights, getLeagueInsights, type InsightFocus } from "./service
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
+import { parseTicketImages } from "./services/screenshotParser";
+import multer from "multer";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
 async function hasLeaguePermission(leagueId: number, userId: string, permission: keyof LieutenantPermissions): Promise<boolean> {
@@ -663,6 +665,55 @@ export async function registerRoutes(
       res.status(500).json({ message: err.message });
     }
   });
+
+  // ===== SCREENSHOT IMPORT — Parse images with OpenAI Vision =====
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 20 * 1024 * 1024, files: 20 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}. Only image files are accepted.`));
+      }
+    },
+  });
+
+  app.post(
+    "/api/leagues/:leagueId/import/screenshots",
+    isAuthenticated,
+    upload.array("images", 20),
+    async (req, res) => {
+      try {
+        const leagueId = Number(req.params.leagueId);
+        const userId = (req.user as any).claims.sub;
+
+        const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+        const isSuperUser = await storage.isSuperUser(userId);
+        if (!isAdmin && !isSuperUser) {
+          return res.status(403).json({ message: "Parlay Maestro access required" });
+        }
+
+        const files = req.files as Express.Multer.File[];
+        if (!files || files.length === 0) {
+          return res.status(400).json({ message: "No image files uploaded" });
+        }
+
+        const tickets = await parseTicketImages(
+          files.map((f) => ({
+            buffer: f.buffer,
+            mimetype: f.mimetype,
+            originalname: f.originalname,
+          }))
+        );
+
+        res.json(tickets);
+      } catch (err: any) {
+        console.error("[Screenshot Import] error:", err);
+        res.status(500).json({ message: err.message ?? "Screenshot parsing failed" });
+      }
+    }
+  );
 
   // ===== MANUAL ENRICHMENT (Admin only) =====
   app.post("/api/leagues/:leagueId/enrich", isAuthenticated, async (req, res) => {
