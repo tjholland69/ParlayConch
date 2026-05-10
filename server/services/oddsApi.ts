@@ -89,7 +89,13 @@ export async function fetchUpcomingGames(): Promise<OddsGame[]> {
 
 export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: number; updated: number }> {
   const oddsGames = await fetchUpcomingGames();
-  
+
+  const existingGames = await db.select().from(games).where(eq(games.weekId, weekId));
+  const existingByTeams = new Map<string, (typeof existingGames)[0]>();
+  for (const g of existingGames) {
+    existingByTeams.set(`${g.homeTeam}|${g.awayTeam}`, g);
+  }
+
   let added = 0;
   let updated = 0;
 
@@ -143,10 +149,7 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
       }
     }
 
-    const existingGames = await db.select().from(games).where(eq(games.weekId, weekId));
-    const existing = existingGames.find(g => 
-      g.homeTeam === homeTeam && g.awayTeam === awayTeam
-    );
+    const existing = existingByTeams.get(`${homeTeam}|${awayTeam}`);
 
     if (existing) {
       await db.update(games)

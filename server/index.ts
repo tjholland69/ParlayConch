@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import "express-async-errors";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -11,6 +12,14 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("[unhandledRejection]", reason, promise);
+});
+
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+});
 
 app.use(
   express.json({
@@ -63,11 +72,28 @@ app.use((req, res, next) => {
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    let status = err.status || err.statusCode || 500;
+    let message = err.message || "Internal Server Error";
 
+    // PostgreSQL / pg driver — avoid leaking raw constraint text to clients
+    if (err.code === "23505") {
+      status = 409;
+      message = "A record with this key already exists.";
+    } else if (err.code === "23503") {
+      status = 400;
+      message = "Related record is missing or invalid.";
+    } else if (err.code === "23502") {
+      status = 400;
+      message = "Required field is missing.";
+    }
+
+    if (res.headersSent) {
+      console.error("[express] Error after headers sent:", err);
+      return;
+    }
+
+    console.error("[express]", err);
     res.status(status).json({ message });
-    throw err;
   });
 
   // importantly only setup vite in development and after

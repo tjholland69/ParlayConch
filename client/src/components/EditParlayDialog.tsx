@@ -39,7 +39,7 @@ export function EditParlayDialog({ open, onOpenChange, parlay, leagueId, weekId 
   }, [parlay]);
 
   const updateMutation = useMutation({
-    mutationFn: async (data: { status?: string; legs?: { id: number; result?: string; notes?: string | null }[] }) => {
+    mutationFn: async (data: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }) => {
       const res = await apiRequest("PATCH", `/api/parlays/${parlay?.id}`, data);
       return res.json();
     },

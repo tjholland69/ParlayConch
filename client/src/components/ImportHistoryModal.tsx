@@ -10,8 +10,6 @@ import { apiRequest } from "@/lib/queryClient";
 import { useLeagueMembersWithUsers } from "@/hooks/use-bets";
 import { Upload, FileSpreadsheet, Download, AlertCircle, Check, Sparkles, ClipboardPaste, History, Trash2, AlertTriangle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
-import { Upload, FileSpreadsheet, Download, AlertCircle, Check, Sparkles, Camera } from "lucide-react";
-import { Link } from "wouter";
 
 interface Props {
   open: boolean;
@@ -83,7 +81,6 @@ function currentNflSeason(): number {
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
 const MAX_ROWS = 500;
 
-export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
 export function ImportHistoryModal({ open, onOpenChange, leagueId, onNavigate }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();

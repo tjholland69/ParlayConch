@@ -12,6 +12,17 @@ import {
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
 } from "@shared/schema";
 import { eq, and, desc, inArray, sql } from "drizzle-orm";
+import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
+
+function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
+  void publishLeagueEvent(leagueId, kind, weekId).catch((e) =>
+    console.error("[realtime]", e),
+  );
+}
+
+function emitUser(userId: string, kind: string) {
+  void publishUserEvent(userId, kind).catch((e) => console.error("[realtime]", e));
+}
 
 function generateInviteCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -62,7 +73,7 @@ export interface IStorage {
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
   getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]>;
-  updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string; notes?: string | null }[] }): Promise<Parlay>;
+  updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
   deleteParlayLeg(legId: number): Promise<void>;
   updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg>;
@@ -438,37 +449,52 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createParlay(userId: string, parlay: InsertParlay, legs: InsertParlayLeg[]): Promise<Parlay> {
-    // Check if user already has a parlay for this week/league
-    const existing = await db.select().from(parlays)
-      .where(and(
-        eq(parlays.userId, userId),
-        eq(parlays.leagueId, parlay.leagueId),
-        eq(parlays.weekId, parlay.weekId)
-      ));
+    return await db.transaction(async (tx) => {
+      const existing = await tx
+        .select()
+        .from(parlays)
+        .where(
+          and(
+            eq(parlays.userId, userId),
+            eq(parlays.leagueId, parlay.leagueId),
+            eq(parlays.weekId, parlay.weekId),
+          ),
+        );
 
-    let parlayRecord: Parlay;
-    
-    if (existing.length > 0) {
-      // Delete old legs and update parlay
-      await db.delete(parlayLegs).where(eq(parlayLegs.parlayId, existing[0].id));
-      const [updated] = await db.update(parlays)
-        .set({ status: 'pending', createdAt: new Date(), approvedBy: null, approvedAt: null })
-        .where(eq(parlays.id, existing[0].id))
-        .returning();
-      parlayRecord = updated;
-    } else {
-      const [newParlay] = await db.insert(parlays)
-        .values({ ...parlay, userId })
-        .returning();
-      parlayRecord = newParlay;
-    }
+      let parlayRecord: Parlay;
 
-    // Insert legs
-    if (legs.length > 0) {
-      await db.insert(parlayLegs).values(legs.map(leg => ({ ...leg, parlayId: parlayRecord.id })));
-    }
+      if (existing.length > 0) {
+        await tx.delete(parlayLegs).where(eq(parlayLegs.parlayId, existing[0].id));
+        const [updated] = await tx
+          .update(parlays)
+          .set({
+            status: "pending",
+            createdAt: new Date(),
+            approvedBy: null,
+            approvedAt: null,
+          })
+          .where(eq(parlays.id, existing[0].id))
+          .returning();
+        parlayRecord = updated;
+      } else {
+        const [newParlay] = await tx
+          .insert(parlays)
+          .values({ ...parlay, userId })
+          .returning();
+        parlayRecord = newParlay;
+      }
 
-    return parlayRecord;
+      if (legs.length > 0) {
+        await tx
+          .insert(parlayLegs)
+          .values(legs.map((leg) => ({ ...leg, parlayId: parlayRecord.id })));
+      }
+
+      return parlayRecord;
+    }).then((parlayRecord) => {
+      emitLeague(parlay.leagueId, parlay.weekId, "parlays_updated");
+      return parlayRecord;
+    });
   }
 
   async getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null> {
@@ -537,6 +563,7 @@ export class DatabaseStorage implements IStorage {
       .set({ status: 'approved', approvedBy: adminId, approvedAt: new Date() })
       .where(eq(parlays.id, parlayId))
       .returning();
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
     return updated;
   }
 
@@ -545,6 +572,7 @@ export class DatabaseStorage implements IStorage {
       .set({ status: 'rejected', approvedBy: adminId, approvedAt: new Date() })
       .where(eq(parlays.id, parlayId))
       .returning();
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
     return updated;
   }
 
@@ -584,7 +612,7 @@ export class DatabaseStorage implements IStorage {
       .sort((a, b) => b.week.weekNumber - a.week.weekNumber);
   }
 
-  async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string; notes?: string | null }[] }): Promise<Parlay> {
+  async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay> {
     return await db.transaction(async (tx) => {
       const existingLegs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
       const validLegIds = new Set(existingLegs.map(l => l.id));
@@ -594,18 +622,24 @@ export class DatabaseStorage implements IStorage {
       }
       
       if (updates.legs) {
-        for (const leg of updates.legs) {
-          if (!validLegIds.has(leg.id)) continue;
-          const legUpdates: Record<string, any> = {};
-          if (leg.result !== undefined) legUpdates.result = leg.result;
-          if (leg.notes !== undefined) legUpdates.notes = leg.notes;
-          if (Object.keys(legUpdates).length > 0) {
-            await tx.update(parlayLegs).set(legUpdates).where(eq(parlayLegs.id, leg.id));
-          }
-        }
+        await Promise.all(
+          updates.legs.map(async (leg) => {
+            if (!validLegIds.has(leg.id)) return;
+            const legUpdates: Record<string, unknown> = {};
+            if (leg.result !== undefined) legUpdates.result = leg.result;
+            if (leg.notes !== undefined) legUpdates.notes = leg.notes;
+            if (Object.keys(legUpdates).length > 0) {
+              await tx.update(parlayLegs).set(legUpdates).where(eq(parlayLegs.id, leg.id));
+            }
+          }),
+        );
       }
 
       const [parlay] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
+      return parlay;
+    }).then((parlay) => {
+      if (!parlay) throw new Error("Parlay not found after update");
+      emitLeague(parlay.leagueId, parlay.weekId, "parlays_updated");
       return parlay;
     });
   }
@@ -647,8 +681,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteParlay(parlayId: number): Promise<void> {
-    await db.delete(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
-    await db.delete(parlays).where(eq(parlays.id, parlayId));
+    const existing = await this.getParlay(parlayId);
+    await db.transaction(async (tx) => {
+      await tx.delete(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
+      await tx.delete(parlays).where(eq(parlays.id, parlayId));
+    });
+    if (existing) emitLeague(existing.leagueId, existing.weekId, "parlays_updated");
   }
 
   async deleteParlayLeg(legId: number): Promise<void> {
@@ -693,6 +731,9 @@ export class DatabaseStorage implements IStorage {
         })));
       }
 
+      return newParlay;
+    }).then((newParlay) => {
+      emitLeague(newParlay.leagueId, newParlay.weekId, "parlays_updated");
       return newParlay;
     });
   }
@@ -788,6 +829,8 @@ export class DatabaseStorage implements IStorage {
 
   async createNotification(data: { userId: string; leagueId?: number; type: string; title: string; message?: string }): Promise<Notification> {
     const [notif] = await db.insert(notifications).values(data).returning();
+    emitUser(data.userId, "notifications_updated");
+    if (data.leagueId != null) emitLeague(data.leagueId, undefined, "notifications_updated");
     return notif;
   }
 
@@ -801,7 +844,9 @@ export class DatabaseStorage implements IStorage {
         title,
         message,
       });
+      emitUser(member.userId, "notifications_updated");
     }
+    emitLeague(leagueId, undefined, "notifications_updated");
   }
 
   async updateLeagueNotificationSettings(leagueId: number, settings: LeagueNotificationSettings): Promise<League> {
@@ -842,12 +887,14 @@ export class DatabaseStorage implements IStorage {
     const [lock] = await db.insert(leagueWeekLocks)
       .values({ leagueId, weekId, lockedBy: userId, hadMissingBets })
       .returning();
+    emitLeague(leagueId, weekId, "lock_updated");
     return lock;
   }
 
   async unlockWeekParlay(leagueId: number, weekId: number): Promise<void> {
     await db.delete(leagueWeekLocks)
       .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
+    emitLeague(leagueId, weekId, "lock_updated");
   }
 
   // ─── Enrichment ────────────────────────────────────────────────────────────
