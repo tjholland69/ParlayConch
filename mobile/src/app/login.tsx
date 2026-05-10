@@ -207,6 +207,7 @@ const styles = StyleSheet.create({
   /* Feature list — stacked vertically */
   featureList: {
     width: "100%",
+    flexDirection: "column",
     gap: 10,
     marginBottom: 40,
   },
@@ -216,6 +217,7 @@ const styles = StyleSheet.create({
   featureTile: {
     flexDirection: "row",
     alignItems: "center",
+    alignSelf: "stretch",
     gap: 14,
     backgroundColor: "#1c2538",
     borderWidth: 1,
