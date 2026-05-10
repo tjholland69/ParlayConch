@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
+  Alert,
   StyleSheet,
 } from "react-native";
 import { useState } from "react";
@@ -42,17 +43,25 @@ export default function LeaguesScreen() {
 
   async function handleCreate() {
     if (!leagueName.trim()) return;
-    await createLeague.mutateAsync({
-      name: leagueName.trim(),
-      description: leagueDesc.trim() || undefined,
-    });
-    closeModal();
+    try {
+      await createLeague.mutateAsync({
+        name: leagueName.trim(),
+        description: leagueDesc.trim() || undefined,
+      });
+      closeModal();
+    } catch (e: any) {
+      Alert.alert("Error", e?.message ?? "Failed to create league.");
+    }
   }
 
   async function handleJoin() {
     if (!inviteCode.trim()) return;
-    await joinLeague.mutateAsync(inviteCode.trim().toUpperCase());
-    closeModal();
+    try {
+      await joinLeague.mutateAsync(inviteCode.trim().toUpperCase());
+      closeModal();
+    } catch (e: any) {
+      Alert.alert("Error", e?.message ?? "Invalid invite code. Please try again.");
+    }
   }
 
   const userName = user?.firstName

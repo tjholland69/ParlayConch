@@ -40,7 +40,11 @@ export function Button({
   return (
     <Pressable
       disabled={isDisabled}
-      style={({ pressed }) => [containerStyle, pressed && !isDisabled && styles.pressed, style]}
+      style={({ pressed }) => [
+        containerStyle,
+        pressed && !isDisabled && styles.pressed,
+        typeof style === "function" ? style({ pressed }) : style,
+      ]}
       {...props}
     >
       {loading && <ActivityIndicator size="small" color={spinnerColor} />}

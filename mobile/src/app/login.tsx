@@ -4,7 +4,6 @@ import {
   Pressable,
   ActivityIndicator,
   StyleSheet,
-  Dimensions,
 } from "react-native";
 import { useState } from "react";
 import * as WebBrowser from "expo-web-browser";
@@ -16,8 +15,6 @@ import { API_BASE_URL } from "@/lib/api";
 import { StatusBar } from "expo-status-bar";
 
 WebBrowser.maybeCompleteAuthSession();
-
-const { width } = Dimensions.get("window");
 
 export default function LoginScreen() {
   const [loading, setLoading] = useState(false);

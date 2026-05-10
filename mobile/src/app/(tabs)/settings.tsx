@@ -80,6 +80,8 @@ export default function SettingsScreen() {
       apiRequest("PATCH", "/api/users/me/demo", { isDemo }),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] }),
+    onError: () =>
+      Alert.alert("Error", "Could not update demo mode. Please try again."),
   });
 
   const displayName = user?.firstName

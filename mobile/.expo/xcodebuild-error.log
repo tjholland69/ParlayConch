@@ -1,0 +1,7 @@
+** BUILD FAILED **
+
+
+The following build commands failed:
+	PhaseScriptExecution [CP-User]\ [RN]Check\ rncore /Users/timothyholland/Library/Developer/Xcode/DerivedData/ParlayConch-cjjqctfpxivqmwetcjkmlbfobhdo/Build/Intermediates.noindex/Pods.build/Debug-iphonesimulator/React-Fabric.build/Script-46EB2E00018D40.sh (in target 'React-Fabric' from project 'Pods')
+	Building workspace ParlayConch with scheme ParlayConch and configuration Debug
+(2 failures)

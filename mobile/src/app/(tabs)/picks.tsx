@@ -93,7 +93,7 @@ export default function PicksScreen() {
   const activeWeek = useActiveWeek();
   const router = useRouter();
 
-  const deadline = activeWeek?.deadline ? new Date(activeWeek.deadline) : null;
+  const deadline = (activeWeek as any)?.deadline ? new Date((activeWeek as any).deadline) : null;
   const deadlinePast = deadline ? isPast(deadline) : false;
 
   if (leaguesLoading) {
@@ -126,7 +126,7 @@ export default function PicksScreen() {
           <View style={styles.weekBannerLeft}>
             <Ionicons name="calendar" size={18} color="#2563eb" />
             <View>
-              <Text style={styles.weekName}>{activeWeek.name}</Text>
+              <Text style={styles.weekName}>{activeWeek.label}</Text>
               {deadline && (
                 <Text style={[styles.deadlineText, deadlinePast && styles.deadlineTextPast]}>
                   {deadlinePast
@@ -151,17 +151,20 @@ export default function PicksScreen() {
         </View>
       )}
 
-      <Text style={styles.sectionLabel}>THIS WEEK'S STATUS</Text>
-
-      {leagues.map((league) => (
-        <ParlayStatusRow
-          key={league.id}
-          leagueId={league.id}
-          weekId={activeWeek?.id ?? 0}
-          leagueName={league.name}
-          onPress={() => router.push(`/leagues/${league.id}`)}
-        />
-      ))}
+      {activeWeek && (
+        <>
+          <Text style={styles.sectionLabel}>THIS WEEK'S STATUS</Text>
+          {leagues.map((league) => (
+            <ParlayStatusRow
+              key={league.id}
+              leagueId={league.id}
+              weekId={activeWeek.id}
+              leagueName={league.name}
+              onPress={() => router.push(`/leagues/${league.id}`)}
+            />
+          ))}
+        </>
+      )}
 
       {/* Web app nudge */}
       <View style={styles.webNudge}>
