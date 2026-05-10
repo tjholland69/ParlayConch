@@ -172,7 +172,7 @@ export default function LeaguesScreen() {
               value={leagueName}
               onChangeText={setLeagueName}
               placeholder="e.g. Sunday Crunchers"
-              placeholderTextColor="#374151"
+              placeholderTextColor="#64748b"
               style={styles.input}
               autoFocus
               testID="input-league-name"
@@ -183,7 +183,7 @@ export default function LeaguesScreen() {
               value={leagueDesc}
               onChangeText={setLeagueDesc}
               placeholder="What's this league about?"
-              placeholderTextColor="#374151"
+              placeholderTextColor="#64748b"
               style={[styles.input, styles.inputMultiline]}
               multiline
               numberOfLines={3}
@@ -236,7 +236,7 @@ export default function LeaguesScreen() {
               value={inviteCode}
               onChangeText={setInviteCode}
               placeholder="ABC123"
-              placeholderTextColor="#374151"
+              placeholderTextColor="#64748b"
               style={[styles.input, styles.inputMono]}
               autoCapitalize="characters"
               autoCorrect={false}

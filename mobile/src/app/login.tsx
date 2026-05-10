@@ -3,6 +3,7 @@ import {
   Text,
   Pressable,
   ActivityIndicator,
+  Alert,
   StyleSheet,
   Image,
   useWindowDimensions,
@@ -55,6 +56,8 @@ export default function LoginScreen() {
           queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
         }
       }
+    } catch (e: any) {
+      Alert.alert("Sign In Failed", e?.message ?? "Could not complete sign in. Please try again.");
     } finally {
       setLoading(false);
     }

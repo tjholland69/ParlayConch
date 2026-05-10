@@ -6,6 +6,8 @@ import {
   StyleSheet,
   Pressable,
 } from "react-native";
+import { useState, useEffect } from "react";
+import * as Linking from "expo-linking";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useLeagues } from "@/hooks/use-leagues";
@@ -96,6 +98,14 @@ export default function PicksScreen() {
   const deadline = (activeWeek as any)?.deadline ? new Date((activeWeek as any).deadline) : null;
   const deadlinePast = deadline ? isPast(deadline) : false;
 
+  // Re-render every minute so the countdown stays current
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!deadline || deadlinePast) return;
+    const id = setInterval(() => tick((n) => n + 1), 60_000);
+    return () => clearInterval(id);
+  }, [deadline, deadlinePast]);
+
   if (leaguesLoading) {
     return (
       <View style={styles.centered}>
@@ -167,13 +177,17 @@ export default function PicksScreen() {
       )}
 
       {/* Web app nudge */}
-      <View style={styles.webNudge}>
+      <Pressable
+        style={({ pressed }) => [styles.webNudge, pressed && styles.pressed]}
+        onPress={() => Linking.openURL("https://parlayconch.com")}
+      >
         <Ionicons name="globe-outline" size={16} color="#475569" />
         <Text style={styles.webNudgeText}>
           Submit and edit picks at{" "}
           <Text style={styles.webNudgeLink}>parlayconch.com</Text>
         </Text>
-      </View>
+        <Ionicons name="open-outline" size={14} color="#475569" />
+      </Pressable>
     </ScrollView>
   );
 }

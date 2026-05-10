@@ -269,7 +269,6 @@ export default function Settings() {
                         className="w-8 h-8 rounded-full ring-2 ring-offset-2 ring-offset-background transition-all"
                         style={{
                           backgroundColor: `hsl(${preset.value})`,
-                          ringColor: isSelected ? `hsl(${preset.value})` : "transparent",
                           outline: isSelected ? `2px solid hsl(${preset.value})` : "none",
                           outlineOffset: "2px",
                         }}

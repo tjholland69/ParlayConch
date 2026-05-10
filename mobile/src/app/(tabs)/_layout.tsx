@@ -4,6 +4,12 @@ import { Platform } from "react-native";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
+const FOCUSED_ICONS: Partial<Record<IconName, IconName>> = {
+  "trophy-outline": "trophy",
+  "checkmark-circle-outline": "checkmark-circle",
+  "person-circle-outline": "person-circle",
+};
+
 function TabIcon({
   name,
   focused,
@@ -15,7 +21,7 @@ function TabIcon({
   color: string;
   size: number;
 }) {
-  return <Ionicons name={focused ? name.replace("-outline", "") as IconName : name} size={size} color={color} />;
+  return <Ionicons name={(focused && FOCUSED_ICONS[name]) || name} size={size} color={color} />;
 }
 
 export default function TabLayout() {

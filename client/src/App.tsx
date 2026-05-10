@@ -9,6 +9,8 @@ import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ActForBar } from "@/components/ActForBar";
 import { useEffect } from "react";
+import { useRoute } from "wouter";
+import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 
 import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
@@ -64,6 +66,16 @@ function useApplyTheme(theme: string | undefined) {
   }, [theme]);
 }
 
+function AuthenticatedRealtimeSync() {
+  const [m1, p1] = useRoute("/leagues/:id");
+  const [m2, p2] = useRoute("/leagues/:id/settings");
+  const [m3, p3] = useRoute("/leagues/:id/demo-data");
+  const raw = (m1 && p1?.id) || (m2 && p2?.id) || (m3 && p3?.id);
+  const leagueId = raw ? Number(raw) : undefined;
+  useRealtimeSync(leagueId && Number.isFinite(leagueId) ? leagueId : undefined);
+  return null;
+}
+
 function Router() {
   const { user, isLoading } = useAuth();
   useApplyPrimaryColor((user?.settings as any)?.primaryColor);
@@ -91,6 +103,7 @@ function Router() {
 
   return (
     <div className="flex min-h-screen bg-background text-foreground font-body selection:bg-primary/30 selection:text-primary-foreground">
+      <AuthenticatedRealtimeSync />
       <Sidebar />
       <div className="flex-1 md:ml-72 flex flex-col min-h-screen">
         {/* Desktop top bar with notification bell */}
