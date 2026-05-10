@@ -6,12 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { Upload, FileSpreadsheet, Download, AlertCircle, Check, Sparkles } from "lucide-react";
+import { Upload, FileSpreadsheet, Download, AlertCircle, Check, Sparkles, Camera } from "lucide-react";
+import { Link } from "wouter";
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   leagueId: number;
+  onNavigate?: () => void;
 }
 
 interface CSVLeg {
@@ -37,7 +39,7 @@ interface CSVRecord {
   legs: CSVLeg[];
 }
 
-export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
+export function ImportHistoryModal({ open, onOpenChange, leagueId, onNavigate }: Props) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -210,6 +212,19 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId }: Props) {
         </DialogHeader>
 
         <div className="space-y-4 py-4">
+          <Link href={`/leagues/${leagueId}/screenshot-import`} onClick={() => { onOpenChange(false); onNavigate?.(); }}>
+            <Button variant="outline" className="w-full border-primary/40 text-primary hover:bg-primary/10" data-testid="button-screenshot-import-from-modal">
+              <Camera className="w-4 h-4 mr-2" />
+              Try Screenshot Import (AI-powered)
+            </Button>
+          </Link>
+
+          <div className="relative flex items-center gap-3">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-muted-foreground font-medium">or upload CSV</span>
+            <div className="flex-1 h-px bg-border" />
+          </div>
+
           <Button variant="outline" onClick={downloadTemplate} className="w-full" data-testid="button-download-template">
             <Download className="w-4 h-4 mr-2" />
             Download CSV Template
