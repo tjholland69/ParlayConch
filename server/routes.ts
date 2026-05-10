@@ -6,7 +6,10 @@ import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes
 import { z } from "zod";
 import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs } from "@shared/schema";
 import { ilike, eq, and } from "drizzle-orm";
-import { syncGamesFromOddsApi, getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
+import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
+import { runOddsSyncQueued, startOddsSyncWorker } from "./jobs/odds-sync-queue";
+import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
+import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
@@ -30,10 +33,17 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  await connectSessionRedis();
+
   // Auth setup
   await setupAuth(app);
   registerAuthRoutes(app);
   registerLocalAuthRoutes(app);
+
+  if (isRedisConfigured()) {
+    startOddsSyncWorker();
+  }
+  registerRealtimeWebSocket(httpServer, app);
 
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
@@ -429,7 +439,7 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Only the Parlay Maestro can sync odds data" });
       }
 
-      const result = await syncGamesFromOddsApi(weekId);
+      const result = await runOddsSyncQueued(weekId);
       res.json({ message: `Synced games: ${result.added} added, ${result.updated} updated` });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -987,6 +997,10 @@ export async function registerRoutes(
       const schema = z.object({
         approveRejectParlays: z.boolean(),
         editParlays: z.boolean(),
+        lockParlay: z.boolean(),
+        unlockParlay: z.boolean(),
+        unselectUserPick: z.boolean(),
+        approveMemberInvites: z.boolean(),
         importHistory: z.boolean(),
         markLeagueDemo: z.boolean(),
       });
@@ -1165,9 +1179,9 @@ export async function registerRoutes(
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
-      const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment } = req.body;
+      const { betType, pick, line, odds, playerName, propType, notes, gameSegment } = req.body;
       if (!betType || !pick) return res.status(400).json({ message: "betType and pick are required" });
-      const newLeg = await storage.addParlayLeg(parlayId, { betType, pick, line, odds, result, playerName, propType, notes, gameSegment });
+      const newLeg = await storage.addParlayLeg(parlayId, { betType, pick, line, odds, playerName, propType, notes, gameSegment });
       res.json(newLeg);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
