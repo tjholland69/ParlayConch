@@ -5,35 +5,181 @@ import {
   Pressable,
   ActivityIndicator,
   RefreshControl,
+  StyleSheet,
 } from "react-native";
-import { useLocalSearchParams, useNavigation, Stack } from "expo-router";
-import { useEffect, useState } from "react";
+import { useLocalSearchParams, Stack } from "expo-router";
+import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
-import { useLeagueStats, useLeagueMembersWithUsers, useWeekLockStatus } from "@/hooks/use-leagues";
+import {
+  useLeagueStats,
+  useLeagueMembersWithUsers,
+  useWeekLockStatus,
+} from "@/hooks/use-leagues";
 import { useLeagueParlays } from "@/hooks/use-parlays";
-import { useWeeks, useActiveWeek } from "@/hooks/use-weeks";
-import { Card, CardContent, CardHeader } from "@/components/ui/Card";
-import { Badge } from "@/components/ui/Badge";
+import { useActiveWeek } from "@/hooks/use-weeks";
 import { Avatar } from "@/components/ui/Avatar";
 import { format } from "date-fns";
 
 type Tab = "parlays" | "members" | "stats";
 
-function getRoleBadge(role: string) {
-  if (role === "admin") return <Badge variant="success">Parlay Maestro</Badge>;
-  if (role === "lieutenant") return <Badge variant="default">Parlay Lieutenant</Badge>;
-  return null;
+const TAB_LABELS: Record<Tab, string> = {
+  parlays: "Parlays",
+  members: "Members",
+  stats: "Stats",
+};
+
+const TAB_ICONS: Record<Tab, React.ComponentProps<typeof Ionicons>["name"]> = {
+  parlays: "documents-outline",
+  members: "people-outline",
+  stats: "bar-chart-outline",
+};
+
+function StatusDot({ status }: { status: string }) {
+  const color =
+    status === "approved"
+      ? "#22c55e"
+      : status === "rejected"
+      ? "#ef4444"
+      : "#f59e0b";
+  return <View style={[styles.statusDot, { backgroundColor: color }]} />;
 }
 
-function getParlayStatusColor(status: string) {
-  switch (status) {
-    case "approved": return "#22c55e";
-    case "rejected": return "#ef4444";
-    case "pending": return "#f59e0b";
-    default: return "#71717a";
-  }
+function ParlayCard({ parlay }: { parlay: any }) {
+  const name =
+    parlay.user?.settings?.displayName ??
+    parlay.user?.firstName ??
+    parlay.user?.email ??
+    "Unknown";
+
+  const statusIcon =
+    parlay.status === "approved"
+      ? ("checkmark-circle" as const)
+      : parlay.status === "rejected"
+      ? ("close-circle" as const)
+      : ("time-outline" as const);
+
+  const statusColor =
+    parlay.status === "approved"
+      ? "#22c55e"
+      : parlay.status === "rejected"
+      ? "#ef4444"
+      : "#f59e0b";
+
+  return (
+    <View style={styles.parlayCard}>
+      <View style={styles.parlayCardHeader}>
+        <Avatar
+          src={parlay.user?.profileImageUrl}
+          name={name}
+          size={36}
+        />
+        <View style={styles.parlayCardMeta}>
+          <Text style={styles.parlayCardName} numberOfLines={1}>{name}</Text>
+          <Text style={styles.parlayCardStatus}>{parlay.status}</Text>
+        </View>
+        <Ionicons name={statusIcon} size={22} color={statusColor} />
+      </View>
+
+      {parlay.legs && parlay.legs.length > 0 && (
+        <View style={styles.legsSection}>
+          {parlay.legs.map((leg: any, i: number) => {
+            const isWin = leg.result === "win";
+            const isLoss = leg.result === "loss";
+            const dotColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#374151";
+            const label =
+              leg.betType === "player_prop"
+                ? `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"}`
+                : `${leg.game?.homeTeam ?? "?"} vs ${leg.game?.awayTeam ?? "?"} — ${leg.pick}`;
+
+            return (
+              <View key={i} style={styles.legRow}>
+                <View style={[styles.legDot, { backgroundColor: dotColor }]} />
+                <Text style={styles.legText} numberOfLines={1}>{label}</Text>
+                {leg.line != null && (
+                  <Text style={styles.legLine}>{leg.line > 0 ? `+${leg.line}` : leg.line}</Text>
+                )}
+              </View>
+            );
+          })}
+        </View>
+      )}
+    </View>
+  );
+}
+
+function MemberCard({ member }: { member: any }) {
+  const name = member.user?.settings?.displayName
+    ? member.user.settings.displayName
+    : member.user?.firstName
+    ? `${member.user.firstName}${member.user.lastName ? " " + member.user.lastName : ""}`
+    : member.user?.email ?? "Unknown";
+
+  const roleColor =
+    member.role === "admin"
+      ? "#2563eb"
+      : member.role === "lieutenant"
+      ? "#0ea5e9"
+      : "#475569";
+
+  const roleLabel =
+    member.role === "admin"
+      ? "Parlay Maestro"
+      : member.role === "lieutenant"
+      ? "Parlay Lieutenant"
+      : "Member";
+
+  return (
+    <View style={styles.memberCard}>
+      <Avatar src={member.user?.profileImageUrl} name={name} size={40} />
+      <View style={styles.memberMeta}>
+        <Text style={styles.memberName} numberOfLines={1}>{name}</Text>
+        <Text style={[styles.memberRole, { color: roleColor }]}>{roleLabel}</Text>
+      </View>
+    </View>
+  );
+}
+
+function StatCard({ stat }: { stat: any }) {
+  const name =
+    stat.user?.settings?.displayName ??
+    stat.user?.firstName ??
+    stat.user?.email ??
+    "Unknown";
+
+  const winRate =
+    stat.winRate != null ? `${Math.round(stat.winRate * 100)}%` : "—";
+
+  return (
+    <View style={styles.statCard}>
+      <View style={styles.statCardHeader}>
+        <Avatar src={stat.user?.profileImageUrl} name={name} size={36} />
+        <Text style={styles.statName} numberOfLines={1}>{name}</Text>
+      </View>
+      <View style={styles.statRow}>
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{stat.wins ?? 0}</Text>
+          <Text style={styles.statLabel}>Wins</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{stat.losses ?? 0}</Text>
+          <Text style={styles.statLabel}>Losses</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, styles.statValuePrimary]}>{winRate}</Text>
+          <Text style={styles.statLabel}>Win Rate</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={styles.statValue}>{stat.parlays ?? 0}</Text>
+          <Text style={styles.statLabel}>Parlays</Text>
+        </View>
+      </View>
+    </View>
+  );
 }
 
 export default function LeagueDetailScreen() {
@@ -52,241 +198,158 @@ export default function LeagueDetailScreen() {
   const { data: stats, isLoading: statsLoading } = useLeagueStats(leagueId);
 
   const weekId = activeWeek?.id ?? 0;
-  const { data: parlays, isLoading: parlaysLoading, refetch: refetchParlays } = useLeagueParlays(
-    leagueId,
-    weekId
-  );
+  const {
+    data: parlays,
+    isLoading: parlaysLoading,
+    refetch: refetchParlays,
+  } = useLeagueParlays(leagueId, weekId);
   const { data: lockStatus } = useWeekLockStatus(leagueId, weekId);
 
   const leagueName = (league as any)?.name ?? "League";
+  const isLoading = leagueLoading || (activeTab === "parlays" && parlaysLoading);
 
   if (leagueLoading) {
     return (
-      <View className="flex-1 bg-background items-center justify-center">
-        <ActivityIndicator color="#22c55e" size="large" />
+      <View style={styles.centered}>
+        <ActivityIndicator color="#2563eb" size="large" />
       </View>
     );
   }
 
   return (
     <>
-      <Stack.Screen options={{ title: leagueName }} />
-      <View className="flex-1 bg-background">
-        {/* League header */}
-        <View className="px-4 py-3 border-b border-border">
-          <View className="flex-row items-center gap-2 flex-wrap">
-            <Text className="text-foreground font-bold text-lg">{leagueName}</Text>
-            {(league as any)?.isDemo && <Badge variant="warning">DEMO</Badge>}
+      <Stack.Screen
+        options={{
+          title: leagueName,
+          headerStyle: { backgroundColor: "#1c2538" },
+          headerTintColor: "#f1f5f9",
+          headerTitleStyle: { fontWeight: "700", fontSize: 17 },
+          headerShadowVisible: false,
+        }}
+      />
+      <View style={styles.container}>
+        {/* League meta bar */}
+        <View style={styles.metaBar}>
+          <View style={styles.metaBarLeft}>
+            {activeWeek && (
+              <View style={styles.weekPill}>
+                <Ionicons name="calendar-outline" size={12} color="#94a3b8" />
+                <Text style={styles.weekPillText}>{activeWeek.name}</Text>
+              </View>
+            )}
             {lockStatus?.isLocked && (
-              <Badge variant="destructive">
-                {lockStatus.hadMissingBets ? "Locked (missing bets)" : "Locked"}
-              </Badge>
+              <View style={styles.lockPill}>
+                <Ionicons name="lock-closed" size={12} color="#ef4444" />
+                <Text style={styles.lockPillText}>Locked</Text>
+              </View>
+            )}
+            {(league as any)?.isDemo && (
+              <View style={styles.demoPill}>
+                <Text style={styles.demoPillText}>DEMO</Text>
+              </View>
             )}
           </View>
-          {(league as any)?.description && (
-            <Text className="text-muted-foreground text-sm mt-1">{(league as any).description}</Text>
-          )}
-          {activeWeek && (
-            <Text className="text-muted-foreground text-xs mt-1.5">
-              {activeWeek.name}
-              {activeWeek.deadline
-                ? ` · Deadline: ${format(new Date(activeWeek.deadline), "MMM d, h:mm a")}`
-                : ""}
+          {activeWeek?.deadline && (
+            <Text style={styles.deadlineText}>
+              {format(new Date(activeWeek.deadline), "MMM d, h:mm a")}
             </Text>
           )}
         </View>
 
-        {/* Tab bar */}
-        <View className="flex-row border-b border-border">
-          {(["parlays", "members", "stats"] as Tab[]).map((tab) => (
-            <Pressable
-              key={tab}
-              onPress={() => setActiveTab(tab)}
-              className="flex-1 py-3 items-center"
-              testID={`tab-${tab}`}
-            >
-              <Text
-                className={`text-sm font-semibold capitalize ${
-                  activeTab === tab ? "text-primary" : "text-muted-foreground"
-                }`}
+        {/* Tabs */}
+        <View style={styles.tabBar}>
+          {(["parlays", "members", "stats"] as Tab[]).map((tab) => {
+            const active = activeTab === tab;
+            return (
+              <Pressable
+                key={tab}
+                onPress={() => setActiveTab(tab)}
+                style={[styles.tab, active && styles.tabActive]}
+                testID={`tab-${tab}`}
               >
-                {tab}
-              </Text>
-              {activeTab === tab && (
-                <View className="absolute bottom-0 left-4 right-4 h-0.5 bg-primary rounded-full" />
-              )}
-            </Pressable>
-          ))}
+                <Ionicons
+                  name={TAB_ICONS[tab]}
+                  size={15}
+                  color={active ? "#2563eb" : "#475569"}
+                />
+                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>
+                  {TAB_LABELS[tab]}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
 
-        {/* Tab content */}
+        {/* Content */}
         <ScrollView
-          className="flex-1"
-          contentContainerStyle={{ padding: 16 }}
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
           refreshControl={
-            <RefreshControl refreshing={parlaysLoading || membersLoading} onRefresh={refetchParlays} tintColor="#22c55e" />
+            <RefreshControl
+              refreshing={parlaysLoading || membersLoading}
+              onRefresh={refetchParlays}
+              tintColor="#2563eb"
+            />
           }
         >
-          {/* PARLAYS TAB */}
+          {/* PARLAYS */}
           {activeTab === "parlays" && (
             <>
               {parlaysLoading ? (
-                <ActivityIndicator color="#22c55e" className="mt-8" />
+                <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
               ) : !parlays || parlays.length === 0 ? (
-                <View className="items-center py-16 gap-3">
-                  <Ionicons name="document-outline" size={40} color="#3f3f46" />
-                  <Text className="text-muted-foreground text-sm">No parlays submitted yet</Text>
+                <View style={styles.emptyState}>
+                  <View style={styles.emptyIcon}>
+                    <Ionicons name="documents-outline" size={28} color="#2563eb" />
+                  </View>
+                  <Text style={styles.emptyTitle}>No parlays yet</Text>
+                  <Text style={styles.emptySubtitle}>
+                    No picks have been submitted for this week.
+                  </Text>
                 </View>
               ) : (
                 parlays.map((parlay: any) => (
-                  <Card key={parlay.id} className="mb-3">
-                    <CardContent>
-                      <View className="flex-row items-start justify-between mb-2">
-                        <View className="flex-row items-center gap-2">
-                          <Avatar
-                            src={parlay.user?.profileImageUrl}
-                            name={(parlay.user?.settings as any)?.displayName ?? parlay.user?.firstName ?? parlay.user?.email}
-                            size={32}
-                          />
-                          <View>
-                            <Text className="text-foreground font-semibold text-sm">
-                              {(parlay.user?.settings as any)?.displayName ?? parlay.user?.firstName ?? parlay.user?.email ?? "Unknown"}
-                            </Text>
-                            <Text className="text-muted-foreground text-xs capitalize">
-                              {parlay.status}
-                            </Text>
-                          </View>
-                        </View>
-                        <Ionicons
-                          name={
-                            parlay.status === "approved"
-                              ? "checkmark-circle"
-                              : parlay.status === "rejected"
-                              ? "close-circle"
-                              : "time"
-                          }
-                          size={20}
-                          color={getParlayStatusColor(parlay.status)}
-                        />
-                      </View>
-
-                      {parlay.legs && parlay.legs.length > 0 && (
-                        <View className="gap-1 mt-2 pt-2 border-t border-border">
-                          {parlay.legs.map((leg: any, i: number) => (
-                            <View key={i} className="flex-row items-center gap-2">
-                              <View
-                                className="w-1.5 h-1.5 rounded-full"
-                                style={{
-                                  backgroundColor:
-                                    leg.result === "win"
-                                      ? "#22c55e"
-                                      : leg.result === "loss"
-                                      ? "#ef4444"
-                                      : "#71717a",
-                                }}
-                              />
-                              <Text className="text-muted-foreground text-xs flex-1" numberOfLines={1}>
-                                {leg.game?.homeTeam} vs {leg.game?.awayTeam} — {leg.pick}
-                              </Text>
-                            </View>
-                          ))}
-                        </View>
-                      )}
-                    </CardContent>
-                  </Card>
+                  <ParlayCard key={parlay.id} parlay={parlay} />
                 ))
               )}
             </>
           )}
 
-          {/* MEMBERS TAB */}
+          {/* MEMBERS */}
           {activeTab === "members" && (
             <>
               {membersLoading ? (
-                <ActivityIndicator color="#22c55e" className="mt-8" />
+                <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
               ) : !members || members.length === 0 ? (
-                <View className="items-center py-16">
-                  <Text className="text-muted-foreground text-sm">No members found</Text>
+                <View style={styles.emptyState}>
+                  <Text style={styles.emptySubtitle}>No members found</Text>
                 </View>
               ) : (
                 members.map((member: any) => (
-                  <Card key={member.userId} className="mb-2">
-                    <CardContent className="py-3">
-                      <View className="flex-row items-center gap-3">
-                        <Avatar
-                          src={member.user?.profileImageUrl}
-                          name={(member.user?.settings as any)?.displayName ?? member.user?.firstName ?? member.user?.email}
-                          size={36}
-                        />
-                        <View className="flex-1">
-                          <View className="flex-row items-center gap-2 flex-wrap">
-                            <Text className="text-foreground font-medium text-sm">
-                              {(member.user?.settings as any)?.displayName
-                                ? (member.user.settings as any).displayName
-                                : member.user?.firstName
-                                  ? `${member.user.firstName}${member.user.lastName ? " " + member.user.lastName : ""}`
-                                  : member.user?.email ?? "Unknown"}
-                            </Text>
-                            {member.user?.isDemo && <Badge variant="warning">DEMO</Badge>}
-                          </View>
-                          <View className="flex-row items-center gap-2 mt-1">
-                            {getRoleBadge(member.role)}
-                          </View>
-                        </View>
-                      </View>
-                    </CardContent>
-                  </Card>
+                  <MemberCard key={member.userId} member={member} />
                 ))
               )}
             </>
           )}
 
-          {/* STATS TAB */}
+          {/* STATS */}
           {activeTab === "stats" && (
             <>
               {statsLoading ? (
-                <ActivityIndicator color="#22c55e" className="mt-8" />
+                <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
               ) : !stats || stats.length === 0 ? (
-                <View className="items-center py-16 gap-3">
-                  <Ionicons name="bar-chart-outline" size={40} color="#3f3f46" />
-                  <Text className="text-muted-foreground text-sm">No stats yet</Text>
+                <View style={styles.emptyState}>
+                  <View style={styles.emptyIcon}>
+                    <Ionicons name="bar-chart-outline" size={28} color="#2563eb" />
+                  </View>
+                  <Text style={styles.emptyTitle}>No stats yet</Text>
+                  <Text style={styles.emptySubtitle}>
+                    Stats appear once parlays are graded.
+                  </Text>
                 </View>
               ) : (
                 stats.map((stat: any) => (
-                  <Card key={stat.userId} className="mb-3">
-                    <CardContent>
-                      <View className="flex-row items-center gap-3 mb-3">
-                        <Avatar
-                          src={stat.user?.profileImageUrl}
-                          name={(stat.user?.settings as any)?.displayName ?? stat.user?.firstName ?? stat.user?.email}
-                          size={36}
-                        />
-                        <Text className="text-foreground font-semibold text-sm">
-                          {(stat.user?.settings as any)?.displayName ?? stat.user?.firstName ?? stat.user?.email ?? "Unknown"}
-                        </Text>
-                      </View>
-                      <View className="flex-row justify-between">
-                        <View className="items-center">
-                          <Text className="text-foreground font-bold text-lg">{stat.wins ?? 0}</Text>
-                          <Text className="text-muted-foreground text-xs">Wins</Text>
-                        </View>
-                        <View className="items-center">
-                          <Text className="text-foreground font-bold text-lg">{stat.losses ?? 0}</Text>
-                          <Text className="text-muted-foreground text-xs">Losses</Text>
-                        </View>
-                        <View className="items-center">
-                          <Text className="text-primary font-bold text-lg">
-                            {stat.winRate != null ? `${Math.round(stat.winRate * 100)}%` : "—"}
-                          </Text>
-                          <Text className="text-muted-foreground text-xs">Win Rate</Text>
-                        </View>
-                        <View className="items-center">
-                          <Text className="text-foreground font-bold text-lg">{stat.parlays ?? 0}</Text>
-                          <Text className="text-muted-foreground text-xs">Parlays</Text>
-                        </View>
-                      </View>
-                    </CardContent>
-                  </Card>
+                  <StatCard key={stat.userId} stat={stat} />
                 ))
               )}
             </>
@@ -296,3 +359,168 @@ export default function LeagueDetailScreen() {
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#141926" },
+  centered: {
+    flex: 1,
+    backgroundColor: "#141926",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  metaBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#2a3447",
+    backgroundColor: "#1c2538",
+    gap: 8,
+  },
+  metaBarLeft: { flexDirection: "row", alignItems: "center", gap: 6, flex: 1 },
+  weekPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#1e2a3b",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  weekPillText: { fontSize: 11, color: "#94a3b8", fontWeight: "500" },
+  lockPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#2c0e0e",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  lockPillText: { fontSize: 11, color: "#ef4444", fontWeight: "600" },
+  demoPill: {
+    backgroundColor: "#2d2000",
+    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  demoPillText: { fontSize: 10, fontWeight: "700", color: "#f59e0b", letterSpacing: 0.5 },
+  deadlineText: { fontSize: 11, color: "#475569" },
+  tabBar: {
+    flexDirection: "row",
+    backgroundColor: "#1c2538",
+    borderBottomWidth: 1,
+    borderBottomColor: "#2a3447",
+  },
+  tab: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 11,
+  },
+  tabActive: {
+    borderBottomWidth: 2,
+    borderBottomColor: "#2563eb",
+  },
+  tabLabel: { fontSize: 13, fontWeight: "600", color: "#475569" },
+  tabLabelActive: { color: "#2563eb" },
+  scroll: { flex: 1 },
+  scrollContent: { padding: 16 },
+  tabLoader: { marginTop: 48 },
+  emptyState: { alignItems: "center", paddingVertical: 48, gap: 10 },
+  emptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 18,
+    backgroundColor: "#1c2538",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  emptyTitle: { fontSize: 16, fontWeight: "700", color: "#f1f5f9" },
+  emptySubtitle: { fontSize: 13, color: "#94a3b8", textAlign: "center" },
+
+  /* Parlay card */
+  parlayCard: {
+    backgroundColor: "#1c2538",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    marginBottom: 10,
+    overflow: "hidden",
+  },
+  parlayCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    padding: 14,
+  },
+  parlayCardMeta: { flex: 1 },
+  parlayCardName: { fontSize: 14, fontWeight: "700", color: "#f1f5f9" },
+  parlayCardStatus: { fontSize: 12, color: "#94a3b8", marginTop: 1, textTransform: "capitalize" },
+  legsSection: {
+    borderTopWidth: 1,
+    borderTopColor: "#2a3447",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  legRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  legDot: { width: 7, height: 7, borderRadius: 4 },
+  legText: { flex: 1, fontSize: 12, color: "#94a3b8" },
+  legLine: { fontSize: 12, color: "#475569", fontWeight: "600" },
+  statusDot: { width: 8, height: 8, borderRadius: 4 },
+
+  /* Member card */
+  memberCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#1c2538",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    padding: 14,
+    marginBottom: 8,
+  },
+  memberMeta: { flex: 1 },
+  memberName: { fontSize: 15, fontWeight: "600", color: "#f1f5f9" },
+  memberRole: { fontSize: 12, fontWeight: "600", marginTop: 2 },
+
+  /* Stat card */
+  statCard: {
+    backgroundColor: "#1c2538",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    padding: 14,
+    marginBottom: 10,
+  },
+  statCardHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginBottom: 14,
+  },
+  statName: { fontSize: 15, fontWeight: "700", color: "#f1f5f9", flex: 1 },
+  statRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-around",
+  },
+  statItem: { alignItems: "center", flex: 1 },
+  statValue: { fontSize: 20, fontWeight: "800", color: "#f1f5f9" },
+  statValuePrimary: { color: "#2563eb" },
+  statLabel: { fontSize: 11, color: "#475569", marginTop: 2, fontWeight: "500" },
+  statDivider: { width: 1, height: 32, backgroundColor: "#2a3447" },
+});

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Parlay.Club",
+    "name": "Parlay.Conch",
     "slug": "parlayclub",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -39,7 +39,7 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiUrl": "https://your-replit-app.replit.app",
+      "apiUrl": "https://parlayconch.com",
       "router": {
         "origin": false
       }

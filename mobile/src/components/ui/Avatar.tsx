@@ -1,4 +1,4 @@
-import { View, Image, Text } from "react-native";
+import { View, Image, Text, StyleSheet } from "react-native";
 
 interface AvatarProps {
   src?: string | null;
@@ -16,50 +16,52 @@ function getInitials(name?: string | null): string {
     .toUpperCase();
 }
 
+const AVATAR_COLORS = [
+  "#2563eb",
+  "#0ea5e9",
+  "#7c3aed",
+  "#d97706",
+  "#dc2626",
+  "#059669",
+  "#db2777",
+  "#ea580c",
+];
+
 function getAvatarColor(name?: string | null): string {
-  const colors = [
-    "#22c55e", "#3b82f6", "#8b5cf6", "#f59e0b",
-    "#ef4444", "#06b6d4", "#ec4899", "#f97316",
-  ];
-  if (!name) return colors[0];
-  const index = name.charCodeAt(0) % colors.length;
-  return colors[index];
+  if (!name) return AVATAR_COLORS[0];
+  return AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
 }
 
 export function Avatar({ src, name, size = 40 }: AvatarProps) {
   const initials = getInitials(name);
   const bgColor = getAvatarColor(name);
+  const fontSize = size * 0.36;
+  const borderRadius = size / 2;
 
   if (src) {
     return (
       <Image
         source={{ uri: src }}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-        defaultSource={{ uri: "" }}
+        style={{ width: size, height: size, borderRadius }}
       />
     );
   }
 
   return (
     <View
-      style={{
-        width: size,
-        height: size,
-        borderRadius: size / 2,
-        backgroundColor: bgColor,
-        alignItems: "center",
-        justifyContent: "center",
-      }}
+      style={[
+        styles.fallback,
+        { width: size, height: size, borderRadius, backgroundColor: bgColor },
+      ]}
     >
-      <Text
-        style={{
-          color: "#09090b",
-          fontWeight: "700",
-          fontSize: size * 0.38,
-        }}
-      >
+      <Text style={[styles.initials, { fontSize, lineHeight: size }]}>
         {initials}
       </Text>
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  fallback: { alignItems: "center", justifyContent: "center" },
+  initials: { color: "#ffffff", fontWeight: "700" },
+});

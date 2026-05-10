@@ -1,14 +1,23 @@
-import { View, Text, ScrollView, Pressable, Switch, Alert } from "react-native";
+import {
+  View,
+  Text,
+  ScrollView,
+  Pressable,
+  Switch,
+  Alert,
+  StyleSheet,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "@/hooks/use-auth";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
 import { Avatar } from "@/components/ui/Avatar";
-import { Card, CardContent } from "@/components/ui/Card";
-import { Badge } from "@/components/ui/Badge";
 
-interface SettingsRowProps {
-  icon: React.ComponentProps<typeof Ionicons>["name"];
+type IconName = React.ComponentProps<typeof Ionicons>["name"];
+
+interface RowProps {
+  icon: IconName;
+  iconColor?: string;
   label: string;
   value?: string;
   onPress?: () => void;
@@ -16,25 +25,37 @@ interface SettingsRowProps {
   danger?: boolean;
 }
 
-function SettingsRow({ icon, label, value, onPress, right, danger = false }: SettingsRowProps) {
+function Row({ icon, iconColor, label, value, onPress, right, danger }: RowProps) {
   const content = (
-    <View className="flex-row items-center px-4 py-3.5 gap-3">
-      <View className={`w-8 h-8 rounded-lg items-center justify-center ${danger ? "bg-red-500/15" : "bg-muted"}`}>
-        <Ionicons name={icon} size={18} color={danger ? "#ef4444" : "#a1a1aa"} />
+    <View style={styles.row}>
+      <View style={[styles.rowIcon, danger && styles.rowIconDanger]}>
+        <Ionicons
+          name={icon}
+          size={18}
+          color={danger ? "#ef4444" : (iconColor ?? "#94a3b8")}
+        />
       </View>
-      <View className="flex-1">
-        <Text className={`font-medium text-sm ${danger ? "text-destructive" : "text-foreground"}`}>
-          {label}
-        </Text>
-        {value && <Text className="text-muted-foreground text-xs mt-0.5">{value}</Text>}
+      <View style={styles.rowBody}>
+        <Text style={[styles.rowLabel, danger && styles.rowLabelDanger]}>{label}</Text>
+        {value !== undefined && (
+          <Text style={styles.rowValue} numberOfLines={1}>{value}</Text>
+        )}
       </View>
-      {right ?? (onPress && <Ionicons name="chevron-forward" size={16} color="#52525b" />)}
+      {right !== undefined
+        ? right
+        : onPress
+        ? <Ionicons name="chevron-forward" size={15} color="#374151" />
+        : null}
     </View>
   );
 
   if (onPress) {
     return (
-      <Pressable onPress={onPress} className="active:opacity-70" testID={`button-settings-${label.toLowerCase().replace(/ /g, "-")}`}>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => pressed && styles.rowPressed}
+        testID={`button-settings-${label.toLowerCase().replace(/ /g, "-")}`}
+      >
         {content}
       </Pressable>
     );
@@ -42,117 +63,190 @@ function SettingsRow({ icon, label, value, onPress, right, danger = false }: Set
   return content;
 }
 
+function Divider() {
+  return <View style={styles.divider} />;
+}
+
+function Section({ label }: { label: string }) {
+  return <Text style={styles.sectionLabel}>{label.toUpperCase()}</Text>;
+}
+
 export default function SettingsScreen() {
   const { user, logout, isLoggingOut } = useAuth();
   const queryClient = useQueryClient();
 
   const toggleDemoMutation = useMutation({
-    mutationFn: (isDemo: boolean) => apiRequest("PATCH", "/api/users/me/demo", { isDemo }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] }),
+    mutationFn: (isDemo: boolean) =>
+      apiRequest("PATCH", "/api/users/me/demo", { isDemo }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] }),
   });
 
-  const userName = user?.firstName
+  const displayName = user?.firstName
     ? `${user.firstName}${user.lastName ? " " + user.lastName : ""}`
     : user?.email ?? "Unknown";
 
   function confirmLogout() {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Sign Out", style: "destructive", onPress: () => logout() },
+      {
+        text: "Sign Out",
+        style: "destructive",
+        onPress: () => logout(),
+      },
     ]);
   }
 
   return (
-    <ScrollView className="flex-1 bg-background" contentContainerStyle={{ paddingBottom: 40 }}>
-      {/* Profile card */}
-      <Card className="mx-4 mt-4 mb-6">
-        <CardContent>
-          <View className="flex-row items-center gap-4">
-            <Avatar src={user?.profileImageUrl} name={userName} size={56} />
-            <View className="flex-1">
-              <View className="flex-row items-center gap-2 flex-wrap">
-                <Text className="text-foreground font-bold text-base">{userName}</Text>
-                {user?.isDemo && <Badge variant="warning">DEMO</Badge>}
-              </View>
-              {user?.email && (
-                <Text className="text-muted-foreground text-sm mt-0.5">{user.email}</Text>
-              )}
-              <Text className="text-muted-foreground text-xs mt-1">Replit Auth · ID: {user?.id?.slice(0, 8)}</Text>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+    >
+      {/* Profile hero */}
+      <View style={styles.profileCard}>
+        <Avatar src={user?.profileImageUrl} name={displayName} size={68} />
+        <View style={styles.profileText}>
+          <Text style={styles.profileName}>{displayName}</Text>
+          {user?.email && (
+            <Text style={styles.profileEmail}>{user.email}</Text>
+          )}
+          {user?.isDemo && (
+            <View style={styles.demoBadge}>
+              <Text style={styles.demoBadgeText}>DEMO</Text>
             </View>
-          </View>
-        </CardContent>
-      </Card>
+          )}
+        </View>
+      </View>
 
-      {/* Account section */}
-      <Text className="text-muted-foreground text-xs font-semibold uppercase tracking-wider px-4 mb-2">
-        Account
-      </Text>
-      <Card className="mx-4 mb-6 overflow-hidden">
-        <SettingsRow
-          icon="person-outline"
-          label="Display Name"
-          value={userName}
-        />
-        <View className="h-px bg-border mx-4" />
-        <SettingsRow
+      {/* Account */}
+      <Section label="Account" />
+      <View style={styles.card}>
+        <Row icon="person-outline" label="Name" value={displayName} />
+        <Divider />
+        <Row
           icon="mail-outline"
           label="Email"
           value={user?.email ?? "Not set"}
         />
-        <View className="h-px bg-border mx-4" />
-        <SettingsRow
+        <Divider />
+        <Row
           icon="shield-checkmark-outline"
-          label="Authentication"
+          iconColor="#2563eb"
+          label="Sign-in method"
           value="Replit OAuth"
         />
-      </Card>
+      </View>
 
-      {/* Demo section */}
-      <Text className="text-muted-foreground text-xs font-semibold uppercase tracking-wider px-4 mb-2">
-        Testing
-      </Text>
-      <Card className="mx-4 mb-6">
-        <SettingsRow
+      {/* Preferences */}
+      <Section label="Preferences" />
+      <View style={styles.card}>
+        <Row
           icon="flask-outline"
-          label="Demo / QA Account"
-          value="Marks your account and activity as test data"
+          iconColor="#f59e0b"
+          label="Demo / QA mode"
+          value="Marks your account as test data"
           right={
             <Switch
               value={!!user?.isDemo}
               onValueChange={(val) => toggleDemoMutation.mutate(val)}
-              trackColor={{ false: "#3f3f46", true: "#22c55e" }}
-              thumbColor="#fafafa"
+              trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+              thumbColor="#ffffff"
               disabled={toggleDemoMutation.isPending}
               testID="switch-demo-mode"
             />
           }
         />
-      </Card>
+      </View>
 
-      {/* App info section */}
-      <Text className="text-muted-foreground text-xs font-semibold uppercase tracking-wider px-4 mb-2">
-        App
-      </Text>
-      <Card className="mx-4 mb-6">
-        <SettingsRow icon="information-circle-outline" label="Version" value="1.0.0 (iOS)" />
-        <View className="h-px bg-border mx-4" />
-        <SettingsRow icon="globe-outline" label="Platform" value="React Native / Expo" />
-        <View className="h-px bg-border mx-4" />
-        <SettingsRow icon="server-outline" label="Full Features" value="Available in the web app" />
-      </Card>
+      {/* App info */}
+      <Section label="About" />
+      <View style={styles.card}>
+        <Row
+          icon="trophy-outline"
+          iconColor="#2563eb"
+          label="Parlay.Conch"
+          value="Version 1.0.0 (iOS)"
+        />
+        <Divider />
+        <Row
+          icon="globe-outline"
+          label="Full web app"
+          value="parlayconch.com"
+        />
+      </View>
 
-      {/* Danger zone */}
-      <Text className="text-muted-foreground text-xs font-semibold uppercase tracking-wider px-4 mb-2">
-        Session
-      </Text>
-      <Card className="mx-4 mb-6">
-        <SettingsRow
+      {/* Sign out */}
+      <Section label="Session" />
+      <View style={styles.card}>
+        <Row
           icon="log-out-outline"
           label={isLoggingOut ? "Signing out…" : "Sign Out"}
           onPress={confirmLogout}
           danger
         />
-      </Card>
+      </View>
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#141926" },
+  content: { paddingBottom: 48 },
+  profileCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 16,
+    padding: 20,
+    marginBottom: 8,
+  },
+  profileText: { flex: 1 },
+  profileName: { fontSize: 20, fontWeight: "700", color: "#f1f5f9" },
+  profileEmail: { fontSize: 13, color: "#94a3b8", marginTop: 2 },
+  demoBadge: {
+    alignSelf: "flex-start",
+    marginTop: 6,
+    backgroundColor: "#2d2000",
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  demoBadgeText: { fontSize: 10, fontWeight: "700", color: "#f59e0b", letterSpacing: 0.5 },
+  sectionLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#475569",
+    letterSpacing: 1,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  card: {
+    backgroundColor: "#1c2538",
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: "#2a3447",
+    marginBottom: 4,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    gap: 12,
+  },
+  rowIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    backgroundColor: "#1e2a3b",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rowIconDanger: { backgroundColor: "#2c0e0e" },
+  rowBody: { flex: 1 },
+  rowLabel: { fontSize: 15, color: "#f1f5f9", fontWeight: "500" },
+  rowLabelDanger: { color: "#ef4444" },
+  rowValue: { fontSize: 13, color: "#94a3b8", marginTop: 1 },
+  rowPressed: { opacity: 0.7 },
+  divider: { height: 1, backgroundColor: "#1e2a3b", marginLeft: 62 },
+});

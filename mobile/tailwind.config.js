@@ -6,23 +6,25 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        // Mirror the web app dark theme palette
-        background: "#09090b",
-        card: "#18181b",
-        border: "rgba(255,255,255,0.08)",
+        background: "#141926",
+        card: "#1c2538",
+        border: "#2a3447",
         primary: {
-          DEFAULT: "#22c55e",
-          foreground: "#09090b",
+          DEFAULT: "#2563eb",
+          foreground: "#ffffff",
         },
         accent: {
-          DEFAULT: "#f59e0b",
+          DEFAULT: "#0ea5e9",
+          foreground: "#0c1a2e",
         },
         muted: {
-          DEFAULT: "#3f3f46",
-          foreground: "#a1a1aa",
+          DEFAULT: "#1e2a3b",
+          foreground: "#94a3b8",
         },
         destructive: "#ef4444",
-        foreground: "#fafafa",
+        foreground: "#f1f5f9",
+        success: "#22c55e",
+        warning: "#f59e0b",
       },
     },
   },

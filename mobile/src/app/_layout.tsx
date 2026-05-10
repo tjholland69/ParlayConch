@@ -15,9 +15,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isLoading) return;
-
     const inAuthGroup = segments[0] === "login";
-
     if (!isAuthenticated && !inAuthGroup) {
       router.replace("/login");
     } else if (isAuthenticated && inAuthGroup) {
@@ -37,21 +35,19 @@ export default function RootLayout() {
           <AuthGuard>
             <Stack
               screenOptions={{
-                headerStyle: { backgroundColor: "#18181b" },
-                headerTintColor: "#fafafa",
-                headerTitleStyle: { fontWeight: "700" },
-                contentStyle: { backgroundColor: "#09090b" },
+                headerStyle: { backgroundColor: "#1c2538" },
+                headerTintColor: "#f1f5f9",
+                headerTitleStyle: { fontWeight: "700", fontSize: 17 },
+                headerTitleAlign: "center",
+                contentStyle: { backgroundColor: "#141926" },
+                headerShadowVisible: false,
               }}
             >
               <Stack.Screen name="login" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen
                 name="leagues/[id]"
-                options={{ title: "League", headerBackTitle: "Back" }}
-              />
-              <Stack.Screen
-                name="leagues/[id]/settings"
-                options={{ title: "League Settings", headerBackTitle: "Back" }}
+                options={{ headerBackTitle: "Leagues" }}
               />
             </Stack>
           </AuthGuard>

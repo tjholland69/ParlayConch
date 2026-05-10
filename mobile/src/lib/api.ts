@@ -2,7 +2,7 @@ import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
 
 /**
- * The base URL of the Parlay.Club API server.
+ * The base URL of the Parlay.Conch API server.
  * In development: set EXPO_PUBLIC_API_URL in your .env
  * In production:  set extra.apiUrl in app.json
  */

@@ -1,4 +1,4 @@
-import { Pressable, Text, ActivityIndicator, PressableProps } from "react-native";
+import { Pressable, Text, ActivityIndicator, PressableProps, StyleSheet } from "react-native";
 
 type ButtonVariant = "default" | "outline" | "ghost" | "destructive";
 type ButtonSize = "sm" | "md" | "lg";
@@ -11,40 +11,74 @@ interface ButtonProps extends PressableProps {
   className?: string;
 }
 
-const variantStyles: Record<ButtonVariant, { container: string; text: string }> = {
-  default: { container: "bg-primary", text: "text-background font-bold" },
-  outline: { container: "border border-border bg-transparent", text: "text-foreground font-semibold" },
-  ghost: { container: "bg-transparent", text: "text-foreground font-semibold" },
-  destructive: { container: "bg-destructive", text: "text-white font-bold" },
-};
-
-const sizeStyles: Record<ButtonSize, { container: string; text: string }> = {
-  sm: { container: "py-1.5 px-3 rounded-lg", text: "text-sm" },
-  md: { container: "py-2.5 px-4 rounded-xl", text: "text-base" },
-  lg: { container: "py-3.5 px-6 rounded-xl", text: "text-base" },
-};
-
 export function Button({
   children,
   variant = "default",
   size = "md",
   loading = false,
   disabled,
-  className = "",
+  style,
   ...props
 }: ButtonProps) {
-  const vs = variantStyles[variant];
-  const ss = sizeStyles[size];
   const isDisabled = disabled || loading;
+
+  const containerStyle = [
+    styles.base,
+    styles[`variant_${variant}`],
+    styles[`size_${size}`],
+    isDisabled && styles.disabled,
+  ];
+
+  const textStyle = [
+    styles.text,
+    styles[`text_${variant}`],
+    styles[`textSize_${size}`],
+  ];
+
+  const spinnerColor = variant === "default" || variant === "destructive" ? "#ffffff" : "#94a3b8";
 
   return (
     <Pressable
       disabled={isDisabled}
-      className={`${vs.container} ${ss.container} items-center justify-center flex-row gap-2 ${isDisabled ? "opacity-50" : "active:opacity-75"} ${className}`}
+      style={({ pressed }) => [containerStyle, pressed && !isDisabled && styles.pressed, style]}
       {...props}
     >
-      {loading && <ActivityIndicator size="small" color={variant === "default" ? "#09090b" : "#fafafa"} />}
-      <Text className={`${vs.text} ${ss.text}`}>{children}</Text>
+      {loading && <ActivityIndicator size="small" color={spinnerColor} />}
+      <Text style={textStyle}>{children}</Text>
     </Pressable>
   );
 }
+
+const styles = StyleSheet.create({
+  base: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  pressed: { opacity: 0.8 },
+  disabled: { opacity: 0.45 },
+
+  variant_default: { backgroundColor: "#2563eb" },
+  variant_outline: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+  },
+  variant_ghost: { backgroundColor: "transparent" },
+  variant_destructive: { backgroundColor: "#ef4444" },
+
+  size_sm: { paddingVertical: 7, paddingHorizontal: 14, borderRadius: 10 },
+  size_md: { paddingVertical: 12, paddingHorizontal: 18, borderRadius: 12 },
+  size_lg: { paddingVertical: 15, paddingHorizontal: 24, borderRadius: 14 },
+
+  text: { fontWeight: "600" },
+  text_default: { color: "#ffffff" },
+  text_outline: { color: "#f1f5f9" },
+  text_ghost: { color: "#f1f5f9" },
+  text_destructive: { color: "#ffffff" },
+
+  textSize_sm: { fontSize: 13 },
+  textSize_md: { fontSize: 15 },
+  textSize_lg: { fontSize: 16 },
+});
