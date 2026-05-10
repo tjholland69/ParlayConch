@@ -770,6 +770,20 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(importBatches.uploadedAt));
   }
 
+  async deleteImportBatch(batchId: number, leagueId: number): Promise<void> {
+    const batchParlays = await db.select({ id: parlays.id })
+      .from(parlays)
+      .where(and(eq(parlays.importBatchId, batchId), eq(parlays.leagueId, leagueId)));
+    const parlayIds = batchParlays.map(p => p.id);
+    if (parlayIds.length > 0) {
+      await db.delete(parlayLegs).where(inArray(parlayLegs.parlayId, parlayIds));
+      await db.delete(parlays).where(inArray(parlays.id, parlayIds));
+    }
+    await db.delete(importBatches).where(
+      and(eq(importBatches.id, batchId), eq(importBatches.leagueId, leagueId))
+    );
+  }
+
   async setUserDemoFlag(userId: string, isDemo: boolean): Promise<void> {
     await db.update(users).set({ isDemo }).where(eq(users.id, userId));
   }

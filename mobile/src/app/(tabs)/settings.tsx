@@ -5,9 +5,11 @@ import {
   Pressable,
   Switch,
   Alert,
+  ActivityIndicator,
   StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import Constants from "expo-constants";
 import { useAuth } from "@/hooks/use-auth";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
@@ -148,14 +150,18 @@ export default function SettingsScreen() {
           label="Demo / QA mode"
           value="Marks your account as test data"
           right={
-            <Switch
-              value={!!user?.isDemo}
-              onValueChange={(val) => toggleDemoMutation.mutate(val)}
-              trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
-              thumbColor="#ffffff"
-              disabled={toggleDemoMutation.isPending}
-              testID="switch-demo-mode"
-            />
+            toggleDemoMutation.isPending ? (
+              <ActivityIndicator size="small" color="#2563eb" />
+            ) : (
+              <Switch
+                value={!!user?.isDemo}
+                onValueChange={(val) => toggleDemoMutation.mutate(val)}
+                trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+                thumbColor="#ffffff"
+                disabled={toggleDemoMutation.isPending}
+                testID="switch-demo-mode"
+              />
+            )
           }
         />
       </View>
@@ -167,7 +173,7 @@ export default function SettingsScreen() {
           icon="trophy-outline"
           iconColor="#2563eb"
           label="Parlay.Conch"
-          value="Version 1.0.0 (iOS)"
+          value={`Version ${Constants.expoConfig?.version ?? "1.0.0"} (iOS)`}
         />
         <Divider />
         <Row

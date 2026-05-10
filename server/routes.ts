@@ -843,6 +843,25 @@ export async function registerRoutes(
     }
   });
 
+  // ===== ROLLBACK IMPORT BATCH (Admin only) =====
+  app.delete("/api/leagues/:leagueId/imports/:batchId", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const batchId = Number(req.params.batchId);
+      const userId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Only the Parlay Maestro can roll back imports" });
+      }
+
+      await storage.deleteImportBatch(batchId, leagueId);
+      res.json({ message: "Import batch rolled back successfully" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // ===== LEAGUE SETTINGS =====
   app.get("/api/leagues/:id/members", isAuthenticated, async (req, res) => {
     try {
