@@ -42,14 +42,16 @@ export function LeagueCard({ league }: LeagueCardProps) {
       <View style={styles.body}>
         <View style={styles.topRow}>
           <View style={styles.titleBlock}>
-            <Text style={styles.name} numberOfLines={1}>{league.name}</Text>
+            <Text style={styles.name} numberOfLines={1}>
+              {league.name}
+            </Text>
             {league.isDemo && (
               <View style={styles.demoPill}>
                 <Text style={styles.demoPillText}>DEMO</Text>
               </View>
             )}
           </View>
-          <Ionicons name="chevron-forward" size={16} color="#374151" />
+          <Ionicons name="chevron-forward" size={16} color="#374151" style={styles.chevron} />
         </View>
 
         {league.description ? (
@@ -61,14 +63,17 @@ export function LeagueCard({ league }: LeagueCardProps) {
         <View style={styles.metaRow}>
           <View style={styles.metaItem}>
             <View style={[styles.roleDot, { backgroundColor: roleColor }]} />
-            <Text style={[styles.metaText, { color: roleColor }]}>{roleLabel}</Text>
+            <Text style={[styles.metaText, { color: roleColor }]} numberOfLines={1}>
+              {roleLabel}
+            </Text>
           </View>
 
           {league.memberCount !== undefined && (
             <View style={styles.metaItem}>
               <Ionicons name="people-outline" size={13} color="#475569" />
-              <Text style={styles.metaTextMuted}>
-                {league.memberCount} {league.memberCount === 1 ? "member" : "members"}
+              <Text style={styles.metaTextMuted} numberOfLines={1}>
+                {league.memberCount}{" "}
+                {league.memberCount === 1 ? "member" : "members"}
               </Text>
             </View>
           )}
@@ -94,40 +99,88 @@ const styles = StyleSheet.create({
     borderColor: "#2a3447",
     marginBottom: 10,
     overflow: "hidden",
+    /* Prevent card from overflowing its container */
+    alignSelf: "stretch",
+    minWidth: 0,
   },
   pressed: { opacity: 0.8, transform: [{ scale: 0.99 }] },
   accentBar: {
     width: 4,
     borderTopLeftRadius: 14,
     borderBottomLeftRadius: 14,
+    flexShrink: 0,
   },
-  body: { flex: 1, padding: 14 },
+  body: {
+    flex: 1,
+    padding: 14,
+    minWidth: 0,
+  },
   topRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     marginBottom: 4,
+    minWidth: 0,
   },
-  titleBlock: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1 },
-  name: { fontSize: 16, fontWeight: "700", color: "#f1f5f9", flex: 1 },
+  titleBlock: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  name: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#f1f5f9",
+    flex: 1,
+    minWidth: 0,
+  },
+  chevron: {
+    flexShrink: 0,
+    marginLeft: 6,
+  },
   demoPill: {
     backgroundColor: "#2d2000",
     borderRadius: 6,
     paddingHorizontal: 6,
     paddingVertical: 2,
+    flexShrink: 0,
   },
-  demoPillText: { fontSize: 9, fontWeight: "700", color: "#f59e0b", letterSpacing: 0.5 },
-  description: { fontSize: 13, color: "#94a3b8", marginBottom: 10, lineHeight: 18 },
+  demoPillText: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#f59e0b",
+    letterSpacing: 0.5,
+  },
+  description: {
+    fontSize: 13,
+    color: "#94a3b8",
+    marginBottom: 10,
+    lineHeight: 18,
+  },
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
-    gap: 12,
+    gap: 10,
     marginTop: 8,
+    minWidth: 0,
   },
-  metaItem: { flexDirection: "row", alignItems: "center", gap: 4 },
-  roleDot: { width: 6, height: 6, borderRadius: 3 },
-  metaText: { fontSize: 12, fontWeight: "600" },
-  metaTextMuted: { fontSize: 12, color: "#475569" },
-  inviteCode: { fontSize: 12, color: "#475569", fontWeight: "600", letterSpacing: 1 },
+  metaItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  roleDot: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
+  metaText: { fontSize: 12, fontWeight: "600", flexShrink: 1 },
+  metaTextMuted: { fontSize: 12, color: "#475569", flexShrink: 1 },
+  inviteCode: {
+    fontSize: 12,
+    color: "#475569",
+    fontWeight: "600",
+    letterSpacing: 1,
+    flexShrink: 1,
+  },
 });
