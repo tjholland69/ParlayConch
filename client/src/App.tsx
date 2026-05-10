@@ -18,6 +18,7 @@ import Leagues from "@/pages/Leagues";
 import LeagueDetail from "@/pages/LeagueDetail";
 import LeagueSettings from "@/pages/LeagueSettings";
 import DemoDataEditor from "@/pages/DemoDataEditor";
+import ScreenshotImport from "@/pages/ScreenshotImport";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 
@@ -105,6 +106,7 @@ function Router() {
             <Route path="/leagues" component={Leagues} />
             <Route path="/leagues/:id/settings" component={LeagueSettings} />
             <Route path="/leagues/:id/demo-data" component={DemoDataEditor} />
+            <Route path="/leagues/:id/screenshot-import" component={ScreenshotImport} />
             <Route path="/leagues/:id" component={LeagueDetail} />
             <Route path="/settings" component={Settings} />
             <Route component={NotFound} />
