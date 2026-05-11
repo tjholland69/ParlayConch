@@ -142,7 +142,7 @@ export async function parseTicketImages(
   return results;
 }
 
-function normalizeBetType(raw: string | null): string {
+export function normalizeBetType(raw: string | null): string {
   if (!raw) return "spread";
   const t = raw.toLowerCase().trim();
   if (t.includes("moneyline") || t === "ml") return "moneyline";
@@ -152,7 +152,7 @@ function normalizeBetType(raw: string | null): string {
   return "spread";
 }
 
-function normalizePick(raw: string | null): string {
+export function normalizePick(raw: string | null): string {
   if (!raw) return "home";
   const p = raw.toLowerCase().trim();
   if (p === "away") return "away";
@@ -163,7 +163,7 @@ function normalizePick(raw: string | null): string {
   return "home";
 }
 
-function normalizeResult(raw: string | null): string | null {
+export function normalizeResult(raw: string | null): string | null {
   if (!raw) return null;
   const r = raw.toLowerCase().trim();
   if (r === "win" || r === "won") return "win";
@@ -213,7 +213,7 @@ const PROP_TYPE_MAP: Record<string, string> = {
   "passing completions": "pass_completions",
 };
 
-function normalizePropType(raw: string | null): string | null {
+export function normalizePropType(raw: string | null): string | null {
   if (!raw) return null;
   const key = raw.toLowerCase().trim();
   return PROP_TYPE_MAP[key] ?? raw;
