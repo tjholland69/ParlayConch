@@ -5,9 +5,9 @@ import {
   ActivityIndicator,
   Alert,
   StyleSheet,
-  Image,
   useWindowDimensions,
 } from "react-native";
+import { Shell } from "lucide-react-native";
 import { useState } from "react";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
@@ -76,11 +76,7 @@ export default function LoginScreen() {
       {/* Logo section */}
       <View style={[styles.logoSection, isLandscape && styles.logoSectionLandscape]}>
         <View style={styles.logoMark}>
-          <Image
-            source={require("../../assets/icon.png")}
-            style={styles.logoImage}
-            resizeMode="contain"
-          />
+          <Shell size={48} color="#2563eb" />
         </View>
         <Text style={styles.appName}>PARLAYCONCH</Text>
         <Text style={styles.tagline}>
@@ -184,11 +180,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 16,
-  },
-  logoImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 18,
   },
   appName: {
     fontSize: 26,
