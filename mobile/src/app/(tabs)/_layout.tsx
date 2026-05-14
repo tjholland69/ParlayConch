@@ -1,6 +1,7 @@
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Platform } from "react-native";
+import { Platform, View, Text, StyleSheet } from "react-native";
+import { Shell } from "lucide-react-native";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -60,7 +61,12 @@ export default function TabLayout() {
         name="leagues"
         options={{
           title: "Leagues",
-          headerTitle: "Parlay.Conch",
+          headerTitle: () => (
+            <View style={styles.headerTitle}>
+              <Shell size={22} color="#2563eb" />
+              <Text style={styles.headerTitleText}>PARLAYCONCH</Text>
+            </View>
+          ),
           tabBarIcon: ({ color, size, focused }) => (
             <TabIcon name="trophy-outline" focused={focused} color={color} size={size} />
           ),
@@ -87,3 +93,17 @@ export default function TabLayout() {
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  headerTitle: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  headerTitleText: {
+    color: "#f1f5f9",
+    fontSize: 17,
+    fontWeight: "800",
+    letterSpacing: 2,
+  },
+});
