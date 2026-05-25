@@ -78,6 +78,7 @@ export interface IStorage {
   deleteParlayLeg(legId: number): Promise<void>;
   updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg>;
   addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'>): Promise<ParlayLeg>;
+  mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
 
   // Imports
   createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
@@ -701,6 +702,18 @@ export class DatabaseStorage implements IStorage {
   async addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'>): Promise<ParlayLeg> {
     const [newLeg] = await db.insert(parlayLegs).values({ ...leg, parlayId }).returning();
     return newLeg;
+  }
+
+  async mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void> {
+    const target = await this.getParlay(targetParlayId);
+    if (!target || target.leagueId !== leagueId) throw new Error("Target parlay not found in this league");
+    await db.transaction(async (tx) => {
+      for (const sourceId of sourceParlayIds) {
+        await tx.update(parlayLegs).set({ parlayId: targetParlayId }).where(eq(parlayLegs.parlayId, sourceId));
+        await tx.delete(parlays).where(and(eq(parlays.id, sourceId), eq(parlays.leagueId, leagueId)));
+      }
+    });
+    emitLeague(leagueId, target.weekId, "parlays_updated");
   }
 
   // Imports

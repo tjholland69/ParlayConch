@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useRoute, Link } from "wouter";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLeagues, useAllLeagueParlays, useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useWeeks, useLeagueMembersWithUsers } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,9 +11,13 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
 const PICK_OPTIONS: Record<string, string[]> = {
@@ -78,10 +83,10 @@ const blankLeg = (): LegFormState => ({
 
 function legToForm(leg: ParlayLeg): LegFormState {
   return {
-    betType: leg.betType,
-    pick: leg.pick,
-    line: leg.line ?? "",
-    odds: leg.odds ?? "",
+    betType: leg.betType ?? "spread",
+    pick: leg.pick ?? "home",
+    line: leg.line?.toString() ?? "",
+    odds: leg.odds?.toString() ?? "",
     result: leg.result ?? "",
     playerName: leg.playerName ?? "",
     propType: leg.propType ?? "",
@@ -90,112 +95,104 @@ function legToForm(leg: ParlayLeg): LegFormState {
   };
 }
 
-interface LegSheetProps {
+type LegSheetProps = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   title: string;
   initial: LegFormState;
   onSave: (form: LegFormState) => void;
   isSaving: boolean;
-}
+};
 
 function LegSheet({ open, onOpenChange, title, initial, onSave, isSaving }: LegSheetProps) {
   const [form, setForm] = useState<LegFormState>(initial);
-  const set = (k: keyof LegFormState) => (v: string) => setForm(p => ({ ...p, [k]: v }));
-
-  const validPicks = PICK_OPTIONS[form.betType] ?? ["home", "away"];
+  const set = (k: keyof LegFormState) => (v: string) => setForm(f => ({ ...f, [k]: v }));
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-lg overflow-y-auto" onOpenAutoFocus={e => {
-        e.preventDefault();
-        setForm(initial);
-      }}>
+      <SheetContent className="w-full sm:max-w-md overflow-y-auto">
         <SheetHeader>
-          <SheetTitle>{title}</SheetTitle>
+          <SheetTitle className="text-base">{title}</SheetTitle>
         </SheetHeader>
-        <div className="space-y-4 py-6">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Bet Type</Label>
-              <Select value={form.betType} onValueChange={v => {
-                const picks = PICK_OPTIONS[v] ?? ["home"];
-                setForm(p => ({ ...p, betType: v, pick: picks[0] }));
-              }}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {BET_TYPES.map(t => <SelectItem key={t} value={t}>{t.replace("_", " ").toUpperCase()}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Pick</Label>
-              <Select value={form.pick} onValueChange={set("pick")}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {validPicks.map(p => <SelectItem key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <Label>Line</Label>
-              <Input placeholder="-3.5" value={form.line} onChange={e => set("line")(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Odds</Label>
-              <Input placeholder="-110" value={form.odds} onChange={e => set("odds")(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Result</Label>
-            <Select value={form.result || "__none"} onValueChange={v => set("result")(v === "__none" ? "" : v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+        <div className="space-y-4 py-4">
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Bet Type</Label>
+            <Select value={form.betType} onValueChange={v => { set("betType")(v); set("pick")(PICK_OPTIONS[v]?.[0] ?? "home"); }}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none">— Pending —</SelectItem>
-                <SelectItem value="win">Win</SelectItem>
-                <SelectItem value="loss">Loss</SelectItem>
-                <SelectItem value="push">Push</SelectItem>
+                {BET_TYPES.map(t => <SelectItem key={t} value={t}>{t === "player_prop" ? "Player Prop" : t.charAt(0).toUpperCase() + t.slice(1)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
 
           {form.betType === "player_prop" && (
             <>
-              <div className="space-y-1.5">
-                <Label>Player Name</Label>
-                <Input placeholder="Travis Kelce" value={form.playerName} onChange={e => set("playerName")(e.target.value)} />
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Player Name</Label>
+                <Input className="h-9" value={form.playerName} onChange={e => set("playerName")(e.target.value)} placeholder="e.g. Travis Kelce" />
               </div>
-              <div className="space-y-1.5">
-                <Label>Prop Type</Label>
-                <Select value={form.propType || "__none"} onValueChange={v => set("propType")(v === "__none" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Select prop…" /></SelectTrigger>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Prop Type</Label>
+                <Select value={form.propType} onValueChange={set("propType")}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Select prop type" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__none">— None —</SelectItem>
-                    {PLAYER_PROP_TYPES.map(pt => <SelectItem key={pt.value} value={pt.value}>{pt.label}</SelectItem>)}
+                    {PLAYER_PROP_TYPES.map(p => <SelectItem key={p} value={p}>{p.replace(/_/g, " ")}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
             </>
           )}
 
-          <div className="space-y-1.5">
-            <Label>Game Segment <span className="text-muted-foreground text-xs">(optional)</span></Label>
-            <Input placeholder="e.g. First Half" value={form.gameSegment} onChange={e => set("gameSegment")(e.target.value)} />
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Pick</Label>
+            <Select value={form.pick} onValueChange={set("pick")}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {(PICK_OPTIONS[form.betType] ?? ["home", "away", "over", "under", "yes", "no"]).map(p => (
+                  <SelectItem key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Notes <span className="text-muted-foreground text-xs">(optional)</span></Label>
-            <Textarea placeholder="Any display note…" value={form.notes} onChange={e => set("notes")(e.target.value)} className="resize-none h-20" />
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Line</Label>
+              <Input className="h-9" value={form.line} onChange={e => set("line")(e.target.value)} placeholder="e.g. 4.5" />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Odds</Label>
+              <Input className="h-9" value={form.odds} onChange={e => set("odds")(e.target.value)} placeholder="e.g. -110" />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Result</Label>
+            <Select value={form.result || "__none"} onValueChange={v => set("result")(v === "__none" ? "" : v)}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none">— None —</SelectItem>
+                {RESULTS.filter(Boolean).map(r => <SelectItem key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Game Segment</Label>
+            <Input className="h-9" value={form.gameSegment} onChange={e => set("gameSegment")(e.target.value)} placeholder="e.g. 1H, 2H" />
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Notes</Label>
+            <Textarea className="min-h-[64px] text-sm" value={form.notes} onChange={e => set("notes")(e.target.value)} placeholder="Optional notes…" />
           </div>
         </div>
-        <SheetFooter className="gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => onSave(form)} disabled={isSaving}>
-            {isSaving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving…</> : "Save Leg"}
+
+        <SheetFooter>
+          <Button className="w-full" onClick={() => onSave(form)} disabled={isSaving}>
+            {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Save
           </Button>
         </SheetFooter>
       </SheetContent>
@@ -203,12 +200,15 @@ function LegSheet({ open, onOpenChange, title, initial, onSave, isSaving }: LegS
   );
 }
 
-interface ParlayCardProps {
+type ParlayCardProps = {
   parlay: ParlayWithLegs;
   leagueId: number;
-}
+  selectMode: boolean;
+  isSelected: boolean;
+  onToggleSelect: (id: number) => void;
+};
 
-function ParlayCard({ parlay, leagueId }: ParlayCardProps) {
+function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
   const deleteLeg = useDeleteParlayLeg(leagueId);
   const updateLeg = useUpdateParlayLeg(leagueId);
@@ -224,9 +224,27 @@ function ParlayCard({ parlay, leagueId }: ParlayCardProps) {
 
   return (
     <>
-      <Card className="border border-white/10 bg-card/50">
+      <Card
+        className={cn(
+          "border transition-colors",
+          selectMode && isSelected
+            ? "border-primary/60 bg-primary/5"
+            : "border-white/10 bg-card/50",
+          selectMode && "cursor-pointer"
+        )}
+        onClick={selectMode ? () => onToggleSelect(parlay.id) : undefined}
+      >
         <CardHeader className="pb-3">
           <div className="flex flex-wrap items-center gap-3">
+            {/* Checkbox in select mode */}
+            {selectMode && (
+              <div className="text-primary" onClick={e => { e.stopPropagation(); onToggleSelect(parlay.id); }}>
+                {isSelected
+                  ? <CheckSquare className="w-5 h-5" />
+                  : <Square className="w-5 h-5 text-muted-foreground" />}
+              </div>
+            )}
+
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <User className="w-4 h-4 text-muted-foreground shrink-0" />
               <span className="font-semibold truncate">{memberName}</span>
@@ -234,32 +252,36 @@ function ParlayCard({ parlay, leagueId }: ParlayCardProps) {
                 <Calendar className="w-3.5 h-3.5" />
                 {parlay.week?.label ?? `Week ${parlay.weekId}`}
               </span>
+              <span className="text-xs text-muted-foreground/60">#{parlay.id}</span>
             </div>
-            <div className="flex items-center gap-2">
-              <Select
-                value={parlay.status ?? "pending"}
-                onValueChange={v => updateStatus.mutate({ parlayId: parlay.id, status: v })}
-              >
-                <SelectTrigger className={cn("h-7 text-xs border px-2 py-0 w-28", statusColor(parlay.status))}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUSES.map(s => <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>)}
-                </SelectContent>
-              </Select>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-                onClick={() => setDeleteConfirm(true)}
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
-            </div>
+
+            {!selectMode && (
+              <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                <Select
+                  value={parlay.status ?? "pending"}
+                  onValueChange={v => updateStatus.mutate({ parlayId: parlay.id, status: v })}
+                >
+                  <SelectTrigger className={cn("h-7 text-xs border px-2 py-0 w-28", statusColor(parlay.status))}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STATUSES.map(s => <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                  onClick={() => setDeleteConfirm(true)}
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            )}
           </div>
         </CardHeader>
 
-        <CardContent className="pt-0">
+        <CardContent className="pt-0" onClick={e => selectMode && e.stopPropagation()}>
           {parlay.legs.length === 0 ? (
             <p className="text-sm text-muted-foreground italic py-2">No legs yet.</p>
           ) : (
@@ -273,7 +295,7 @@ function ParlayCard({ parlay, leagueId }: ParlayCardProps) {
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
-                    <th className="px-2 py-2" />
+                    {!selectMode && <th className="px-2 py-2" />}
                   </tr>
                 </thead>
                 <tbody>
@@ -291,26 +313,28 @@ function ParlayCard({ parlay, leagueId }: ParlayCardProps) {
                       <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
                         {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
                       </td>
-                      <td className="px-2 py-2">
-                        <div className="flex gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                            onClick={() => setEditLeg(leg)}
-                          >
-                            <Pencil className="w-3 h-3" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => setDeleteLegId(leg.id)}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      </td>
+                      {!selectMode && (
+                        <td className="px-2 py-2">
+                          <div className="flex gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                              onClick={() => setEditLeg(leg)}
+                            >
+                              <Pencil className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => setDeleteLegId(leg.id)}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -318,15 +342,17 @@ function ParlayCard({ parlay, leagueId }: ParlayCardProps) {
             </div>
           )}
 
-          <Button
-            variant="outline"
-            size="sm"
-            className="mt-3 text-xs h-8"
-            onClick={() => setAddOpen(true)}
-          >
-            <Plus className="w-3.5 h-3.5 mr-1" />
-            Add Leg
-          </Button>
+          {!selectMode && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3 text-xs h-8"
+              onClick={() => setAddOpen(true)}
+            >
+              <Plus className="w-3.5 h-3.5 mr-1" />
+              Add Leg
+            </Button>
+          )}
         </CardContent>
       </Card>
 
@@ -407,6 +433,107 @@ function ParlayCard({ parlay, leagueId }: ParlayCardProps) {
   );
 }
 
+// ── Merge Dialog ──────────────────────────────────────────────────────────────
+
+type MergeDialogProps = {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  selected: ParlayWithLegs[];
+  leagueId: number;
+  onDone: () => void;
+};
+
+function MergeDialog({ open, onOpenChange, selected, leagueId, onDone }: MergeDialogProps) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [targetId, setTargetId] = useState<string>("");
+
+  const merge = useMutation({
+    mutationFn: async ({ targetParlayId, sourceParlayIds }: { targetParlayId: number; sourceParlayIds: number[] }) => {
+      await apiRequest("POST", `/api/leagues/${leagueId}/parlays/merge`, { targetParlayId, sourceParlayIds });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0]).includes("parlays") });
+      toast({ title: "Parlays merged", description: `${selected.length - 1} parlay(s) folded into the target.` });
+      onDone();
+    },
+    onError: (err: any) => {
+      toast({ title: "Merge failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const handleConfirm = () => {
+    if (!targetId) return;
+    const targetParlayId = Number(targetId);
+    const sourceParlayIds = selected.map(p => p.id).filter(id => id !== targetParlayId);
+    merge.mutate({ targetParlayId, sourceParlayIds });
+  };
+
+  const totalLegs = selected.reduce((sum, p) => sum + p.legs.length, 0);
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!merge.isPending) onOpenChange(v); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <GitMerge className="w-5 h-5 text-primary" />
+            Merge {selected.length} Parlays
+          </DialogTitle>
+          <DialogDescription>
+            All legs from the other parlays will be moved into the one you keep. The rest will be deleted. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3 py-2">
+          <p className="text-sm font-medium text-muted-foreground">Which parlay should be kept as the base?</p>
+          <RadioGroup value={targetId} onValueChange={setTargetId} className="space-y-2">
+            {selected.map(p => {
+              const name = p.user?.firstName || p.user?.email || `User #${p.userId.slice(0, 6)}`;
+              const week = p.week?.label ?? `Week ${p.weekId}`;
+              return (
+                <label
+                  key={p.id}
+                  className={cn(
+                    "flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors",
+                    targetId === String(p.id)
+                      ? "border-primary/60 bg-primary/5"
+                      : "border-white/10 bg-card/30 hover:border-white/20"
+                  )}
+                >
+                  <RadioGroupItem value={String(p.id)} className="mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm">{name} — {week}</p>
+                    <p className="text-xs text-muted-foreground">{p.legs.length} leg{p.legs.length !== 1 ? "s" : ""} · Parlay #{p.id}</p>
+                  </div>
+                </label>
+              );
+            })}
+          </RadioGroup>
+
+          {targetId && (
+            <p className="text-xs text-muted-foreground border border-white/10 rounded-lg p-3 bg-muted/20">
+              The selected parlay will receive all {totalLegs} leg{totalLegs !== 1 ? "s" : ""} combined.{" "}
+              {selected.length - 1} parlay{selected.length - 1 !== 1 ? "s" : ""} will be deleted.
+            </p>
+          )}
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={merge.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleConfirm} disabled={!targetId || merge.isPending}>
+            {merge.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <GitMerge className="w-4 h-4 mr-2" />}
+            Merge Parlays
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Main Page ─────────────────────────────────────────────────────────────────
+
 export default function DemoDataEditor() {
   const [, params] = useRoute("/leagues/:id/demo-data");
   const leagueId = Number(params?.id);
@@ -420,6 +547,22 @@ export default function DemoDataEditor() {
 
   const [weekFilter, setWeekFilter] = useState<string>("all");
   const [memberFilter, setMemberFilter] = useState<string>("all");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [mergeOpen, setMergeOpen] = useState(false);
+
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const exitSelectMode = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
 
   if (!league) {
     return (
@@ -446,8 +589,10 @@ export default function DemoDataEditor() {
     return true;
   });
 
+  const selectedParlays = filtered.filter(p => selectedIds.has(p.id));
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-12">
+    <div className="max-w-5xl mx-auto space-y-6 pb-32">
       {/* Header */}
       <div className="flex items-center gap-4">
         <Link href={`/leagues/${leagueId}`}>
@@ -466,7 +611,7 @@ export default function DemoDataEditor() {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters + Select toggle */}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="flex items-center gap-2">
           <Label className="text-sm shrink-0 text-muted-foreground">Week:</Label>
@@ -496,9 +641,22 @@ export default function DemoDataEditor() {
             </SelectContent>
           </Select>
         </div>
-        <span className="text-xs text-muted-foreground ml-auto">
-          {filtered.length} parlay{filtered.length !== 1 ? "s" : ""} shown
-        </span>
+
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {filtered.length} parlay{filtered.length !== 1 ? "s" : ""} shown
+          </span>
+          {selectMode ? (
+            <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitSelectMode}>
+              Cancel
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setSelectMode(true)}>
+              <GitMerge className="w-4 h-4" />
+              Select &amp; Merge
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Content */}
@@ -513,10 +671,47 @@ export default function DemoDataEditor() {
       ) : (
         <div className="space-y-4">
           {filtered.map(parlay => (
-            <ParlayCard key={parlay.id} parlay={parlay} leagueId={leagueId} />
+            <ParlayCard
+              key={parlay.id}
+              parlay={parlay}
+              leagueId={leagueId}
+              selectMode={selectMode}
+              isSelected={selectedIds.has(parlay.id)}
+              onToggleSelect={toggleSelect}
+            />
           ))}
         </div>
       )}
+
+      {/* Sticky merge action bar */}
+      {selectMode && selectedIds.size >= 2 && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 flex justify-center pb-6 pointer-events-none">
+          <div className="pointer-events-auto bg-card border border-primary/30 shadow-2xl rounded-xl px-6 py-4 flex items-center gap-4 max-w-sm w-full mx-4">
+            <div className="flex-1">
+              <p className="font-semibold text-sm">{selectedIds.size} parlays selected</p>
+              <p className="text-xs text-muted-foreground">
+                {selectedParlays.reduce((s, p) => s + p.legs.length, 0)} total legs
+              </p>
+            </div>
+            <Button className="gap-2 shrink-0" onClick={() => setMergeOpen(true)}>
+              <GitMerge className="w-4 h-4" />
+              Merge
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Merge dialog */}
+      <MergeDialog
+        open={mergeOpen}
+        onOpenChange={setMergeOpen}
+        selected={selectedParlays}
+        leagueId={leagueId}
+        onDone={() => {
+          setMergeOpen(false);
+          exitSelectMode();
+        }}
+      />
     </div>
   );
 }

@@ -1132,6 +1132,25 @@ export async function registerRoutes(
     return userId;
   }
 
+  app.post("/api/leagues/:leagueId/parlays/merge", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const { targetParlayId, sourceParlayIds } = req.body;
+      if (!targetParlayId || !Array.isArray(sourceParlayIds) || sourceParlayIds.length === 0) {
+        return res.status(400).json({ message: "targetParlayId and sourceParlayIds[] are required" });
+      }
+      if (sourceParlayIds.includes(targetParlayId)) {
+        return res.status(400).json({ message: "Target parlay cannot also be a source" });
+      }
+      await storage.mergeParlays(leagueId, targetParlayId, sourceParlayIds);
+      res.json({ message: `Merged ${sourceParlayIds.length} parlay(s) into parlay #${targetParlayId}` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/leagues/:id/parlays/all", isAuthenticated, async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
