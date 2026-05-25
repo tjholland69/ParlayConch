@@ -1,7 +1,19 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+function handleSessionExpiry() {
+  // Clear all cached queries so stale data doesn't linger after re-login
+  queryClient.clear();
+  // Redirect to root — the landing page handles unauthenticated state
+  window.location.href = "/";
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
+    if (res.status === 401) {
+      handleSessionExpiry();
+      // Throw so callers don't continue processing
+      throw new Error("Session expired. Redirecting to login...");
+    }
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
@@ -33,8 +45,12 @@ export const getQueryFn: <T>(options: {
       credentials: "include",
     });
 
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
+    if (res.status === 401) {
+      if (unauthorizedBehavior === "returnNull") {
+        return null;
+      }
+      handleSessionExpiry();
+      throw new Error("Session expired. Redirecting to login...");
     }
 
     await throwIfResNotOk(res);
