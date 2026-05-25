@@ -181,7 +181,7 @@ export default function LeagueDetail() {
           
           <div className="flex items-center gap-2 flex-wrap">
             {league.isAdmin && (
-              <>
+              <div className="grid grid-cols-2 gap-2">
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -198,26 +198,28 @@ export default function LeagueDetail() {
                   Import History
                 </Button>
                 <Link href={`/leagues/${leagueId}/screenshot-import`}>
-                  <Button variant="outline" className="border-primary/40 text-primary hover:bg-primary/10" data-testid="button-screenshot-import">
+                  <Button variant="outline" className="w-full border-primary/40 text-primary hover:bg-primary/10" data-testid="button-screenshot-import">
                     <Download className="w-4 h-4 mr-2" />
                     Screenshot Import
                   </Button>
                 </Link>
-                {league.isDemo && (
+                {league.isDemo ? (
                   <Link href={`/leagues/${leagueId}/demo-data`}>
-                    <Button variant="outline" className="border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10" data-testid="button-demo-data-editor">
+                    <Button variant="outline" className="w-full border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10" data-testid="button-demo-data-editor">
                       <Edit className="w-4 h-4 mr-2" />
                       Data Editor
                     </Button>
                   </Link>
+                ) : (
+                  <div />
                 )}
                 <Link href={`/leagues/${leagueId}/settings`}>
-                  <Button variant="outline" data-testid="button-league-settings">
+                  <Button variant="outline" className="w-full" data-testid="button-league-settings">
                     <Settings className="w-4 h-4 mr-2" />
                     Settings
                   </Button>
                 </Link>
-              </>
+              </div>
             )}
             <Button
               variant="ghost"
