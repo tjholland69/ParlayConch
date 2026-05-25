@@ -128,7 +128,7 @@ export interface IStorage {
 
 export class DatabaseStorage implements IStorage {
   async getWeeks(): Promise<Week[]> {
-    return await db.select().from(weeks).orderBy(weeks.weekNumber);
+    return await db.select().from(weeks).orderBy(weeks.season, weeks.weekNumber);
   }
 
   async getWeek(id: number): Promise<Week | undefined> {

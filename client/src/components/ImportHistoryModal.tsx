@@ -93,6 +93,7 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId, onNavigate }:
   const [pasteText, setPasteText] = useState("");
   const [activeTab, setActiveTab] = useState<"import" | "history">("import");
   const [rollbackTarget, setRollbackTarget] = useState<number | null>(null);
+  const [importResult, setImportResult] = useState<{ message: string; skipped: number; skippedDetails: string[] } | null>(null);
 
   const { data: members } = useLeagueMembersWithUsers(leagueId);
 
@@ -122,14 +123,14 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId, onNavigate }:
       return res.json();
     },
     onSuccess: (data: any) => {
-      const skipped = data.skipped ? ` (${data.skipped} skipped)` : "";
-      toast({
-        title: "Import Successful",
-        description: `${data.message}${skipped}. Results & odds are being auto-filled in the background.`,
-      });
       queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "parlays"] });
       refetchHistory();
       resetImport();
+      setImportResult({
+        message: data.message,
+        skipped: data.skipped ?? 0,
+        skippedDetails: data.skippedDetails ?? [],
+      });
     },
     onError: (err: Error) => {
       toast({ title: "Import Failed", description: err.message, variant: "destructive" });
@@ -163,6 +164,7 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId, onNavigate }:
     setFileName("");
     setPasteText("");
     setShowPaste(false);
+    setImportResult(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -378,7 +380,50 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId, onNavigate }:
               Download CSV Template
             </Button>
 
-            {/* Toggle: File upload vs paste */}
+            {/* Import result panel — shown after a successful import */}
+            {importResult && (
+              <div className="space-y-3">
+                <div className={`flex items-start gap-3 p-4 rounded-lg border ${importResult.skipped > 0 ? "border-yellow-500/30 bg-yellow-500/5" : "border-green-500/30 bg-green-500/5"}`}>
+                  <div className="mt-0.5">
+                    {importResult.skipped > 0
+                      ? <AlertTriangle className="w-5 h-5 text-yellow-500" />
+                      : <Check className="w-5 h-5 text-green-500" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`font-medium text-sm ${importResult.skipped > 0 ? "text-yellow-400" : "text-green-400"}`}>
+                      {importResult.message}
+                      {importResult.skipped > 0 && ` · ${importResult.skipped} skipped`}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      Results and odds are being auto-filled in the background.
+                    </p>
+                    {importResult.skippedDetails.length > 0 && (
+                      <div className="mt-3 space-y-1">
+                        <p className="text-xs font-medium text-yellow-400/80">Skip reasons:</p>
+                        <div className="rounded-md border border-yellow-500/20 bg-black/20 p-2 max-h-36 overflow-y-auto">
+                          {importResult.skippedDetails.map((reason, i) => (
+                            <p key={i} className="text-xs text-muted-foreground font-mono py-0.5 border-b border-white/5 last:border-0">
+                              {reason}
+                            </p>
+                          ))}
+                          {importResult.skipped > importResult.skippedDetails.length && (
+                            <p className="text-xs text-muted-foreground/60 pt-1">
+                              … and {importResult.skipped - importResult.skippedDetails.length} more (check server logs for full details)
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <Button variant="outline" size="sm" className="w-full" onClick={() => setImportResult(null)}>
+                  Import Another File
+                </Button>
+              </div>
+            )}
+
+            {/* Toggle: File upload vs paste — hidden when showing import result */}
+            {!importResult && (<>
             <div className="flex gap-2">
               <Button
                 variant={!showPaste ? "secondary" : "ghost"}
@@ -546,6 +591,13 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId, onNavigate }:
                   : `Import ${validRows.length} Record${validRows.length !== 1 ? "s" : ""}`}
               </Button>
             </DialogFooter>
+            </>)}
+
+            {importResult && (
+              <DialogFooter>
+                <Button variant="outline" onClick={() => onOpenChange(false)}>Close</Button>
+              </DialogFooter>
+            )}
           </TabsContent>
 
           {/* ── HISTORY TAB ── */}
