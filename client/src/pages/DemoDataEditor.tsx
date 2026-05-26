@@ -13,7 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
@@ -538,6 +538,7 @@ export default function DemoDataEditor() {
   const [, params] = useRoute("/leagues/:id/demo-data");
   const leagueId = Number(params?.id);
 
+  const queryClient = useQueryClient();
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
 
@@ -668,6 +669,15 @@ export default function DemoDataEditor() {
           <span className="text-xs text-muted-foreground">
             {filtered.length} parlay{filtered.length !== 1 ? "s" : ""} shown
           </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 w-9 p-0 text-muted-foreground hover:text-foreground"
+            onClick={() => queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0]).includes("parlays") })}
+            title="Refresh"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </Button>
           {selectMode ? (
             <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitSelectMode}>
               Cancel
