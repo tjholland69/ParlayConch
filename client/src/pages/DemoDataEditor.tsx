@@ -333,7 +333,6 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
       try {
         const log = await enrichLeg.mutateAsync(legs[i].id);
         setEnrichResults(r => ({ ...r, [legs[i].id]: log }));
-        setExpandedLogs(e => ({ ...e, [legs[i].id]: true }));
       } catch {
         errors++;
       }
@@ -560,7 +559,6 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
                                   onClick={() => enrichLeg.mutate(leg.id, {
                                     onSuccess: (log) => {
                                       setEnrichResults(r => ({ ...r, [leg.id]: log }));
-                                      setExpandedLogs(e => ({ ...e, [leg.id]: true }));
                                     },
                                   })}
                                 >
@@ -570,12 +568,19 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
                                 </Button>
                                 {activeLog && (
                                   <button
-                                    title="View data fetch log"
-                                    className="flex items-center"
+                                    title="View fetch log"
+                                    className={cn(
+                                      "text-[11px] font-medium leading-none px-1 py-0.5 rounded transition-colors",
+                                      isExpanded
+                                        ? "text-foreground bg-white/10"
+                                        : "text-muted-foreground hover:text-foreground",
+                                      logStatus(activeLog) === "error" && isExpanded && "text-destructive bg-destructive/10",
+                                      logStatus(activeLog) === "warn" && isExpanded && "text-yellow-400 bg-yellow-400/10",
+                                      logStatus(activeLog) === "ok" && isExpanded && "text-green-400 bg-green-400/10",
+                                    )}
                                     onClick={() => setExpandedLogs(e => ({ ...e, [leg.id]: !e[leg.id] }))}
                                   >
-                                    {logIcon}
-                                    {isExpanded ? <ChevronUp className="w-2.5 h-2.5 ml-0.5 text-muted-foreground" /> : <ChevronDown className="w-2.5 h-2.5 ml-0.5 text-muted-foreground" />}
+                                    Logs
                                   </button>
                                 )}
                                 <Button
