@@ -12,6 +12,7 @@ import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
+import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
@@ -828,6 +829,36 @@ export async function registerRoutes(
       res.json({ message: "nflverse sync complete", ...result });
     } catch (err: any) {
       console.error("[nflverse] sync error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/admin/resolve-props
+  // Resolves all pending player-prop legs using already-synced nflverse player stats.
+  // No body required — scans every prop leg across all leagues.
+  app.post("/api/admin/resolve-props", isAuthenticated, async (req, res) => {
+    try {
+      const result = await resolvePropsFromStats();
+      res.json({ message: "Prop resolution complete", ...result });
+    } catch (err: any) {
+      console.error("[prop-resolve] error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/admin/fetch-prop-lines
+  // Fetches player prop lines/odds from The Odds API for a specific league+week.
+  // Body: { leagueId: number, weekId: number }
+  app.post("/api/admin/fetch-prop-lines", isAuthenticated, async (req, res) => {
+    try {
+      const { leagueId, weekId } = req.body;
+      if (!leagueId || !weekId) {
+        return res.status(400).json({ message: "leagueId and weekId are required" });
+      }
+      const result = await fetchPropLinesFromOddsApi(Number(leagueId), Number(weekId));
+      res.json({ message: "Prop lines fetch complete", ...result });
+    } catch (err: any) {
+      console.error("[prop-lines] error:", err);
       res.status(500).json({ message: err.message });
     }
   });

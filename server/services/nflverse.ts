@@ -107,12 +107,17 @@ async function fetchCsv(url: string): Promise<Record<string, string>[]> {
  * file hasn't been published yet (nflverse publishes these with a lag).
  */
 async function fetchPlayerStatsCsv(season: number): Promise<Record<string, string>[]> {
+  // GitHub releases redirect via 302 → S3. Node's fetch follows redirects by
+  // default, so a 302 is fine — we only fall back on a true 404.
   const perSeasonUrl = PLAYER_STATS_PER_SEASON_URL(season);
+  console.log(`[nflverse] Trying per-season URL: ${perSeasonUrl}`);
   const res = await fetch(perSeasonUrl, {
     headers: { "User-Agent": "parlayconch-app/1.0" },
+    redirect: "follow",
   });
 
   if (res.ok) {
+    console.log(`[nflverse] Per-season file found for ${season} (${res.status})`);
     const text = await res.text();
     const parsed = Papa.parse<Record<string, string>>(text, {
       header: true, skipEmptyLines: true,
@@ -121,35 +126,33 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
     return parsed.data;
   }
 
-  if (res.status === 404) {
-    // Per-season file not yet published — fall back to all-seasons combined file.
-    console.warn(
-      `[nflverse] player_stats_season_${season}.csv not found (${res.status}). ` +
-      `Falling back to combined all-seasons file (this will be slower — ~33 MB download).`
-    );
-    const allRows = await fetchCsv(PLAYER_STATS_ALL_SEASONS_URL);
-    const seasonRows = allRows.filter(r => parseInt(r.season) === season);
+  // 404 = file genuinely absent (season not yet published or naming changed).
+  // Try the combined all-seasons file next.
+  console.warn(
+    `[nflverse] player_stats_season_${season}.csv not available (HTTP ${res.status}). ` +
+    `Falling back to combined all-seasons file — this is a ~33 MB download and may be slow.`
+  );
+  const allRows = await fetchCsv(PLAYER_STATS_ALL_SEASONS_URL);
+  const seasonRows = allRows.filter(r => parseInt(r.season) === season);
 
-    if (seasonRows.length === 0) {
-      // Determine which seasons are actually available so we can give a useful error.
-      const available = [...new Set(
-        allRows.map(r => parseInt(r.season)).filter(s => !isNaN(s))
-      )].sort((a, b) => a - b);
-      const maxSeason = available.length > 0 ? available[available.length - 1] : null;
-      throw new Error(
-        `Season ${season} player stats are not available in nflverse. ` +
-        (maxSeason
-          ? `Latest season with data: ${maxSeason}. `
-          : `No season data found in the combined file. `) +
-        `nflverse publishes season stats after the season ends — ` +
-        `if this is the current or upcoming season, data will not be available until after it completes.`
-      );
-    }
-
+  if (seasonRows.length > 0) {
+    console.log(`[nflverse] Found ${seasonRows.length} rows for season ${season} in combined file.`);
     return seasonRows;
   }
 
-  throw new Error(`nflverse fetch failed: ${res.status} ${res.statusText} — ${perSeasonUrl}`);
+  // Neither source has data for this season.
+  const available = [...new Set(
+    allRows.map(r => parseInt(r.season)).filter(s => !isNaN(s))
+  )].sort((a, b) => a - b);
+  const maxSeason = available.length > 0 ? available[available.length - 1] : null;
+  throw new Error(
+    `Season ${season} player stats are not available in nflverse. ` +
+    (maxSeason
+      ? `Latest season with data: ${maxSeason}. `
+      : `No season data found in the combined file. `) +
+    `nflverse publishes season stats after the season ends — ` +
+    `try again after the season completes.`
+  );
 }
 
 // ─── Game score sync ─────────────────────────────────────────────────────────
