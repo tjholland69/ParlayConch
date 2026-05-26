@@ -127,7 +127,7 @@ function HistoryParlayCard({
   onCopySlip: (p: any) => void;
   copiedId: number | null;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   const [showAll, setShowAll] = useState(false);
 
   const { data: allLeagueParlays, isLoading: loadingAll } = useAllLeagueParlays(
