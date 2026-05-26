@@ -1152,6 +1152,22 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/leagues/:leagueId/parlays/historical", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const { userId, weekId, legs } = req.body;
+      if (!userId || !weekId) {
+        return res.status(400).json({ message: "userId and weekId are required" });
+      }
+      const parlay = await storage.createHistoricalParlay(userId, leagueId, Number(weekId), legs ?? []);
+      res.json(parlay);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/leagues/:leagueId/parlays/:parlayId/split", isAuthenticated, async (req, res) => {
     try {
       const leagueId = Number(req.params.leagueId);

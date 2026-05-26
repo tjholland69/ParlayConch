@@ -1,7 +1,7 @@
 import React, { Component, type ReactNode, useState } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLeagues, useAllLeagueParlays, useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useWeeks, useLeagueMembersWithUsers } from "@/hooks/use-bets";
+import { useLeagues, useAllLeagueParlays, useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Scissors } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Scissors, FilePlus, ChevronRight } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
 import { useEnrichParlayLeg, useSplitParlayLegs, type EnrichLog } from "@/hooks/use-bets";
 import { cn } from "@/lib/utils";
@@ -310,6 +310,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
   const [enrichResults, setEnrichResults] = useState<Record<number, EnrichLog>>({});
   const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
   const [fetchAllState, setFetchAllState] = useState<{ running: boolean; done: number; total: number; errors: number } | null>(null);
+  const [collapsed, setCollapsed] = useState(false);
   const [splitMode, setSplitMode] = useState(false);
   const [splitSelected, setSplitSelected] = useState<Set<number>>(new Set());
   const splitLegs = useSplitParlayLegs(leagueId);
@@ -361,6 +362,14 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
               </div>
             )}
 
+            <button
+              className="mr-1 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              onClick={e => { e.stopPropagation(); setCollapsed(c => !c); }}
+              title={collapsed ? "Expand" : "Collapse"}
+            >
+              <ChevronRight className={cn("w-4 h-4 transition-transform duration-150", !collapsed && "rotate-90")} />
+            </button>
+
             <div className="flex items-center gap-2 flex-1 min-w-0">
               <User className="w-4 h-4 text-muted-foreground shrink-0" />
               <span className="font-semibold truncate">{memberName}</span>
@@ -369,6 +378,11 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
                 {parlay.week?.label ?? `Week ${parlay.weekId}`}
               </span>
               <span className="text-xs text-muted-foreground/60">#{parlay.id}</span>
+              {collapsed && (
+                <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal text-muted-foreground border-white/15">
+                  {parlay.legs.length} leg{parlay.legs.length !== 1 ? "s" : ""}
+                </Badge>
+              )}
             </div>
 
             {!selectMode && (
@@ -457,7 +471,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
           </div>
         </CardHeader>
 
-        <CardContent className="pt-0" onClick={e => selectMode && e.stopPropagation()}>
+        {!collapsed && <CardContent className="pt-0" onClick={e => selectMode && e.stopPropagation()}>
           {parlay.legs.length === 0 ? (
             <p className="text-sm text-muted-foreground italic py-2">No legs yet.</p>
           ) : (
@@ -627,7 +641,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
               </Button>
             </div>
           )}
-        </CardContent>
+        </CardContent>}
       </Card>
 
       {/* Edit Leg Sheet */}
@@ -807,6 +821,180 @@ function MergeDialog({ open, onOpenChange, selected, leagueId, onDone }: MergeDi
   );
 }
 
+// ── Add Historical Bet Sheet ───────────────────────────────────────────────────
+
+type AddHistoricalBetSheetProps = {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  leagueId: number;
+  weeks: Array<{ id: number; season: number; weekNumber: number; label: string }>;
+  members: Array<{ userId: string; user?: { firstName?: string | null; email?: string | null } | null }>;
+};
+
+function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }: AddHistoricalBetSheetProps) {
+  const addHistorical = useAddHistoricalParlay(leagueId);
+  const [userId, setUserId] = useState("");
+  const [yearStr, setYearStr] = useState("");
+  const [weekId, setWeekId] = useState("");
+  const [legs, setLegs] = useState<LegFormState[]>([]);
+  const [legSheetKey, setLegSheetKey] = useState(0);
+  const [legSheetOpen, setLegSheetOpen] = useState(false);
+
+  const seasons = [...new Set(weeks.map(w => w.season))].sort((a, b) => b - a);
+  const visibleWeeks = yearStr ? weeks.filter(w => w.season === Number(yearStr)) : weeks;
+
+  const reset = () => {
+    setUserId(""); setYearStr(""); setWeekId(""); setLegs([]); setLegSheetOpen(false);
+  };
+
+  const openAddLeg = () => {
+    setLegSheetKey(k => k + 1);
+    setLegSheetOpen(true);
+  };
+
+  const handleSave = () => {
+    addHistorical.mutate(
+      { userId, weekId: Number(weekId), legs: legs.map(l => ({ ...l, result: l.result || null, line: l.line || null, odds: l.odds || null, playerName: l.playerName || null, propType: l.propType || null, gameSegment: l.gameSegment || null, notes: l.notes || null })) },
+      { onSuccess: () => { reset(); onOpenChange(false); } }
+    );
+  };
+
+  return (
+    <>
+      <Sheet open={open} onOpenChange={v => { if (!v) reset(); onOpenChange(v); }}>
+        <SheetContent className="w-full sm:max-w-md flex flex-col overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <FilePlus className="w-4 h-4 text-primary" />
+              Add Historical Bet
+            </SheetTitle>
+          </SheetHeader>
+
+          <div className="flex-1 space-y-5 py-4">
+            {/* Member */}
+            <div className="space-y-1.5">
+              <Label className="text-xs text-muted-foreground">Member</Label>
+              <Select value={userId} onValueChange={setUserId}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Select member" /></SelectTrigger>
+                <SelectContent>
+                  {members.map(m => (
+                    <SelectItem key={m.userId} value={m.userId}>
+                      {m.user?.firstName || m.user?.email || m.userId.slice(0, 8)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Year + Week */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Year</Label>
+                <Select value={yearStr} onValueChange={v => { setYearStr(v); setWeekId(""); }}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Year" /></SelectTrigger>
+                  <SelectContent>
+                    {seasons.map(s => <SelectItem key={s} value={String(s)}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs text-muted-foreground">Week</Label>
+                <Select value={weekId} onValueChange={setWeekId} disabled={!yearStr}>
+                  <SelectTrigger className="h-9"><SelectValue placeholder="Week" /></SelectTrigger>
+                  <SelectContent>
+                    {visibleWeeks.map(w => <SelectItem key={w.id} value={String(w.id)}>Week {w.weekNumber}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Legs list */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">Legs</Label>
+                {legs.length > 0 && (
+                  <span className="text-xs text-muted-foreground">{legs.length} added</span>
+                )}
+              </div>
+
+              {legs.length > 0 && (
+                <div className="rounded-lg border border-white/10 divide-y divide-white/5">
+                  {legs.map((leg, i) => (
+                    <div key={i} className="flex items-center gap-2 px-3 py-2">
+                      <Badge variant="outline" className="text-xs px-1.5 py-0 shrink-0 font-mono">
+                        {leg.betType === "player_prop" ? "PROP" : leg.betType.toUpperCase()}
+                      </Badge>
+                      <span className="text-sm flex-1 truncate text-muted-foreground">
+                        {leg.betType === "player_prop"
+                          ? `${leg.playerName || "Player Prop"}${leg.propType ? ` — ${PLAYER_PROP_TYPES.find(p => p.value === leg.propType)?.label ?? leg.propType}` : ""}`
+                          : `${leg.pick}${leg.line ? ` ${leg.line}` : ""}`}
+                      </span>
+                      {leg.result && (
+                        <Badge className={cn("text-xs px-1.5 py-0 shrink-0",
+                          leg.result === "win" ? "bg-green-500/20 text-green-400 border-green-500/30" :
+                          leg.result === "loss" ? "bg-red-500/20 text-red-400 border-red-500/30" :
+                          "bg-blue-500/20 text-blue-400 border-blue-500/30"
+                        )}>
+                          {leg.result}
+                        </Badge>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                        onClick={() => setLegs(prev => prev.filter((_, j) => j !== i))}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-8 text-xs gap-1.5 border-dashed"
+                onClick={openAddLeg}
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Add Leg
+              </Button>
+            </div>
+          </div>
+
+          <SheetFooter className="pt-2">
+            <Button
+              className="w-full gap-2"
+              disabled={!userId || !weekId || legs.length === 0 || addHistorical.isPending}
+              onClick={handleSave}
+            >
+              {addHistorical.isPending
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <FilePlus className="w-4 h-4" />}
+              Save Parlay ({legs.length} leg{legs.length !== 1 ? "s" : ""})
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
+
+      {/* Nested sheet for adding individual legs */}
+      <LegSheet
+        key={legSheetKey}
+        open={legSheetOpen}
+        onOpenChange={setLegSheetOpen}
+        title="Add Leg"
+        initial={blankLeg()}
+        isSaving={false}
+        onSave={form => {
+          setLegs(prev => [...prev, form]);
+          setLegSheetOpen(false);
+        }}
+      />
+    </>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function DemoDataEditor() {
@@ -827,6 +1015,7 @@ export default function DemoDataEditor() {
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [addHistoricalOpen, setAddHistoricalOpen] = useState(false);
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -981,10 +1170,21 @@ export default function DemoDataEditor() {
               </Button>
             </>
           ) : (
-            <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setSelectMode(true)}>
-              <GitMerge className="w-4 h-4" />
-              Select &amp; Merge
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 text-sm gap-1.5"
+                onClick={() => setAddHistoricalOpen(true)}
+              >
+                <FilePlus className="w-4 h-4" />
+                Add Bet
+              </Button>
+              <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setSelectMode(true)}>
+                <GitMerge className="w-4 h-4" />
+                Select &amp; Merge
+              </Button>
+            </>
           )}
         </div>
       </div>
@@ -1042,6 +1242,15 @@ export default function DemoDataEditor() {
           setMergeOpen(false);
           exitSelectMode();
         }}
+      />
+
+      {/* Add Historical Bet */}
+      <AddHistoricalBetSheet
+        open={addHistoricalOpen}
+        onOpenChange={setAddHistoricalOpen}
+        leagueId={leagueId}
+        weeks={weeks ?? []}
+        members={members ?? []}
       />
     </div>
   );

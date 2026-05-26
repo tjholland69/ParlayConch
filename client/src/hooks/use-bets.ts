@@ -763,6 +763,28 @@ export function useUpdateParlayStatus(leagueId: number) {
   });
 }
 
+export function useAddHistoricalParlay(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ userId, weekId, legs }: { userId: string; weekId: number; legs: Record<string, any>[] }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlays/historical`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, weekId, legs }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Parlay Added" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
 export function useSplitParlayLegs(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();

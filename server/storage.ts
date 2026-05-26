@@ -80,6 +80,7 @@ export interface IStorage {
   addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'>): Promise<ParlayLeg>;
   mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
   splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay>;
+  createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay>;
 
   // Imports
   createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
@@ -737,6 +738,31 @@ export class DatabaseStorage implements IStorage {
       return created;
     });
     emitLeague(leagueId, source.weekId, "parlays_updated");
+    return newParlay;
+  }
+
+  async createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay> {
+    const newParlay = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(parlays).values({
+        userId, leagueId, weekId, status: "approved", source: "imported",
+      }).returning();
+      if (legs.length > 0) {
+        await tx.insert(parlayLegs).values(legs.map(leg => ({
+          parlayId: created.id,
+          betType: leg.betType,
+          pick: leg.pick,
+          line: leg.line ?? null,
+          odds: leg.odds ?? null,
+          result: leg.result ?? null,
+          playerName: leg.playerName ?? null,
+          propType: leg.propType ?? null,
+          gameSegment: leg.gameSegment ?? null,
+          notes: leg.notes ?? null,
+        })));
+      }
+      return created;
+    });
+    emitLeague(leagueId, weekId, "parlays_updated");
     return newParlay;
   }
 
