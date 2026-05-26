@@ -23,12 +23,13 @@ function schedulesUrl() {
   return "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv";
 }
 
-// Per-season files (e.g. player_stats_2024.csv) are published with a lag —
-// nflverse often doesn't publish the per-season file for the most recent year
-// until months after the season ends. When it 404s we fall back to the
-// all-seasons combined file (player_stats.csv, ~33 MB) and filter in memory.
+// nflverse per-season player stats files use the naming convention:
+//   player_stats_season_YYYY.csv   (e.g. player_stats_season_2024.csv)
+// NOT player_stats_YYYY.csv — confirmed against the GitHub release assets.
+// The combined all-seasons file (player_stats.csv) is also available but
+// may lag behind; we try per-season first and fall back to combined.
 const PLAYER_STATS_PER_SEASON_URL = (season: number) =>
-  `${BASE}/player_stats/player_stats_${season}.csv`;
+  `${BASE}/player_stats/player_stats_season_${season}.csv`;
 const PLAYER_STATS_ALL_SEASONS_URL =
   `${BASE}/player_stats/player_stats.csv`;
 
@@ -123,12 +124,29 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
   if (res.status === 404) {
     // Per-season file not yet published — fall back to all-seasons combined file.
     console.warn(
-      `[nflverse] player_stats_${season}.csv not found (${res.status}). ` +
+      `[nflverse] player_stats_season_${season}.csv not found (${res.status}). ` +
       `Falling back to combined all-seasons file (this will be slower — ~33 MB download).`
     );
     const allRows = await fetchCsv(PLAYER_STATS_ALL_SEASONS_URL);
-    // Filter to the requested season so downstream logic is unchanged.
-    return allRows.filter(r => parseInt(r.season) === season);
+    const seasonRows = allRows.filter(r => parseInt(r.season) === season);
+
+    if (seasonRows.length === 0) {
+      // Determine which seasons are actually available so we can give a useful error.
+      const available = [...new Set(
+        allRows.map(r => parseInt(r.season)).filter(s => !isNaN(s))
+      )].sort((a, b) => a - b);
+      const maxSeason = available.length > 0 ? available[available.length - 1] : null;
+      throw new Error(
+        `Season ${season} player stats are not available in nflverse. ` +
+        (maxSeason
+          ? `Latest season with data: ${maxSeason}. `
+          : `No season data found in the combined file. `) +
+        `nflverse publishes season stats after the season ends — ` +
+        `if this is the current or upcoming season, data will not be available until after it completes.`
+      );
+    }
+
+    return seasonRows;
   }
 
   throw new Error(`nflverse fetch failed: ${res.status} ${res.statusText} — ${perSeasonUrl}`);

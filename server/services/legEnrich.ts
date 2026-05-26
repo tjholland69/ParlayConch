@@ -160,7 +160,7 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
           log.changes.push(`nflverse sync: ${syncResult.players} player(s), ${syncResult.stats} stat row(s) fetched`);
         } catch (err: any) {
           log.errors.push(`nflverse player stats fetch failed: ${err.message}`);
-          log.warnings.push("Tip: nflverse data is typically available ~24 hours after the game");
+          log.warnings.push("For prop bets on unavailable seasons, enter the result manually using the Edit (✏️) button");
           return saveLog(legId, log);
         }
         playerStat = await storage.getPlayerStatByName(leg.playerName, season, weekNumber);
