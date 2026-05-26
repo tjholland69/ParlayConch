@@ -83,7 +83,7 @@ export const games = pgTable("games", {
   underOdds: text("under_odds"),
   moneylineHome: text("moneyline_home"),
   moneylineAway: text("moneyline_away"),
-  gameTime: timestamp("game_time").notNull(),
+  gameTime: timestamp("game_time"),
   homeScore: integer("home_score"),
   awayScore: integer("away_score"),
   isFinished: boolean("is_finished").default(false),

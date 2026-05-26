@@ -3,7 +3,7 @@ import { useWeeks, useGames, useLeagues } from "@/hooks/use-bets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Calendar, Users, ArrowRight } from "lucide-react";
+import { Loader2, Calendar, Users, ArrowRight, Info } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
 
@@ -114,42 +114,61 @@ export default function Picks() {
             <p className="text-muted-foreground">No games scheduled for this week yet.</p>
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {games?.map((game) => (
-              <Card key={game.id} className="bg-card/50 border-white/5" data-testid={`card-game-preview-${game.id}`}>
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-muted-foreground">
-                      {format(new Date(game.gameTime), "EEE, MMM d h:mm a")}
-                    </span>
-                    {game.isFinished && (
-                      <span className="text-xs font-mono text-muted-foreground">Final</span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <p className="font-bold">{game.awayTeam}</p>
-                      <p className="text-xs text-muted-foreground">{game.awayRecord}</p>
-                    </div>
-                    <div className="px-4 text-center">
-                      {game.isFinished ? (
-                        <p className="font-mono">{game.awayScore} - {game.homeScore}</p>
-                      ) : (
-                        <>
-                          <p className="text-xs text-muted-foreground">@</p>
-                          <p className="font-mono text-sm">{game.spread}</p>
-                        </>
-                      )}
-                    </div>
-                    <div className="flex-1 text-right">
-                      <p className="font-bold">{game.homeTeam}</p>
-                      <p className="text-xs text-muted-foreground">{game.homeRecord}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          <>
+            {games?.some(g => !g.spread) && (
+              <div className="flex items-start gap-2 text-xs text-muted-foreground bg-white/5 border border-white/10 rounded-xl px-4 py-3 mb-4">
+                <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/70" />
+                <span>Lines and game times will be posted closer to kickoff. Check back soon!</span>
+              </div>
+            )}
+            <div className="grid gap-3 md:grid-cols-2">
+              {games?.map((game) => {
+                const hasOdds = !!(game.spread || game.overUnder || game.moneylineHome);
+                const hasTime = !!game.gameTime;
+                return (
+                  <Card key={game.id} className="bg-card/50 border-white/5" data-testid={`card-game-preview-${game.id}`}>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-muted-foreground">
+                          {hasTime
+                            ? format(new Date(game.gameTime!), "EEE, MMM d h:mm a")
+                            : <span className="italic">Time TBD</span>}
+                        </span>
+                        {game.isFinished && (
+                          <span className="text-xs font-mono text-muted-foreground">Final</span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <p className="font-bold">{game.awayTeam}</p>
+                          <p className="text-xs text-muted-foreground">{game.awayRecord ?? ""}</p>
+                        </div>
+                        <div className="px-3 text-center min-w-[90px]">
+                          {game.isFinished ? (
+                            <p className="font-mono">{game.awayScore} - {game.homeScore}</p>
+                          ) : hasOdds ? (
+                            <>
+                              <p className="text-xs text-muted-foreground">@</p>
+                              <p className="font-mono text-sm">{game.spread}</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-[9px] text-primary/60 font-semibold uppercase tracking-wide leading-tight">More Info</p>
+                              <p className="text-[9px] text-primary/60 font-semibold uppercase tracking-wide leading-tight">Coming Soon</p>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex-1 text-right">
+                          <p className="font-bold">{game.homeTeam}</p>
+                          <p className="text-xs text-muted-foreground">{game.homeRecord ?? ""}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
     </div>

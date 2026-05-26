@@ -11,7 +11,7 @@ interface GameCardProps {
 }
 
 export function GameCard({ game, onPick, isPending }: GameCardProps) {
-  const isStarted = new Date(game.gameTime) < new Date();
+  const isStarted = game.gameTime ? new Date(game.gameTime) < new Date() : false;
   const isFinished = game.isFinished;
   
   const PickButton = ({ team, side }: { team: string, side: 'home' | 'away' }) => {
@@ -84,7 +84,7 @@ export function GameCard({ game, onPick, isPending }: GameCardProps) {
       <div className="flex justify-between items-center mb-6">
         <div className="flex items-center gap-2 text-muted-foreground text-sm font-mono">
           <Clock className="w-4 h-4" />
-          {format(new Date(game.gameTime), "EEE, MMM d • h:mm a")}
+          {game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d • h:mm a") : "Time TBD"}
         </div>
         {isFinished && (
           <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-bold uppercase tracking-widest text-muted-foreground">

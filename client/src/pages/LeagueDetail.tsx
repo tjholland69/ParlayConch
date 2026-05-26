@@ -368,7 +368,7 @@ export default function LeagueDetail() {
               <div className="grid gap-4 md:grid-cols-2">
                 {games?.map((game) => {
                   const pick = getPickForGame(game.id);
-                  const isPast = new Date(game.gameTime) < new Date();
+                  const isPast = game.gameTime ? new Date(game.gameTime) < new Date() : false;
                   
                   const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
                   const homeSpread = game.spread || null;
@@ -384,7 +384,7 @@ export default function LeagueDetail() {
                     >
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between mb-3 text-xs text-muted-foreground">
-                          <span>{format(new Date(game.gameTime), "EEE, MMM d h:mm a")}</span>
+                          <span>{game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}</span>
                           {game.venue && <span className="truncate max-w-[120px]">{game.venue}</span>}
                         </div>
                         
