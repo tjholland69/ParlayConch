@@ -673,7 +673,7 @@ export default function DemoDataEditor() {
             variant="ghost"
             size="sm"
             className="h-9 w-9 p-0 text-muted-foreground hover:text-foreground"
-            onClick={() => queryClient.invalidateQueries({ predicate: q => String(q.queryKey[0]).includes("parlays") })}
+            onClick={() => queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] })}
             title="Refresh"
           >
             <RefreshCw className="w-4 h-4" />
