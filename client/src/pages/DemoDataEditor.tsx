@@ -14,6 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Scissors, FilePlus, ChevronRight, ArrowUpDown } from "lucide-react";
+import { formatPickLabel } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
 import { useEnrichParlayLeg, useSplitParlayLegs, type EnrichLog } from "@/hooks/use-bets";
 import { cn } from "@/lib/utils";
@@ -71,12 +72,6 @@ function legLabel(leg: ParlayLeg & { game?: any }) {
   return "Unknown Matchup";
 }
 
-function pickLabel(leg: ParlayLeg) {
-  if (leg.betType === "spread" || leg.betType === "moneyline") {
-    return leg.pick === "home" ? "Home" : "Away";
-  }
-  return leg.pick ? leg.pick.charAt(0).toUpperCase() + leg.pick.slice(1) : "—";
-}
 
 function statusColor(status: string | null) {
   switch (status) {
@@ -564,7 +559,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
                               {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
                             </Badge>
                           </td>
-                          <td className="px-3 py-2 text-muted-foreground">{pickLabel(leg)}{leg.line ? ` ${leg.line}` : ""}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{formatPickLabel(leg)}</td>
                           <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.line || "—"}</td>
                           <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.odds || "—"}</td>
                           <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>

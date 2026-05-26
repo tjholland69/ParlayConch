@@ -7,6 +7,7 @@ import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check 
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { formatPickLabel } from "@/lib/formatPick";
 import { format } from "date-fns";
 
 export default function History() {
@@ -269,15 +270,7 @@ export default function History() {
                         </div>
                         <div className="flex items-center gap-2">
                           <Badge variant="outline" className="text-xs">
-                            {leg.betType === 'player_prop'
-                              ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                              : leg.betType === 'over'
-                              ? `Over ${leg.line || leg.game?.overUnder}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                              : leg.betType === 'under'
-                              ? `Under ${leg.line || leg.game?.overUnder}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                              : leg.betType === 'moneyline'
-                              ? `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}${(leg as any).odds ? ` ${(leg as any).odds}` : ''}`
-                              : `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}${leg.line ? ` ${leg.line}` : ''}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`}
+                            {`${formatPickLabel(leg)}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`}
                           </Badge>
                           {leg.result && (
                             <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
