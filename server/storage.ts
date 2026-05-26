@@ -11,7 +11,7 @@ import {
   type LeagueWeekLock, type WeekLockStatus,
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
 } from "@shared/schema";
-import { eq, and, desc, inArray, sql, ilike } from "drizzle-orm";
+import { eq, and, desc, inArray, sql, ilike, not } from "drizzle-orm";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 
 function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
@@ -81,6 +81,10 @@ export interface IStorage {
   mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
   splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay>;
   createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay>;
+
+  // Parlay status rollup
+  rollupParlayStatus(parlayId: number): Promise<void>;
+  rollupLeagueParlayStatuses(leagueId?: number): Promise<{ updated: number; skipped: number }>;
 
   // Imports
   createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
@@ -799,6 +803,83 @@ export class DatabaseStorage implements IStorage {
       emitLeague(newParlay.leagueId, newParlay.weekId, "parlays_updated");
       return newParlay;
     });
+  }
+
+  /**
+   * Compute a parlay's outcome from its legs and update its status to
+   * 'win' / 'loss' / 'push' if all legs are resolved.
+   *
+   * Rules:
+   *  - Skip if status is already a terminal result or is 'rejected'/'void'
+   *  - Skip if any leg still has no result
+   *  - Any leg = 'loss'  → parlay = 'loss'
+   *  - All legs = 'push' → parlay = 'push'
+   *  - Otherwise (all wins, or wins + pushes) → parlay = 'win'
+   */
+  async rollupParlayStatus(parlayId: number): Promise<void> {
+    const [parlay] = await db.select().from(parlays).where(eq(parlays.id, parlayId));
+    if (!parlay) return;
+
+    const terminalStatuses = ['win', 'loss', 'push', 'rejected', 'void'];
+    if (terminalStatuses.includes(parlay.status ?? '')) return;
+
+    const legs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
+    if (legs.length === 0) return;
+    if (legs.some(l => !l.result)) return; // not all resolved yet
+
+    let newStatus: string;
+    if (legs.some(l => l.result === 'loss')) {
+      newStatus = 'loss';
+    } else if (legs.every(l => l.result === 'push')) {
+      newStatus = 'push';
+    } else {
+      newStatus = 'win'; // all wins, or wins + pushes
+    }
+
+    await db.update(parlays).set({ status: newStatus }).where(eq(parlays.id, parlayId));
+  }
+
+  /**
+   * Roll up parlay statuses for all parlays in a league (or all leagues if
+   * leagueId is omitted) that are not already in a terminal state.
+   *
+   * Safe to call repeatedly — skips parlays with pending legs or terminal
+   * statuses. Returns counts of updated vs skipped parlays.
+   */
+  async rollupLeagueParlayStatuses(leagueId?: number): Promise<{ updated: number; skipped: number }> {
+    const terminalStatuses = ['win', 'loss', 'push', 'rejected', 'void'];
+
+    // Fetch candidate parlays (not yet in a terminal status)
+    const allParlays = leagueId
+      ? await db.select().from(parlays)
+          .where(and(
+            eq(parlays.leagueId, leagueId),
+            not(inArray(parlays.status as any, terminalStatuses))
+          ))
+      : await db.select().from(parlays)
+          .where(not(inArray(parlays.status as any, terminalStatuses)));
+
+    let updated = 0;
+    let skipped = 0;
+
+    for (const parlay of allParlays) {
+      const legs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlay.id));
+      if (legs.length === 0 || legs.some(l => !l.result)) { skipped++; continue; }
+
+      let newStatus: string;
+      if (legs.some(l => l.result === 'loss')) {
+        newStatus = 'loss';
+      } else if (legs.every(l => l.result === 'push')) {
+        newStatus = 'push';
+      } else {
+        newStatus = 'win';
+      }
+
+      await db.update(parlays).set({ status: newStatus }).where(eq(parlays.id, parlay.id));
+      updated++;
+    }
+
+    return { updated, skipped };
   }
 
   async getLeagueMemberByEmail(leagueId: number, email: string): Promise<LeagueMember | null> {

@@ -185,6 +185,9 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
         if (result && !leg.result) {
           await storage.updateParlayLeg(legId, { result });
           log.changes.push(`✓ Result set to "${result}"`);
+          // Roll up the parlay status now that this leg is resolved
+          await storage.rollupParlayStatus(leg.parlayId);
+          log.changes.push(`↑ Parlay status rolled up`);
         } else if (result && leg.result) {
           log.warnings.push(`Result already set to "${leg.result}" (re-calculated: "${result}") — no change made`);
         } else if (!result) {
@@ -233,6 +236,9 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
           if (result) {
             await storage.updateParlayLeg(legId, { result });
             log.changes.push(`✓ Result set to "${result}"`);
+            // Roll up the parlay status now that this leg is resolved
+            await storage.rollupParlayStatus(leg.parlayId);
+            log.changes.push(`↑ Parlay status rolled up`);
           } else {
             log.warnings.push(`Could not calculate result for betType="${leg.betType}" pick="${leg.pick}" — check game scores are valid`);
           }

@@ -817,6 +817,17 @@ export async function registerRoutes(
 
   // GET /api/games/:gameId/player-stats
   // Returns player stats for all players on both teams in a given game
+  // Backfill: promote all fully-resolved parlays from 'approved'/'pending' to win/loss/push
+  app.post("/api/admin/rollup-parlay-statuses", isAuthenticated, async (req, res) => {
+    try {
+      const { leagueId } = req.body;
+      const result = await storage.rollupLeagueParlayStatuses(leagueId ? Number(leagueId) : undefined);
+      res.json({ message: "Rollup complete", ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/games/:gameId/player-stats", isAuthenticated, async (req, res) => {
     try {
       const gameId = Number(req.params.gameId);
