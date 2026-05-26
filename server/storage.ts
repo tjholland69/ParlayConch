@@ -114,6 +114,9 @@ export interface IStorage {
   // Active week parlay status (for Quick Pick tile badges)
   getActiveWeekParlayStatus(leagueIds: number[]): Promise<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>>;
 
+  // Aggregate win/loss stats per league (for My Leagues tile)
+  getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>>;
+
   // Parlay week locking
   getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus>;
   lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock>;
@@ -370,6 +373,30 @@ export class DatabaseStorage implements IStorage {
         weekLabel: activeWeek.label,
         submittedCount: parlayRows.filter(p => p.leagueId === leagueId).length,
         isLocked: lockedSet.has(leagueId),
+      };
+    }
+    return result;
+  }
+
+  async getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>> {
+    if (leagueIds.length === 0) return {};
+
+    const parlayRows = await db
+      .select({ leagueId: parlays.leagueId, status: parlays.status })
+      .from(parlays)
+      .where(and(inArray(parlays.leagueId, leagueIds), inArray(parlays.status as any, ['win', 'loss'])));
+
+    const result: Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }> = {};
+    for (const leagueId of leagueIds) {
+      const rows = parlayRows.filter(p => p.leagueId === leagueId);
+      const wins = rows.filter(p => p.status === 'win').length;
+      const losses = rows.filter(p => p.status === 'loss').length;
+      const totalDecided = wins + losses;
+      result[leagueId] = {
+        wins,
+        losses,
+        winRate: totalDecided > 0 ? (wins / totalDecided) * 100 : 0,
+        totalDecided,
       };
     }
     return result;

@@ -208,6 +208,14 @@ export async function registerRoutes(
   });
 
   // Must be before /api/leagues/:id to avoid route conflict
+  app.get("/api/leagues/overview-stats", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const userLeagues = await storage.getUserLeagues(userId);
+    const leagueIds = userLeagues.map(l => l.id);
+    const stats = await storage.getLeagueOverviewStats(leagueIds);
+    res.json(stats);
+  });
+
   app.get("/api/leagues/active-week-status", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const userLeagues = await storage.getUserLeagues(userId);

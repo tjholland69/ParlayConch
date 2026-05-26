@@ -50,6 +50,18 @@ export function useLeagues() {
   });
 }
 
+export function useLeaguesOverviewStats() {
+  return useQuery<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>>({
+    queryKey: ['/api/leagues/overview-stats'],
+    queryFn: async () => {
+      const res = await fetch('/api/leagues/overview-stats', { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch overview stats");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+}
+
 export function useLeaguesActiveStatus() {
   return useQuery<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>>({
     queryKey: ['/api/leagues/active-week-status'],
