@@ -17,8 +17,10 @@ import type { Game } from "@shared/schema";
 
 const BASE = "https://github.com/nflverse/nflverse-data/releases/download";
 
+// nflverse-data's /releases/download/schedules/schedules.csv no longer exists.
+// nfldata/games.csv is the maintained mirror with identical columns.
 function schedulesUrl() {
-  return `${BASE}/schedules/schedules.csv`;
+  return "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv";
 }
 
 function playerStatsUrl(season: number) {
