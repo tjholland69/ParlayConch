@@ -657,7 +657,7 @@ export function useUnlockWeekParlay(leagueId: number, weekId: number) {
 
 // ===== DEMO DATA EDITOR HOOKS =====
 
-export function useAllLeagueParlays(leagueId: number) {
+export function useAllLeagueParlays(leagueId: number, enabled = true) {
   return useQuery<ParlayWithLegs[]>({
     queryKey: ['/api/leagues', leagueId, 'parlays', 'all'],
     queryFn: async () => {
@@ -665,7 +665,7 @@ export function useAllLeagueParlays(leagueId: number) {
       if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
       return res.json();
     },
-    enabled: !!leagueId,
+    enabled: !!leagueId && enabled,
   });
 }
 

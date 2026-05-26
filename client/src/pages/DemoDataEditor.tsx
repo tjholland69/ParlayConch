@@ -335,7 +335,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
     }
   };
 
-  const memberName = parlay.user?.firstName || parlay.user?.email || `User #${parlay.userId.slice(0, 6)}`;
+  const memberName = (parlay.user as any)?.settings?.displayName || parlay.user?.firstName || `User #${parlay.userId.slice(0, 6)}`;
 
   return (
     <>
