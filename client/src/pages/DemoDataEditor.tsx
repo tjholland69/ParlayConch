@@ -304,7 +304,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
                       <td className="px-3 py-2 font-medium truncate max-w-[140px]">{legLabel(leg)}</td>
                       <td className="px-3 py-2 hidden sm:table-cell">
                         <Badge variant="outline" className="text-xs px-1.5 py-0">
-                          {leg.betType === "player_prop" ? "PROP" : leg.betType.toUpperCase()}
+                          {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
                         </Badge>
                       </td>
                       <td className="px-3 py-2 text-muted-foreground">{pickLabel(leg)}{leg.line ? ` ${leg.line}` : ""}</td>
@@ -359,6 +359,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
       {/* Edit Leg Sheet */}
       {editLeg && (
         <LegSheet
+          key={editLeg.id}
           open={!!editLeg}
           onOpenChange={v => { if (!v) setEditLeg(null); }}
           title={`Edit Leg — ${legLabel(editLeg)}`}
