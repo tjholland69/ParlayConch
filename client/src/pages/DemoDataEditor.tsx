@@ -239,6 +239,8 @@ type ParlayCardProps = {
   selectMode: boolean;
   isSelected: boolean;
   onToggleSelect: (id: number) => void;
+  collapseSignal: number;
+  expandSignal: number;
 };
 
 function logStatus(log: EnrichLog) {
@@ -295,7 +297,7 @@ function LegLogPanel({ log, onClose }: { log: EnrichLog; onClose: () => void }) 
   );
 }
 
-function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }: ParlayCardProps) {
+function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, collapseSignal, expandSignal }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
   const deleteLeg = useDeleteParlayLeg(leagueId);
   const updateLeg = useUpdateParlayLeg(leagueId);
@@ -311,6 +313,8 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
   const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
   const [fetchAllState, setFetchAllState] = useState<{ running: boolean; done: number; total: number; errors: number } | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  React.useEffect(() => { if (collapseSignal > 0) setCollapsed(true); }, [collapseSignal]);
+  React.useEffect(() => { if (expandSignal > 0) setCollapsed(false); }, [expandSignal]);
   const [splitMode, setSplitMode] = useState(false);
   const [splitSelected, setSplitSelected] = useState<Set<number>>(new Set());
   const splitLegs = useSplitParlayLegs(leagueId);
@@ -1016,6 +1020,8 @@ export default function DemoDataEditor() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [mergeOpen, setMergeOpen] = useState(false);
   const [addHistoricalOpen, setAddHistoricalOpen] = useState(false);
+  const [collapseSignal, setCollapseSignal] = useState(0);
+  const [expandSignal, setExpandSignal] = useState(0);
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -1148,6 +1154,26 @@ export default function DemoDataEditor() {
           >
             <RefreshCw className="w-4 h-4" />
           </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 px-2 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+            title="Collapse all cards"
+            onClick={() => setCollapseSignal(s => s + 1)}
+          >
+            <ChevronUp className="w-3.5 h-3.5" />
+            Collapse All
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-9 px-2 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+            title="Expand all cards"
+            onClick={() => setExpandSignal(s => s + 1)}
+          >
+            <ChevronDown className="w-3.5 h-3.5" />
+            Expand All
+          </Button>
           {selectMode ? (
             <>
               <Button
@@ -1208,6 +1234,8 @@ export default function DemoDataEditor() {
                 selectMode={selectMode}
                 isSelected={selectedIds.has(parlay.id)}
                 onToggleSelect={toggleSelect}
+                collapseSignal={collapseSignal}
+                expandSignal={expandSignal}
               />
             </CardErrorBoundary>
           ))}
