@@ -283,49 +283,29 @@ interface NflversePlayerStatRow {
 }
 
 /**
- * Sync player stats for a specific season and week, scoped to only teams
- * that appear in games currently in our DB for that week.
- *
- * This keeps our player_week_stats table focused on bet-relevant players only.
- *
- * Returns: { players: number, stats: number }
+ * Shared internal helper: download CSV, filter rows, upsert players + stats.
+ * `teamFilter` — if provided, only rows whose `recent_team` is in this set are
+ * kept. Pass `null` to import every player in the week (used for prop bets
+ * where the player's team may not appear in any of our bet-on games).
  */
-export async function syncPlayerStatsForGames(
+async function upsertPlayerStatsRows(
   season: number,
-  week: number
+  week: number,
+  teamFilter: Set<string> | null
 ): Promise<{ players: number; stats: number }> {
-  // Get all games in our DB for this season + week to know which teams to include
-  const dbGames = await storage.getGamesForSeasonWeek(season, week);
-  if (dbGames.length === 0) {
-    console.log(`[nflverse] No games found in DB for season ${season} week ${week}`);
-    return { players: 0, stats: 0 };
-  }
+  const label = teamFilter
+    ? `teams: ${Array.from(teamFilter).join(", ")}`
+    : "all teams (no team filter)";
+  console.log(`[nflverse] Fetching player stats for season ${season}, week ${week}, ${label}…`);
 
-  // Collect all team abbreviations for games in that week
-  const teamAbbrevs = new Set<string>();
-  for (const game of dbGames) {
-    // Our games have short names — find the abbrev that maps to each short name
-    const homeAbbrev = shortToAbbrev(game.homeTeam);
-    const awayAbbrev = shortToAbbrev(game.awayTeam);
-    if (homeAbbrev) teamAbbrevs.add(homeAbbrev);
-    if (awayAbbrev) teamAbbrevs.add(awayAbbrev);
-  }
-
-  if (teamAbbrevs.size === 0) {
-    console.log(`[nflverse] Could not map any teams to abbreviations for season ${season} week ${week}`);
-    return { players: 0, stats: 0 };
-  }
-
-  console.log(`[nflverse] Fetching player stats for season ${season}, week ${week}, teams: ${Array.from(teamAbbrevs).join(", ")}…`);
   const rows = (await fetchPlayerStatsCsv(season)) as unknown as NflversePlayerStatRow[];
 
-  // Filter to our target week + teams
-  const relevant = rows.filter(
-    (r) =>
-      parseInt(r.week) === week &&
-      parseInt(r.season) === season &&
-      teamAbbrevs.has(r.recent_team?.toUpperCase())
-  );
+  const relevant = rows.filter((r) => {
+    if (parseInt(r.week) !== week) return false;
+    if (parseInt(r.season) !== season) return false;
+    if (teamFilter && !teamFilter.has(r.recent_team?.toUpperCase())) return false;
+    return true;
+  });
 
   console.log(`[nflverse] ${relevant.length} player stat rows matched`);
 
@@ -375,6 +355,60 @@ export async function syncPlayerStatsForGames(
   }
 
   return { players: playerCount, stats: statCount };
+}
+
+/**
+ * Sync player stats for a specific season and week, scoped to only teams
+ * that appear in games currently in our DB for that week.
+ *
+ * This keeps our player_week_stats table focused on bet-relevant players only.
+ * Used by the admin bulk-sync endpoint.
+ *
+ * Returns: { players: number, stats: number }
+ */
+export async function syncPlayerStatsForGames(
+  season: number,
+  week: number
+): Promise<{ players: number; stats: number }> {
+  // Get all games in our DB for this season + week to know which teams to include
+  const dbGames = await storage.getGamesForSeasonWeek(season, week);
+  if (dbGames.length === 0) {
+    console.log(`[nflverse] No games found in DB for season ${season} week ${week}`);
+    return { players: 0, stats: 0 };
+  }
+
+  // Collect all team abbreviations for games in that week
+  const teamAbbrevs = new Set<string>();
+  for (const game of dbGames) {
+    const homeAbbrev = shortToAbbrev(game.homeTeam);
+    const awayAbbrev = shortToAbbrev(game.awayTeam);
+    if (homeAbbrev) teamAbbrevs.add(homeAbbrev);
+    if (awayAbbrev) teamAbbrevs.add(awayAbbrev);
+  }
+
+  if (teamAbbrevs.size === 0) {
+    console.log(`[nflverse] Could not map any teams to abbreviations for season ${season} week ${week}`);
+    return { players: 0, stats: 0 };
+  }
+
+  return upsertPlayerStatsRows(season, week, teamAbbrevs);
+}
+
+/**
+ * Sync ALL player stats for a season+week with NO team restriction.
+ *
+ * Used when enriching player prop bets: the player's current team may not
+ * appear in any of our bet-on games (e.g., Derrick Henry on BAL in 2025
+ * when no Ravens game was imported). Fetching all players ensures we can
+ * always look up any named player after this call.
+ *
+ * Returns: { players: number, stats: number }
+ */
+export async function syncAllPlayerStatsForWeek(
+  season: number,
+  week: number
+): Promise<{ players: number; stats: number }> {
+  return upsertPlayerStatsRows(season, week, null);
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────

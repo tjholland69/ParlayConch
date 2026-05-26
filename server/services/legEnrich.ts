@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { parlayLegs, games, players, playerWeekStats } from "@shared/schema";
 import type { Game, ParlayLeg, PlayerWeekStat, Player } from "@shared/schema";
 import { storage } from "../storage";
-import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./nflverse";
+import { syncGameScoresFromNflverse, syncAllPlayerStatsForWeek } from "./nflverse";
 
 export type EnrichLog = {
   at: string;
@@ -152,9 +152,11 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
       let playerStat = await storage.getPlayerStatByName(leg.playerName, season, weekNumber);
 
       if (!playerStat) {
-        log.changes.push(`Player "${leg.playerName}" not in local DB — fetching from nflverse…`);
+        log.changes.push(`Player "${leg.playerName}" not in local DB — fetching from nflverse (all teams, season ${season} week ${weekNumber})…`);
         try {
-          const syncResult = await syncPlayerStatsForGames(season, weekNumber);
+          // Use the team-unrestricted sync so players on any team can be found,
+          // regardless of whether that team appears in our bet-on games.
+          const syncResult = await syncAllPlayerStatsForWeek(season, weekNumber);
           log.changes.push(`nflverse sync: ${syncResult.players} player(s), ${syncResult.stats} stat row(s) fetched`);
         } catch (err: any) {
           log.errors.push(`nflverse player stats fetch failed: ${err.message}`);

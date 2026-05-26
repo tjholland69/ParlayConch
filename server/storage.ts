@@ -1130,16 +1130,65 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null> {
-    const run = async (col: any) => {
+    // Normalize a name: lowercase, strip common suffixes (Jr, Sr, II–IV),
+    // remove punctuation so "D.K. Metcalf" ≈ "DK Metcalf" and
+    // "Odell Beckham Jr." ≈ "Odell Beckham"
+    const normalize = (s: string) =>
+      s.toLowerCase()
+        .replace(/\b(jr\.?|sr\.?|ii|iii|iv|v)\b/gi, "")
+        .replace(/[^a-z0-9 ]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const norm = normalize(playerName);
+
+    // Try exact ilike match on both name columns first (fast DB query)
+    const run = async (col: any, pattern: string) => {
       const rows = await db
         .select({ stat: playerWeekStats, player: players })
         .from(playerWeekStats)
         .innerJoin(players, eq(playerWeekStats.playerId, players.id))
-        .where(and(ilike(col, `%${playerName}%`), eq(playerWeekStats.season, season), eq(playerWeekStats.week, week)))
+        .where(and(ilike(col, `%${pattern}%`), eq(playerWeekStats.season, season), eq(playerWeekStats.week, week)))
         .limit(1);
       return rows.length > 0 ? { ...rows[0].stat, player: rows[0].player } : null;
     };
-    return (await run(players.name)) ?? (await run(players.displayName));
+
+    // Pass 1: exact name as given
+    const r1 = (await run(players.name, playerName)) ?? (await run(players.displayName, playerName));
+    if (r1) return r1;
+
+    // Pass 2: normalized name (strips suffixes/punctuation)
+    if (norm !== playerName.toLowerCase()) {
+      const r2 = (await run(players.name, norm)) ?? (await run(players.displayName, norm));
+      if (r2) return r2;
+    }
+
+    // Pass 3: each significant word of the name (catches "Henry" matching "Derrick Henry")
+    // Only use this if we have at least 2 words to avoid too-broad single-word matches
+    const words = norm.split(" ").filter(w => w.length > 2);
+    if (words.length >= 2) {
+      const lastName = words[words.length - 1]; // most distinctive word
+      const candidateRows = await db
+        .select({ stat: playerWeekStats, player: players })
+        .from(playerWeekStats)
+        .innerJoin(players, eq(playerWeekStats.playerId, players.id))
+        .where(and(
+          ilike(players.displayName, `%${lastName}%`),
+          eq(playerWeekStats.season, season),
+          eq(playerWeekStats.week, week)
+        ))
+        .limit(20);
+
+      // Among candidates, find the one whose normalized display name best matches
+      for (const row of candidateRows) {
+        const candidateNorm = normalize(row.player.displayName ?? row.player.name);
+        if (candidateNorm.includes(norm) || norm.includes(candidateNorm)) {
+          return { ...row.stat, player: row.player };
+        }
+      }
+    }
+
+    return null;
   }
 
   async setLegEnrichmentLog(legId: number, log: string): Promise<void> {
