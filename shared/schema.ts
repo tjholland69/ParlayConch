@@ -216,6 +216,7 @@ export const parlayLegs = pgTable("parlay_legs", {
   playerName: text("player_name"), // for player_prop bets: the player's name
   propType: text("prop_type"),     // for player_prop bets: the prop category (e.g. 'rush_yards')
   notes: text("notes"),            // free-text note, display only
+  enrichmentLog: text("enrichment_log"), // JSON: { at, changes, warnings, errors } — last data-fetch attempt
 }, (table) => [
   index("parlay_legs_parlay_id_idx").on(table.parlayId),
 ]);

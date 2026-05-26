@@ -725,6 +725,22 @@ export function useUpdateParlayLeg(leagueId: number) {
   });
 }
 
+export type EnrichLog = { at: string; changes: string[]; warnings: string[]; errors: string[] };
+
+export function useEnrichParlayLeg(leagueId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (legId: number): Promise<EnrichLog> => {
+      const res = await fetch(`/api/parlay-legs/${legId}/enrich`, { method: "POST", credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message ?? "Enrichment failed"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+    },
+  });
+}
+
 export function useUpdateParlayStatus(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();

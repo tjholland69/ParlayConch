@@ -1,4 +1,4 @@
-import { Component, type ReactNode, useState } from "react";
+import React, { Component, type ReactNode, useState } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLeagues, useAllLeagueParlays, useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useWeeks, useLeagueMembersWithUsers } from "@/hooks/use-bets";
@@ -13,8 +13,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
+import { useEnrichParlayLeg, type EnrichLog } from "@/hooks/use-bets";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -169,7 +170,7 @@ function LegSheet({ open, onOpenChange, title, initial, onSave, isSaving }: LegS
                 <Select value={form.propType} onValueChange={set("propType")}>
                   <SelectTrigger className="h-9"><SelectValue placeholder="Select prop type" /></SelectTrigger>
                   <SelectContent>
-                    {PLAYER_PROP_TYPES.map(p => <SelectItem key={p} value={p}>{p.replace(/_/g, " ")}</SelectItem>)}
+                    {PLAYER_PROP_TYPES.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -240,17 +241,74 @@ type ParlayCardProps = {
   onToggleSelect: (id: number) => void;
 };
 
+function logStatus(log: EnrichLog) {
+  if (log.errors.length > 0) return "error";
+  if (log.warnings.length > 0) return "warn";
+  return "ok";
+}
+
+function LegLogPanel({ log, onClose }: { log: EnrichLog; onClose: () => void }) {
+  const status = logStatus(log);
+  return (
+    <div className={cn(
+      "rounded-md border p-3 text-xs space-y-2 mt-1",
+      status === "error" ? "border-destructive/40 bg-destructive/10" :
+      status === "warn"  ? "border-yellow-500/40 bg-yellow-500/10" :
+                           "border-green-500/40 bg-green-500/10"
+    )}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold text-muted-foreground">
+          Data fetch — {new Date(log.at).toLocaleString()}
+        </span>
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs underline shrink-0">
+          Close
+        </button>
+      </div>
+      {log.changes.length > 0 && (
+        <ul className="space-y-0.5">
+          {log.changes.map((c, i) => (
+            <li key={i} className="text-foreground/80 flex gap-1.5 items-start">
+              <span className="shrink-0 text-green-400 mt-0.5">›</span>{c}
+            </li>
+          ))}
+        </ul>
+      )}
+      {log.warnings.length > 0 && (
+        <ul className="space-y-0.5">
+          {log.warnings.map((w, i) => (
+            <li key={i} className="text-yellow-400 flex gap-1.5 items-start">
+              <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />{w}
+            </li>
+          ))}
+        </ul>
+      )}
+      {log.errors.length > 0 && (
+        <ul className="space-y-0.5">
+          {log.errors.map((e, i) => (
+            <li key={i} className="text-destructive flex gap-1.5 items-start">
+              <XCircle className="w-3 h-3 shrink-0 mt-0.5" />{e}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
   const deleteLeg = useDeleteParlayLeg(leagueId);
   const updateLeg = useUpdateParlayLeg(leagueId);
   const updateStatus = useUpdateParlayStatus(leagueId);
   const addLeg = useAddParlayLeg(leagueId);
+  const enrichLeg = useEnrichParlayLeg(leagueId);
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteLegId, setDeleteLegId] = useState<number | null>(null);
   const [editLeg, setEditLeg] = useState<(ParlayLeg & { game?: any }) | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [enrichResults, setEnrichResults] = useState<Record<number, EnrichLog>>({});
+  const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
 
   const memberName = parlay.user?.firstName || parlay.user?.email || `User #${parlay.userId.slice(0, 6)}`;
 
@@ -331,44 +389,98 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
                   </tr>
                 </thead>
                 <tbody>
-                  {parlay.legs.map((leg, i) => (
-                    <tr key={leg.id} className={cn("border-t border-white/5", i % 2 === 1 && "bg-muted/10")}>
-                      <td className="px-3 py-2 font-medium truncate max-w-[140px]">{legLabel(leg)}</td>
-                      <td className="px-3 py-2 hidden sm:table-cell">
-                        <Badge variant="outline" className="text-xs px-1.5 py-0">
-                          {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
-                        </Badge>
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{pickLabel(leg)}{leg.line ? ` ${leg.line}` : ""}</td>
-                      <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.line || "—"}</td>
-                      <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.odds || "—"}</td>
-                      <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
-                        {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
-                      </td>
-                      {!selectMode && (
-                        <td className="px-2 py-2">
-                          <div className="flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
-                              onClick={() => setEditLeg(leg)}
-                            >
-                              <Pencil className="w-3 h-3" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
-                              onClick={() => setDeleteLegId(leg.id)}
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
+                  {parlay.legs.map((leg, i) => {
+                    const liveLog = enrichResults[leg.id];
+                    const storedLog: EnrichLog | null = (() => {
+                      try { return leg.enrichmentLog ? JSON.parse(leg.enrichmentLog) : null; } catch { return null; }
+                    })();
+                    const activeLog = liveLog ?? storedLog;
+                    const isExpanded = expandedLogs[leg.id] ?? false;
+                    const isFetching = enrichLeg.isPending && enrichLeg.variables === leg.id;
+                    const logIcon = activeLog
+                      ? logStatus(activeLog) === "error" ? <XCircle className="w-3 h-3 text-destructive" />
+                        : logStatus(activeLog) === "warn" ? <AlertTriangle className="w-3 h-3 text-yellow-400" />
+                        : <CheckCircle2 className="w-3 h-3 text-green-400" />
+                      : null;
+
+                    return (
+                      <React.Fragment key={leg.id}>
+                        <tr className={cn("border-t border-white/5", i % 2 === 1 && "bg-muted/10")}>
+                          <td className="px-3 py-2 font-medium truncate max-w-[140px]">{legLabel(leg)}</td>
+                          <td className="px-3 py-2 hidden sm:table-cell">
+                            <Badge variant="outline" className="text-xs px-1.5 py-0">
+                              {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
+                            </Badge>
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{pickLabel(leg)}{leg.line ? ` ${leg.line}` : ""}</td>
+                          <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.line || "—"}</td>
+                          <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.odds || "—"}</td>
+                          <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
+                            {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
+                          </td>
+                          {!selectMode && (
+                            <td className="px-2 py-2">
+                              <div className="flex gap-1 items-center">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
+                                  onClick={() => setEditLeg(leg)}
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  title="Fetch historical data"
+                                  className="h-6 w-6 p-0 text-muted-foreground hover:text-primary"
+                                  disabled={isFetching}
+                                  onClick={() => enrichLeg.mutate(leg.id, {
+                                    onSuccess: (log) => {
+                                      setEnrichResults(r => ({ ...r, [leg.id]: log }));
+                                      setExpandedLogs(e => ({ ...e, [leg.id]: true }));
+                                    },
+                                  })}
+                                >
+                                  {isFetching
+                                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                                    : <CloudDownload className="w-3 h-3" />}
+                                </Button>
+                                {activeLog && (
+                                  <button
+                                    title="View data fetch log"
+                                    className="flex items-center"
+                                    onClick={() => setExpandedLogs(e => ({ ...e, [leg.id]: !e[leg.id] }))}
+                                  >
+                                    {logIcon}
+                                    {isExpanded ? <ChevronUp className="w-2.5 h-2.5 ml-0.5 text-muted-foreground" /> : <ChevronDown className="w-2.5 h-2.5 ml-0.5 text-muted-foreground" />}
+                                  </button>
+                                )}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-6 w-6 p-0 text-muted-foreground hover:text-destructive"
+                                  onClick={() => setDeleteLegId(leg.id)}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </Button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                        {activeLog && isExpanded && (
+                          <tr key={`log-${leg.id}`} className="border-t border-white/5">
+                            <td colSpan={7} className="px-3 pb-3">
+                              <LegLogPanel
+                                log={activeLog}
+                                onClose={() => setExpandedLogs(e => ({ ...e, [leg.id]: false }))}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

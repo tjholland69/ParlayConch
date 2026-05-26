@@ -14,6 +14,7 @@ import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNe
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
+import { enrichSingleLeg } from "./services/legEnrich";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
 import { parseTicketImages } from "./services/screenshotParser";
 import multer from "multer";
@@ -1205,6 +1206,22 @@ export async function registerRoutes(
       const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment } = req.body;
       const updated = await storage.updateParlayLeg(legId, { betType, pick, line, odds, result, playerName, propType, notes, gameSegment });
       res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/parlay-legs/:legId/enrich", isAuthenticated, async (req, res) => {
+    try {
+      const legId = Number(req.params.legId);
+      const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+      if (!leg) return res.status(404).json({ message: "Leg not found" });
+      const parlay = await storage.getParlay(leg.parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      if (!uid) return;
+      const log = await enrichSingleLeg(legId);
+      res.json(log);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

@@ -11,7 +11,7 @@ import {
   type LeagueWeekLock, type WeekLockStatus,
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
 } from "@shared/schema";
-import { eq, and, desc, inArray, sql } from "drizzle-orm";
+import { eq, and, desc, inArray, sql, ilike } from "drizzle-orm";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 
 function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
@@ -125,6 +125,8 @@ export interface IStorage {
   upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player>;
   upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
   getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]>;
+  getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null>;
+  setLegEnrichmentLog(legId: number, log: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1077,6 +1079,23 @@ export class DatabaseStorage implements IStorage {
       );
 
     return rows.map(r => ({ ...r.stat, player: r.player }));
+  }
+
+  async getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null> {
+    const run = async (col: any) => {
+      const rows = await db
+        .select({ stat: playerWeekStats, player: players })
+        .from(playerWeekStats)
+        .innerJoin(players, eq(playerWeekStats.playerId, players.id))
+        .where(and(ilike(col, `%${playerName}%`), eq(playerWeekStats.season, season), eq(playerWeekStats.week, week)))
+        .limit(1);
+      return rows.length > 0 ? { ...rows[0].stat, player: rows[0].player } : null;
+    };
+    return (await run(players.name)) ?? (await run(players.displayName));
+  }
+
+  async setLegEnrichmentLog(legId: number, log: string): Promise<void> {
+    await db.update(parlayLegs).set({ enrichmentLog: log } as any).where(eq(parlayLegs.id, legId));
   }
 }
 
