@@ -111,6 +111,9 @@ export interface IStorage {
   createLeagueAnnouncement(leagueId: number, title: string, message: string): Promise<void>;
   updateLeagueNotificationSettings(leagueId: number, settings: LeagueNotificationSettings): Promise<League>;
 
+  // Active week parlay status (for Quick Pick tile badges)
+  getActiveWeekParlayStatus(leagueIds: number[]): Promise<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>>;
+
   // Parlay week locking
   getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus>;
   lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock>;
@@ -343,6 +346,33 @@ export class DatabaseStorage implements IStorage {
         isLieutenant: userMembership?.role === 'lieutenant',
       };
     });
+  }
+
+  async getActiveWeekParlayStatus(leagueIds: number[]): Promise<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>> {
+    if (leagueIds.length === 0) return {};
+    const [activeWeek] = await db.select().from(weeks).where(eq(weeks.isActive, true)).limit(1);
+    if (!activeWeek) return {};
+
+    const [parlayRows, lockRows] = await Promise.all([
+      db.select({ leagueId: parlays.leagueId })
+        .from(parlays)
+        .where(and(eq(parlays.weekId, activeWeek.id), inArray(parlays.leagueId, leagueIds))),
+      db.select({ leagueId: leagueWeekLocks.leagueId })
+        .from(leagueWeekLocks)
+        .where(and(eq(leagueWeekLocks.weekId, activeWeek.id), inArray(leagueWeekLocks.leagueId, leagueIds))),
+    ]);
+
+    const lockedSet = new Set(lockRows.map(l => l.leagueId));
+    const result: Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }> = {};
+    for (const leagueId of leagueIds) {
+      result[leagueId] = {
+        weekId: activeWeek.id,
+        weekLabel: activeWeek.label,
+        submittedCount: parlayRows.filter(p => p.leagueId === leagueId).length,
+        isLocked: lockedSet.has(leagueId),
+      };
+    }
+    return result;
   }
 
   async joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null> {

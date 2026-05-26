@@ -207,6 +207,15 @@ export async function registerRoutes(
     res.json(member);
   });
 
+  // Must be before /api/leagues/:id to avoid route conflict
+  app.get("/api/leagues/active-week-status", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const userLeagues = await storage.getUserLeagues(userId);
+    const leagueIds = userLeagues.map(l => l.id);
+    const status = await storage.getActiveWeekParlayStatus(leagueIds);
+    res.json(status);
+  });
+
   app.get("/api/leagues/:id", isAuthenticated, async (req, res) => {
     const league = await storage.getLeague(Number(req.params.id));
     if (!league) return res.status(404).json({ message: "League not found" });

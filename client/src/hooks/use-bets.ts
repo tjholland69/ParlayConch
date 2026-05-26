@@ -50,6 +50,18 @@ export function useLeagues() {
   });
 }
 
+export function useLeaguesActiveStatus() {
+  return useQuery<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>>({
+    queryKey: ['/api/leagues/active-week-status'],
+    queryFn: async () => {
+      const res = await fetch('/api/leagues/active-week-status', { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch active week status");
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useLeagueStats(leagueId: number) {
   return useQuery<UserStat[]>({
     queryKey: [api.leagues.stats.path, leagueId],

@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
-import { useWeeks, useGames, useLeagues } from "@/hooks/use-bets";
+import { useWeeks, useGames, useLeagues, useLeaguesActiveStatus } from "@/hooks/use-bets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, Calendar, Users, ArrowRight, Info } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 
 export default function Picks() {
   const { data: weeks, isLoading: isLoadingWeeks } = useWeeks();
@@ -33,6 +34,7 @@ export default function Picks() {
   }, [selectedYear, weeks]);
 
   const { data: games, isLoading: isLoadingGames } = useGames(Number(selectedWeekId));
+  const { data: activeStatus } = useLeaguesActiveStatus();
 
   if (isLoadingWeeks || isLoadingLeagues) {
     return (
@@ -110,22 +112,69 @@ export default function Picks() {
 
       {/* League Shortcuts */}
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-        {leagues.map((league) => (
-          <Link key={league.id} href={`/leagues/${league.id}`}>
-            <Card className="bg-card/50 border-white/5 hover:bg-white/5 transition-colors cursor-pointer" data-testid={`card-league-quick-${league.id}`}>
-              <CardContent className="p-4 flex items-center justify-between">
-                <div>
-                  <p className="font-bold">{league.name}</p>
-                  <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
-                </div>
-                <Button size="sm" variant="ghost">
-                  Make Picks
-                  <ArrowRight className="w-3 h-3 ml-1" />
-                </Button>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
+        {leagues.map((league) => {
+          const status = activeStatus?.[league.id];
+          const hasOpenParlay = !!(status && status.submittedCount > 0 && !status.isLocked);
+          const pct = hasOpenParlay
+            ? Math.round((status!.submittedCount / Math.max(league.memberCount, 1)) * 100)
+            : 0;
+
+          return (
+            <Link key={league.id} href={`/leagues/${league.id}`}>
+              <Card
+                className={cn(
+                  "relative overflow-hidden border cursor-pointer transition-all duration-300",
+                  hasOpenParlay
+                    ? "border-red-500/50 bg-card/50 hover:bg-red-950/20"
+                    : "border-white/5 bg-card/50 hover:bg-white/5"
+                )}
+                style={hasOpenParlay ? {
+                  boxShadow: "0 0 18px 3px rgba(239,68,68,0.22), 0 0 5px 1px rgba(239,68,68,0.16)"
+                } : undefined}
+                data-testid={`card-league-quick-${league.id}`}
+              >
+                {/* Red progress bar background */}
+                {hasOpenParlay && (
+                  <div
+                    aria-hidden="true"
+                    className="absolute inset-y-0 left-0 pointer-events-none transition-all duration-700 ease-out"
+                    style={{
+                      width: `${pct}%`,
+                      background: "linear-gradient(to right, rgba(239,68,68,0.28), rgba(239,68,68,0.07))",
+                      boxShadow: "inset -2px 0 8px rgba(239,68,68,0.14)",
+                    }}
+                  />
+                )}
+                <CardContent className="p-4 flex items-center justify-between relative z-10">
+                  <div>
+                    <p className="font-bold">{league.name}</p>
+                    {hasOpenParlay ? (
+                      <>
+                        <p className="text-xs text-red-400 font-medium flex items-center gap-1.5 mt-0.5">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+                          Parlay Loading...
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {status!.submittedCount}/{league.memberCount} members in
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={hasOpenParlay ? "text-red-400 hover:text-red-300 shrink-0" : "shrink-0"}
+                  >
+                    {hasOpenParlay ? "Join Parlay" : "Make Picks"}
+                    <ArrowRight className="w-3 h-3 ml-1" />
+                  </Button>
+                </CardContent>
+              </Card>
+            </Link>
+          );
+        })}
       </div>
 
       {/* Games Preview */}
