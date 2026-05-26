@@ -1,10 +1,10 @@
 import { useMyParlayHistory, useLeagues, useAllLeagueParlays } from "@/hooks/use-bets";
-import { useState, Fragment } from "react";
+import { useState, useEffect, Fragment } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User } from "lucide-react";
+import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown } from "lucide-react";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -122,12 +122,18 @@ function HistoryParlayCard({
   parlay,
   onCopySlip,
   copiedId,
+  initialCollapsed,
 }: {
   parlay: ParlayWithLegs;
   onCopySlip: (p: any) => void;
   copiedId: number | null;
+  initialCollapsed: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
+
+  useEffect(() => {
+    setCollapsed(initialCollapsed);
+  }, [initialCollapsed]);
   const [showAll, setShowAll] = useState(false);
 
   const { data: allLeagueParlays, isLoading: loadingAll } = useAllLeagueParlays(
@@ -353,6 +359,7 @@ export default function History() {
   const { data: leagues } = useLeagues();
   const [selectedLeagueId, setSelectedLeagueId] = useState<string>("all");
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [allCollapsed, setAllCollapsed] = useState(true);
 
   const handleCopySlip = async (parlay: Parameters<typeof buildSlipText>[0]) => {
     try {
@@ -523,12 +530,25 @@ export default function History() {
         </div>
       ) : (
         <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              {parlays.length} parlay{parlays.length !== 1 ? "s" : ""}
+            </p>
+            <button
+              onClick={() => setAllCollapsed(c => !c)}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded-md hover:bg-white/5"
+            >
+              <ChevronsUpDown className="w-3.5 h-3.5" />
+              {allCollapsed ? "Expand All" : "Collapse All"}
+            </button>
+          </div>
           {parlays.map(parlay => (
             <HistoryParlayCard
               key={parlay.id}
               parlay={parlay}
               onCopySlip={handleCopySlip}
               copiedId={copiedId}
+              initialCollapsed={allCollapsed}
             />
           ))}
         </div>
