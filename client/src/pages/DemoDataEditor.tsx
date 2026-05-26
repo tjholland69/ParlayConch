@@ -339,18 +339,49 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
 
   return (
     <>
-      <Card
-        className={cn(
-          "border transition-colors",
-          selectMode && isSelected
-            ? "border-primary/60 bg-primary/5"
-            : "border-white/10 bg-card/50",
-          selectMode && "cursor-pointer"
-        )}
-        onClick={selectMode ? () => onToggleSelect(parlay.id) : undefined}
-      >
-        <CardHeader className="pb-3">
-          <div className="flex flex-wrap items-center gap-3">
+      {(() => {
+        const _wins     = parlay.legs.filter(l => l.result === "win").length;
+        const _losses   = parlay.legs.filter(l => l.result === "loss").length;
+        const _pushes   = parlay.legs.filter(l => l.result === "push").length;
+        const _resolved = _wins + _losses + _pushes;
+        const _pct      = _resolved > 0 ? Math.round((_wins / _resolved) * 100) : 0;
+        const _perfect  = _pct === 100 && _resolved > 0;
+
+        return (
+          <Card
+            className={cn(
+              "border transition-all duration-500",
+              selectMode && isSelected
+                ? "border-primary/60 bg-primary/5"
+                : _perfect
+                  ? "border-green-400/60 bg-card/50"
+                  : "border-white/10 bg-card/50",
+              selectMode && "cursor-pointer"
+            )}
+            style={_perfect ? { boxShadow: "0 0 18px 2px rgba(74,222,128,0.22), 0 0 4px 1px rgba(74,222,128,0.18)" } : undefined}
+            onClick={selectMode ? () => onToggleSelect(parlay.id) : undefined}
+          >
+            <CardHeader className="relative overflow-hidden pb-3">
+              {/* ── Progress bar background ────────────────────────── */}
+              {_pct > 0 && (
+                <div
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute inset-y-0 left-0 pointer-events-none transition-all duration-700 ease-out",
+                    _perfect && "animate-pulse"
+                  )}
+                  style={{
+                    width: `${_pct}%`,
+                    background: _perfect
+                      ? "linear-gradient(to right, rgba(74,222,128,0.35), rgba(74,222,128,0.10))"
+                      : "linear-gradient(to right, rgba(74,222,128,0.18), rgba(74,222,128,0.03))",
+                    boxShadow: _perfect
+                      ? "inset -4px 0 12px rgba(74,222,128,0.25)"
+                      : "inset -2px 0 6px rgba(74,222,128,0.08)",
+                  }}
+                />
+              )}
+          <div className="flex flex-wrap items-center gap-3 relative z-10">
             {/* Checkbox in select mode */}
             {selectMode && (
               <div className="text-primary" onClick={e => { e.stopPropagation(); onToggleSelect(parlay.id); }}>
@@ -677,7 +708,9 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
             </div>
           )}
         </CardContent>}
-      </Card>
+          </Card>
+        );
+      })()}
 
       {/* Edit Leg Sheet */}
       {editLeg && (
