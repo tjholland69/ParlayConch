@@ -783,7 +783,13 @@ export default function DemoDataEditor() {
         </div>
         <div className="flex items-center gap-2">
           <Label className="text-sm shrink-0 text-muted-foreground">Year:</Label>
-          <Select value={yearFilter} onValueChange={v => { setYearFilter(v); setWeekFilter("all"); }}>
+          <Select value={yearFilter} onValueChange={v => {
+            setYearFilter(v);
+            if (v !== "all" && weekFilter !== "all") {
+              const weekStillValid = (weeks ?? []).some(w => String(w.id) === weekFilter && w.season === Number(v));
+              if (!weekStillValid) setWeekFilter("all");
+            }
+          }}>
             <SelectTrigger className="w-28 h-9 text-sm">
               <SelectValue />
             </SelectTrigger>
