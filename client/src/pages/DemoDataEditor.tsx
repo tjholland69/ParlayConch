@@ -13,7 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Scissors, FilePlus, ChevronRight } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Scissors, FilePlus, ChevronRight, ArrowUpDown } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
 import { useEnrichParlayLeg, useSplitParlayLegs, type EnrichLog } from "@/hooks/use-bets";
 import { cn } from "@/lib/utils";
@@ -1058,6 +1058,7 @@ export default function DemoDataEditor() {
   const [addHistoricalOpen, setAddHistoricalOpen] = useState(false);
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [expandSignal, setExpandSignal] = useState(0);
+  const [sortBy, setSortBy] = useState("week-desc");
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -1102,6 +1103,34 @@ export default function DemoDataEditor() {
     if (weekFilter !== "all" && p.weekId !== Number(weekFilter)) return false;
     if (memberFilter !== "all" && p.userId !== memberFilter) return false;
     return true;
+  });
+
+  const sorted = [...filtered].sort((a, b) => {
+    switch (sortBy) {
+      case "week-desc":
+        return (b.week?.season ?? 0) - (a.week?.season ?? 0) || (b.week?.weekNumber ?? 0) - (a.week?.weekNumber ?? 0) || b.id - a.id;
+      case "week-asc":
+        return (a.week?.season ?? 0) - (b.week?.season ?? 0) || (a.week?.weekNumber ?? 0) - (b.week?.weekNumber ?? 0) || a.id - b.id;
+      case "member-asc": {
+        const nameA = (a.user?.firstName || a.user?.email || "").toLowerCase();
+        const nameB = (b.user?.firstName || b.user?.email || "").toLowerCase();
+        return nameA.localeCompare(nameB);
+      }
+      case "win-pct-desc": {
+        const pct = (p: typeof a) => {
+          const wins   = p.legs.filter(l => l.result === "win").length;
+          const res    = p.legs.filter(l => !!l.result).length;
+          return res > 0 ? wins / res : -1;
+        };
+        return pct(b) - pct(a);
+      }
+      case "pending-desc":
+        return b.legs.filter(l => !l.result).length - a.legs.filter(l => !l.result).length;
+      case "legs-desc":
+        return b.legs.length - a.legs.length;
+      default:
+        return 0;
+    }
   });
 
   const selectedParlays = filtered.filter(p => selectedIds.has(p.id));
@@ -1173,6 +1202,22 @@ export default function DemoDataEditor() {
                   {m.user?.firstName || m.user?.email || m.userId.slice(0, 8)}
                 </SelectItem>
               ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <Select value={sortBy} onValueChange={setSortBy}>
+            <SelectTrigger className="w-48 h-9 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="week-desc">Week (Newest First)</SelectItem>
+              <SelectItem value="week-asc">Week (Oldest First)</SelectItem>
+              <SelectItem value="member-asc">Member (A → Z)</SelectItem>
+              <SelectItem value="win-pct-desc">Win % (Highest First)</SelectItem>
+              <SelectItem value="pending-desc">Most Pending Legs</SelectItem>
+              <SelectItem value="legs-desc">Most Legs</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -1262,7 +1307,7 @@ export default function DemoDataEditor() {
         </div>
       ) : (
         <div className="space-y-4">
-          {filtered.map(parlay => (
+          {sorted.map(parlay => (
             <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
               <ParlayCard
                 parlay={parlay}
