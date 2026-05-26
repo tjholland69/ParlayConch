@@ -236,6 +236,7 @@ type ParlayCardProps = {
   onToggleSelect: (id: number) => void;
   collapseSignal: number;
   expandSignal: number;
+  versionNumber?: number;
 };
 
 function logStatus(log: EnrichLog) {
@@ -292,7 +293,7 @@ function LegLogPanel({ log, onClose }: { log: EnrichLog; onClose: () => void }) 
   );
 }
 
-function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, collapseSignal, expandSignal }: ParlayCardProps) {
+function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, collapseSignal, expandSignal, versionNumber }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
   const deleteLeg = useDeleteParlayLeg(leagueId);
   const updateLeg = useUpdateParlayLeg(leagueId);
@@ -400,13 +401,14 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
             </button>
 
             <div className="flex items-center gap-2 flex-1 min-w-0">
-              <User className="w-4 h-4 text-muted-foreground shrink-0" />
-              <span className="font-semibold truncate">{memberName}</span>
               <span className="text-muted-foreground text-sm shrink-0 flex items-center gap-1">
                 <Calendar className="w-3.5 h-3.5" />
                 {parlay.week?.label ?? `Week ${parlay.weekId}`}
               </span>
-              <span className="text-xs text-muted-foreground/60">#{parlay.id}</span>
+              <span className="text-xs text-muted-foreground/60 shrink-0">#{parlay.id}</span>
+              {versionNumber !== undefined && (
+                <span className="text-xs text-primary/70 shrink-0 font-medium">v{versionNumber}</span>
+              )}
               {collapsed && (
                 <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal text-muted-foreground border-white/15">
                   {parlay.legs.length} leg{parlay.legs.length !== 1 ? "s" : ""}
@@ -444,6 +446,10 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
                 </div>
               );
             })()}
+
+            <span className="text-xs text-muted-foreground/50 italic shrink-0 hidden sm:inline whitespace-nowrap">
+              (Started by {memberName})
+            </span>
 
             {!selectMode && (
               <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
@@ -540,6 +546,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
                 <thead>
                   <tr className="bg-muted/30 text-muted-foreground text-xs">
                     {splitMode && <th className="px-3 py-2 w-8" />}
+                    <th className="text-left px-3 py-2 font-medium">Member</th>
                     <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
                     <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
                     <th className="text-left px-3 py-2 font-medium">Pick</th>
@@ -584,6 +591,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
                               </div>
                             </td>
                           )}
+                          <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{memberName}</td>
                           <td className="px-3 py-2 font-medium truncate max-w-[140px]">{legLabel(leg)}</td>
                           <td className="px-3 py-2 hidden sm:table-cell">
                             <Badge variant="outline" className="text-xs px-1.5 py-0">
@@ -654,7 +662,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
                         </tr>
                         {activeLog && isExpanded && (
                           <tr key={`log-${leg.id}`} className="border-t border-white/5">
-                            <td colSpan={7} className="px-3 pb-3">
+                            <td colSpan={8} className="px-3 pb-3">
                               <LegLogPanel
                                 log={activeLog}
                                 onClose={() => setExpandedLogs(e => ({ ...e, [leg.id]: false }))}
@@ -1335,19 +1343,34 @@ export default function DemoDataEditor() {
         </div>
       ) : (
         <div className="space-y-4">
-          {sorted.map(parlay => (
-            <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
-              <ParlayCard
-                parlay={parlay}
-                leagueId={leagueId}
-                selectMode={selectMode}
-                isSelected={selectedIds.has(parlay.id)}
-                onToggleSelect={toggleSelect}
-                collapseSignal={collapseSignal}
-                expandSignal={expandSignal}
-              />
-            </CardErrorBoundary>
-          ))}
+          {(() => {
+            const groupByUserWeek = new Map<string, number[]>();
+            for (const p of sorted) {
+              const key = `${p.userId}|${p.weekId}`;
+              if (!groupByUserWeek.has(key)) groupByUserWeek.set(key, []);
+              groupByUserWeek.get(key)!.push(p.id);
+            }
+            const versionMap = new Map<number, number>();
+            for (const ids of groupByUserWeek.values()) {
+              if (ids.length > 1) {
+                [...ids].sort((a, b) => a - b).forEach((id, i) => versionMap.set(id, i + 1));
+              }
+            }
+            return sorted.map(parlay => (
+              <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
+                <ParlayCard
+                  parlay={parlay}
+                  leagueId={leagueId}
+                  selectMode={selectMode}
+                  isSelected={selectedIds.has(parlay.id)}
+                  onToggleSelect={toggleSelect}
+                  collapseSignal={collapseSignal}
+                  expandSignal={expandSignal}
+                  versionNumber={versionMap.get(parlay.id)}
+                />
+              </CardErrorBoundary>
+            ));
+          })()}
         </div>
       )}
 
