@@ -884,9 +884,26 @@ export default function DemoDataEditor() {
             <RefreshCw className="w-4 h-4" />
           </Button>
           {selectMode ? (
-            <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitSelectMode}>
-              Cancel
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 text-sm"
+                onClick={() => {
+                  const allSelected = filtered.every(p => selectedIds.has(p.id));
+                  if (allSelected) {
+                    setSelectedIds(new Set());
+                  } else {
+                    setSelectedIds(new Set(filtered.map(p => p.id)));
+                  }
+                }}
+              >
+                {filtered.every(p => selectedIds.has(p.id)) ? "Deselect All" : "Select All"}
+              </Button>
+              <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitSelectMode}>
+                Cancel
+              </Button>
+            </>
           ) : (
             <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setSelectMode(true)}>
               <GitMerge className="w-4 h-4" />
