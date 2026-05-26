@@ -104,12 +104,12 @@ function BestBetType({ byBetType }: { byBetType: Record<string, LegRecord> }) {
     <div className="flex flex-wrap gap-2 text-xs">
       <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-green-500/10 border border-green-500/20 text-green-400">
         <TrendingUp className="w-3 h-3" />
-        Best: {BET_TYPE_LABELS[best] ?? best} ({bestRec.winRate}%)
+        Best: {BET_TYPE_LABELS[best] ?? best} ({bestRec.winRate?.toFixed(1)}%)
       </span>
       {worst && worst[0] !== best && (
         <span className="flex items-center gap-1 px-2 py-1 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
           <TrendingDown className="w-3 h-3" />
-          Worst: {BET_TYPE_LABELS[worst[0]] ?? worst[0]} ({worst[1].winRate}%)
+          Worst: {BET_TYPE_LABELS[worst[0]] ?? worst[0]} ({worst[1].winRate?.toFixed(1)}%)
         </span>
       )}
     </div>
@@ -128,7 +128,7 @@ function TopTeams({ topTeams }: { topTeams: { team: string; record: LegRecord }[
               {record.wins}W-{record.losses}L
             </span>
             <span className={`text-xs font-semibold ${winRateColor(record.winRate)}`}>
-              {record.winRate !== null ? `${record.winRate}%` : "—"}
+              {record.winRate !== null ? `${record.winRate.toFixed(1)}%` : "—"}
             </span>
           </div>
         </div>
@@ -255,13 +255,13 @@ export function BettingInsights({ scope, leagueId, className }: BettingInsightsP
                   <StatPill
                     label="Record"
                     value={`${stats.record.wins}-${stats.record.losses}-${stats.record.pushes}`}
-                    sub={stats.record.winRate !== null ? `${stats.record.winRate}% win` : "no results"}
+                    sub={stats.record.winRate !== null ? `${stats.record.winRate.toFixed(1)}% win` : "no results"}
                   />
                   <StatPill
                     label="Recent"
                     value={
                       stats.recentForm.winRate !== null
-                        ? `${stats.recentForm.winRate}%`
+                        ? `${stats.recentForm.winRate.toFixed(1)}%`
                         : "—"
                     }
                     sub={stats.recentForm.legs > 0 ? `last ${stats.recentForm.legs}` : "no data"}
@@ -270,7 +270,7 @@ export function BettingInsights({ scope, leagueId, className }: BettingInsightsP
                     label="Home ATS"
                     value={
                       stats.spreadPick.home.winRate !== null
-                        ? `${stats.spreadPick.home.winRate}%`
+                        ? `${stats.spreadPick.home.winRate.toFixed(1)}%`
                         : "—"
                     }
                     sub={`${stats.spreadPick.home.wins}W-${stats.spreadPick.home.losses}L`}
@@ -279,7 +279,7 @@ export function BettingInsights({ scope, leagueId, className }: BettingInsightsP
                     label="Away ATS"
                     value={
                       stats.spreadPick.away.winRate !== null
-                        ? `${stats.spreadPick.away.winRate}%`
+                        ? `${stats.spreadPick.away.winRate.toFixed(1)}%`
                         : "—"
                     }
                     sub={`${stats.spreadPick.away.wins}W-${stats.spreadPick.away.losses}L`}
@@ -289,7 +289,7 @@ export function BettingInsights({ scope, leagueId, className }: BettingInsightsP
                       label="Overs"
                       value={
                         stats.totalsPick.over.winRate !== null
-                          ? `${stats.totalsPick.over.winRate}%`
+                          ? `${stats.totalsPick.over.winRate.toFixed(1)}%`
                           : "—"
                       }
                       sub={`${stats.totalsPick.over.total} bets`}
