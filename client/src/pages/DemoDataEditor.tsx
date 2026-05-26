@@ -484,9 +484,9 @@ function MergeDialog({ open, onOpenChange, selected, leagueId, onDone }: MergeDi
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3 py-2">
-          <p className="text-sm font-medium text-muted-foreground">Which parlay should be kept as the base?</p>
-          <RadioGroup value={targetId} onValueChange={setTargetId} className="space-y-2">
+        <div className="flex flex-col min-h-0 overflow-hidden">
+          <p className="text-sm font-medium text-muted-foreground mb-3">Which parlay should be kept as the base?</p>
+          <RadioGroup value={targetId} onValueChange={setTargetId} className="space-y-2 overflow-y-auto max-h-[40vh] pr-1">
             {selected.map(p => {
               const name = p.user?.firstName || p.user?.email || `User #${p.userId.slice(0, 6)}`;
               const week = p.week?.label ?? `Week ${p.weekId}`;
@@ -511,7 +511,7 @@ function MergeDialog({ open, onOpenChange, selected, leagueId, onDone }: MergeDi
           </RadioGroup>
 
           {targetId && (
-            <p className="text-xs text-muted-foreground border border-white/10 rounded-lg p-3 bg-muted/20">
+            <p className="text-xs text-muted-foreground border border-white/10 rounded-lg p-3 bg-muted/20 mt-3">
               The selected parlay will receive all {totalLegs} leg{totalLegs !== 1 ? "s" : ""} combined.{" "}
               {selected.length - 1} parlay{selected.length - 1 !== 1 ? "s" : ""} will be deleted.
             </p>
