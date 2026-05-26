@@ -545,6 +545,7 @@ export default function DemoDataEditor() {
   const { data: weeks } = useWeeks();
   const { data: members } = useLeagueMembersWithUsers(leagueId);
 
+  const [yearFilter, setYearFilter] = useState<string>("all");
   const [weekFilter, setWeekFilter] = useState<string>("all");
   const [memberFilter, setMemberFilter] = useState<string>("all");
   const [selectMode, setSelectMode] = useState(false);
@@ -583,7 +584,14 @@ export default function DemoDataEditor() {
     );
   }
 
+  const seasons = [...new Set((weeks ?? []).map(w => w.season))].sort((a, b) => b - a);
+
+  const visibleWeeks = yearFilter === "all"
+    ? (weeks ?? [])
+    : (weeks ?? []).filter(w => w.season === Number(yearFilter));
+
   const filtered = (allParlays ?? []).filter(p => {
+    if (yearFilter !== "all" && p.week?.season !== Number(yearFilter)) return false;
     if (weekFilter !== "all" && p.weekId !== Number(weekFilter)) return false;
     if (memberFilter !== "all" && p.userId !== memberFilter) return false;
     return true;
@@ -616,12 +624,26 @@ export default function DemoDataEditor() {
         <div className="flex items-center gap-2">
           <Label className="text-sm shrink-0 text-muted-foreground">Week:</Label>
           <Select value={weekFilter} onValueChange={setWeekFilter}>
-            <SelectTrigger className="w-40 h-9 text-sm">
+            <SelectTrigger className="w-32 h-9 text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Weeks</SelectItem>
-              {weeks?.map(w => <SelectItem key={w.id} value={String(w.id)}>{w.label}</SelectItem>)}
+              {visibleWeeks.map(w => (
+                <SelectItem key={w.id} value={String(w.id)}>Week {w.weekNumber}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label className="text-sm shrink-0 text-muted-foreground">Year:</Label>
+          <Select value={yearFilter} onValueChange={v => { setYearFilter(v); setWeekFilter("all"); }}>
+            <SelectTrigger className="w-28 h-9 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Years</SelectItem>
+              {seasons.map(s => <SelectItem key={s} value={String(s)}>{s}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
