@@ -309,6 +309,24 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
   const [addOpen, setAddOpen] = useState(false);
   const [enrichResults, setEnrichResults] = useState<Record<number, EnrichLog>>({});
   const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
+  const [fetchAllState, setFetchAllState] = useState<{ running: boolean; done: number; total: number; errors: number } | null>(null);
+
+  const handleFetchAll = async () => {
+    const legs = parlay.legs;
+    if (legs.length === 0) return;
+    setFetchAllState({ running: true, done: 0, total: legs.length, errors: 0 });
+    let errors = 0;
+    for (let i = 0; i < legs.length; i++) {
+      try {
+        const log = await enrichLeg.mutateAsync(legs[i].id);
+        setEnrichResults(r => ({ ...r, [legs[i].id]: log }));
+        setExpandedLogs(e => ({ ...e, [legs[i].id]: true }));
+      } catch {
+        errors++;
+      }
+      setFetchAllState({ running: i < legs.length - 1, done: i + 1, total: legs.length, errors });
+    }
+  };
 
   const memberName = parlay.user?.firstName || parlay.user?.email || `User #${parlay.userId.slice(0, 6)}`;
 
@@ -358,6 +376,42 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
                     {STATUSES.map(s => <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>)}
                   </SelectContent>
                 </Select>
+
+                {/* Parlay-level fetch all button */}
+                {parlay.legs.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Fetch results for all legs"
+                    disabled={fetchAllState?.running}
+                    className={cn(
+                      "h-7 px-2 gap-1 text-xs",
+                      fetchAllState && !fetchAllState.running
+                        ? fetchAllState.errors > 0 && fetchAllState.errors === fetchAllState.total
+                          ? "text-destructive"
+                          : fetchAllState.errors > 0
+                            ? "text-yellow-400"
+                            : "text-green-400"
+                        : "text-muted-foreground hover:text-primary"
+                    )}
+                    onClick={handleFetchAll}
+                  >
+                    {fetchAllState?.running ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <CloudDownload className="w-3.5 h-3.5" />
+                    )}
+                    {fetchAllState
+                      ? fetchAllState.running
+                        ? `${fetchAllState.done}/${fetchAllState.total}`
+                        : fetchAllState.errors > 0
+                          ? `${fetchAllState.done - fetchAllState.errors}/${fetchAllState.total} ok`
+                          : `${fetchAllState.total}/${fetchAllState.total}`
+                      : "All"
+                    }
+                  </Button>
+                )}
+
                 <Button
                   variant="ghost"
                   size="sm"
