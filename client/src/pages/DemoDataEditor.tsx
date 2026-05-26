@@ -388,6 +388,37 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect, 
               )}
             </div>
 
+            {/* ── Parlay leg stats summary ─────────────────────── */}
+            {(() => {
+              const wins    = parlay.legs.filter(l => l.result === "win").length;
+              const losses  = parlay.legs.filter(l => l.result === "loss").length;
+              const pushes  = parlay.legs.filter(l => l.result === "push").length;
+              const resolved = wins + losses + pushes;
+              const pending  = parlay.legs.filter(l => !l.result).length;
+              const pct      = resolved > 0 ? Math.round((wins / resolved) * 100) : null;
+              return (
+                <div className="flex items-center gap-1.5 text-xs shrink-0" onClick={e => e.stopPropagation()}>
+                  <span className={cn(
+                    "font-semibold tabular-nums",
+                    pct === null ? "text-muted-foreground/50"
+                      : pct >= 60 ? "text-green-400"
+                      : pct >= 40 ? "text-yellow-400"
+                      : "text-red-400"
+                  )}>
+                    {wins}<span className="text-muted-foreground/40 font-normal">/{resolved}</span>
+                    {pct !== null && (
+                      <span className="ml-1 text-muted-foreground/70 font-normal">({pct}%)</span>
+                    )}
+                  </span>
+                  {pending > 0 && (
+                    <span className="text-muted-foreground/50">
+                      · <span className="text-muted-foreground/70">{pending} pending</span>
+                    </span>
+                  )}
+                </div>
+              );
+            })()}
+
             {!selectMode && (
               <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
                 <Select
