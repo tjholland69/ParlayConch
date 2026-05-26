@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useWeeks, useGames, useLeagues } from "@/hooks/use-bets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,14 +10,27 @@ import { format } from "date-fns";
 export default function Picks() {
   const { data: weeks, isLoading: isLoadingWeeks } = useWeeks();
   const { data: leagues, isLoading: isLoadingLeagues } = useLeagues();
+
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [selectedWeekId, setSelectedWeekId] = useState<string | undefined>();
-  
+
+  const years = useMemo(
+    () => [...new Set(weeks?.map(w => w.season) ?? [])].sort((a, b) => b - a),
+    [weeks]
+  );
+
+  const weeksForYear = useMemo(
+    () => weeks?.filter(w => w.season === selectedYear) ?? [],
+    [weeks, selectedYear]
+  );
+
   useEffect(() => {
-    if (weeks?.length && !selectedWeekId) {
-      const activeWeek = weeks.find(w => w.isActive);
-      setSelectedWeekId(activeWeek ? String(activeWeek.id) : String(weeks[0].id));
-    }
-  }, [weeks, selectedWeekId]);
+    if (!weeksForYear.length) return;
+    const activeWeek = weeksForYear.find(w => w.isActive);
+    const week1 = weeksForYear.find(w => w.weekNumber === 1) ?? weeksForYear[0];
+    setSelectedWeekId(activeWeek ? String(activeWeek.id) : String(week1.id));
+  }, [selectedYear, weeks]);
 
   const { data: games, isLoading: isLoadingGames } = useGames(Number(selectedWeekId));
 
@@ -29,7 +42,6 @@ export default function Picks() {
     );
   }
 
-  // If user has no leagues, prompt them to join/create one
   if (!leagues?.length) {
     return (
       <div className="max-w-2xl mx-auto space-y-8 pb-12">
@@ -57,22 +69,38 @@ export default function Picks() {
           <h1 className="text-3xl font-display font-bold" data-testid="text-picks-title">Quick View</h1>
           <p className="text-muted-foreground">Browse games for the week. Make picks in your league.</p>
         </div>
-        
-        <div className="w-full md:w-64">
-          <Select 
-            value={selectedWeekId} 
+
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          {/* Year filter */}
+          <Select
+            value={String(selectedYear)}
+            onValueChange={v => setSelectedYear(Number(v))}
+          >
+            <SelectTrigger className="bg-background border-white/10 h-12 w-24 shrink-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {years.map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Week filter */}
+          <Select
+            value={selectedWeekId}
             onValueChange={setSelectedWeekId}
           >
-            <SelectTrigger className="bg-background border-white/10 h-12">
+            <SelectTrigger className="bg-background border-white/10 h-12 flex-1 md:w-44 md:flex-none">
               <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-primary" />
+                <Calendar className="w-4 h-4 text-primary shrink-0" />
                 <SelectValue placeholder="Select Week" />
               </div>
             </SelectTrigger>
             <SelectContent>
-              {weeks?.map((week) => (
+              {weeksForYear.map(week => (
                 <SelectItem key={week.id} value={String(week.id)}>
-                  {week.label} {week.isActive && "(Current)"}
+                  {week.label}{week.isActive ? " (Current)" : ""}
                 </SelectItem>
               ))}
             </SelectContent>
