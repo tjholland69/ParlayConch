@@ -137,6 +137,12 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
     const { season, weekNumber } = week;
     log.changes.push(`Bet: Season ${season} Week ${weekNumber} — type=${leg.betType} pick=${leg.pick}`);
 
+    // If a result is already recorded, skip the data fetch entirely
+    if (leg.result) {
+      log.changes.push(`Result already set to "${leg.result}" — skipping data fetch`);
+      return saveLog(legId, log);
+    }
+
     if (leg.betType === "player_prop") {
       if (!leg.playerName) {
         log.errors.push("No player name set on this leg — edit the leg to add a player name first");

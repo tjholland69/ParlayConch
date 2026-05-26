@@ -312,7 +312,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
   const [fetchAllState, setFetchAllState] = useState<{ running: boolean; done: number; total: number; errors: number } | null>(null);
 
   const handleFetchAll = async () => {
-    const legs = parlay.legs;
+    const legs = parlay.legs.filter(l => !l.result);
     if (legs.length === 0) return;
     setFetchAllState({ running: true, done: 0, total: legs.length, errors: 0 });
     let errors = 0;
@@ -377,8 +377,8 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
                   </SelectContent>
                 </Select>
 
-                {/* Parlay-level fetch all button */}
-                {parlay.legs.length > 0 && (
+                {/* Parlay-level fetch all button — only when legs without results exist */}
+                {parlay.legs.some(l => !l.result) && (
                   <Button
                     variant="ghost"
                     size="sm"
