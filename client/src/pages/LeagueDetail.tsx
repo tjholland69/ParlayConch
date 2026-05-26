@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatPickLabel } from "@/lib/formatPick";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
@@ -181,7 +182,7 @@ export default function LeagueDetail() {
           
           <div className="flex items-center gap-2 flex-wrap">
             {league.isAdmin && (
-              <>
+              <div className="grid grid-cols-2 gap-2">
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -198,26 +199,28 @@ export default function LeagueDetail() {
                   Import History
                 </Button>
                 <Link href={`/leagues/${leagueId}/screenshot-import`}>
-                  <Button variant="outline" className="border-primary/40 text-primary hover:bg-primary/10" data-testid="button-screenshot-import">
+                  <Button variant="outline" className="w-full border-primary/40 text-primary hover:bg-primary/10" data-testid="button-screenshot-import">
                     <Download className="w-4 h-4 mr-2" />
                     Screenshot Import
                   </Button>
                 </Link>
-                {league.isDemo && (
+                {league.isDemo ? (
                   <Link href={`/leagues/${leagueId}/demo-data`}>
-                    <Button variant="outline" className="border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10" data-testid="button-demo-data-editor">
+                    <Button variant="outline" className="w-full border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10" data-testid="button-demo-data-editor">
                       <Edit className="w-4 h-4 mr-2" />
                       Data Editor
                     </Button>
                   </Link>
+                ) : (
+                  <div />
                 )}
                 <Link href={`/leagues/${leagueId}/settings`}>
-                  <Button variant="outline" data-testid="button-league-settings">
+                  <Button variant="outline" className="w-full" data-testid="button-league-settings">
                     <Settings className="w-4 h-4 mr-2" />
                     Settings
                   </Button>
                 </Link>
-              </>
+              </div>
             )}
             <Button
               variant="ghost"
@@ -281,18 +284,11 @@ export default function LeagueDetail() {
                 <div className="space-y-2">
                   {myParlay.legs.map((leg, i) => {
                     const isProp = leg.betType === 'player_prop';
-                    const fmtProp = (t: string | null | undefined) =>
-                      t ? t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Prop';
                     const matchupLabel = isProp
                       ? (leg.playerName || 'Player')
                       : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`;
-                    const pickDisplay = isProp
-                      ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}`
-                      : leg.betType === 'over' ? `Over ${leg.line || leg.game?.overUnder}`
-                      : leg.betType === 'under' ? `Under ${leg.line || leg.game?.overUnder}`
-                      : leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam;
+                    const pickDisplay = formatPickLabel(leg);
                     const lineDisplay = isProp ? null
-                      : leg.betType === 'spread' ? leg.line || leg.game?.spread
                       : leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game?.moneylineHome : leg.game?.moneylineAway)
                       : null;
                     return (
@@ -300,7 +296,7 @@ export default function LeagueDetail() {
                         <div className="flex items-center justify-between">
                           <div className="flex flex-col">
                             <span className="text-sm">{matchupLabel}</span>
-                            {isProp && <span className="text-xs text-muted-foreground">{fmtProp(leg.propType)}</span>}
+                            {isProp && leg.propType && <span className="text-xs text-muted-foreground">{leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>}
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
@@ -372,7 +368,7 @@ export default function LeagueDetail() {
               <div className="grid gap-4 md:grid-cols-2">
                 {games?.map((game) => {
                   const pick = getPickForGame(game.id);
-                  const isPast = new Date(game.gameTime) < new Date();
+                  const isPast = game.gameTime ? new Date(game.gameTime) < new Date() : false;
                   
                   const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
                   const homeSpread = game.spread || null;
@@ -388,7 +384,7 @@ export default function LeagueDetail() {
                     >
                       <CardContent className="p-4">
                         <div className="flex items-center justify-between mb-3 text-xs text-muted-foreground">
-                          <span>{format(new Date(game.gameTime), "EEE, MMM d h:mm a")}</span>
+                          <span>{game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}</span>
                           {game.venue && <span className="truncate max-w-[120px]">{game.venue}</span>}
                         </div>
                         
@@ -635,18 +631,11 @@ export default function LeagueDetail() {
                       <div className="space-y-1">
                         {parlay.legs.map((leg, i) => {
                           const isProp = leg.betType === 'player_prop';
-                          const fmtProp = (t: string | null | undefined) =>
-                            t ? t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Prop';
                           const matchupLabel = isProp
-                            ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${fmtProp(leg.propType)}` : ''}`
+                            ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}` : ''}`
                             : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`;
-                          const pickDisplay = isProp
-                            ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}`
-                            : leg.betType === 'over' ? `Over ${leg.line || leg.game?.overUnder}`
-                            : leg.betType === 'under' ? `Under ${leg.line || leg.game?.overUnder}`
-                            : leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam;
+                          const pickDisplay = formatPickLabel(leg);
                           const lineDisplay = isProp ? null
-                            : leg.betType === 'spread' ? leg.line || leg.game?.spread
                             : leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game?.moneylineHome : leg.game?.moneylineAway)
                             : null;
                           return (

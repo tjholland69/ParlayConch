@@ -15,6 +15,13 @@
       "when": 1778450666640,
       "tag": "0001_schema_fks_realtime_prep",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1748303200000,
+      "tag": "0002_parlay_legs_missing_columns",
+      "breakpoints": true
     }
   ]
 }

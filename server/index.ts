@@ -3,6 +3,7 @@ import "express-async-errors";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { storage } from "./storage";
 
 const app = express();
 const httpServer = createServer(app);
@@ -119,6 +120,17 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on port ${port}`);
+
+      // One-time backfill: promote fully-resolved parlays from 'approved'/'pending'
+      // to win/loss/push so the Dashboard leaderboard shows real data.
+      // Runs every startup but is fully idempotent — skips terminal-status parlays.
+      storage.rollupLeagueParlayStatuses().then(result => {
+        if (result.updated > 0) {
+          log(`[startup] parlay status rollup: ${result.updated} promoted, ${result.skipped} skipped`);
+        }
+      }).catch(err => {
+        console.error("[startup] parlay status rollup failed:", err.message);
+      });
     },
   );
 })();

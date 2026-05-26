@@ -50,6 +50,30 @@ export function useLeagues() {
   });
 }
 
+export function useLeaguesOverviewStats() {
+  return useQuery<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>>({
+    queryKey: ['/api/leagues/overview-stats'],
+    queryFn: async () => {
+      const res = await fetch('/api/leagues/overview-stats', { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch overview stats");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useLeaguesActiveStatus() {
+  return useQuery<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>>({
+    queryKey: ['/api/leagues/active-week-status'],
+    queryFn: async () => {
+      const res = await fetch('/api/leagues/active-week-status', { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch active week status");
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+}
+
 export function useLeagueStats(leagueId: number) {
   return useQuery<UserStat[]>({
     queryKey: [api.leagues.stats.path, leagueId],
@@ -657,7 +681,7 @@ export function useUnlockWeekParlay(leagueId: number, weekId: number) {
 
 // ===== DEMO DATA EDITOR HOOKS =====
 
-export function useAllLeagueParlays(leagueId: number) {
+export function useAllLeagueParlays(leagueId: number, enabled = true) {
   return useQuery<ParlayWithLegs[]>({
     queryKey: ['/api/leagues', leagueId, 'parlays', 'all'],
     queryFn: async () => {
@@ -665,7 +689,7 @@ export function useAllLeagueParlays(leagueId: number) {
       if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
       return res.json();
     },
-    enabled: !!leagueId,
+    enabled: !!leagueId && enabled,
   });
 }
 
@@ -725,6 +749,22 @@ export function useUpdateParlayLeg(leagueId: number) {
   });
 }
 
+export type EnrichLog = { at: string; changes: string[]; warnings: string[]; errors: string[] };
+
+export function useEnrichParlayLeg(leagueId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (legId: number): Promise<EnrichLog> => {
+      const res = await fetch(`/api/parlay-legs/${legId}/enrich`, { method: "POST", credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message ?? "Enrichment failed"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+    },
+  });
+}
+
 export function useUpdateParlayStatus(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -744,6 +784,50 @@ export function useUpdateParlayStatus(leagueId: number) {
       toast({ title: "Status Updated" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useAddHistoricalParlay(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ userId, weekId, legs }: { userId: string; weekId: number; legs: Record<string, any>[] }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlays/historical`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId, weekId, legs }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Parlay Added" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useSplitParlayLegs(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ parlayId, legIds }: { parlayId: number; legIds: number[] }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlays/${parlayId}/split`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ legIds }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json() as Promise<{ message: string; newParlayId: number }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Legs Split", description: data.message });
+    },
+    onError: (e: Error) => toast({ title: "Split failed", description: e.message, variant: "destructive" }),
   });
 }
 

@@ -1,19 +1,365 @@
-import { useMyParlayHistory, useLeagues } from "@/hooks/use-bets";
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useMyParlayHistory, useLeagues, useAllLeagueParlays } from "@/hooks/use-bets";
+import { useState, useEffect, Fragment } from "react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check } from "lucide-react";
+import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown } from "lucide-react";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { formatPickLabel } from "@/lib/formatPick";
 import { format } from "date-fns";
+import type { ParlayWithLegs } from "@shared/schema";
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+const resultColor = (r: string | null | undefined) =>
+  r === "win" ? "text-green-400" :
+  r === "loss" ? "text-red-400" :
+  r === "push" ? "text-blue-400" :
+  "text-muted-foreground";
+
+const getStatusVariant = (status: string | null): "default" | "destructive" | "secondary" | "outline" => {
+  switch (status) {
+    case "win": return "default";
+    case "loss": return "destructive";
+    case "push": return "secondary";
+    case "approved": return "outline";
+    case "rejected": return "destructive";
+    case "void": return "outline";
+    default: return "secondary";
+  }
+};
+
+function legMatchup(leg: any) {
+  if (leg.betType === "player_prop") {
+    const propLabel = leg.propType
+      ? leg.propType.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())
+      : null;
+    return `${leg.playerName || "Player"}${propLabel ? ` — ${propLabel}` : ""}`;
+  }
+  return `${leg.game?.awayTeam ?? "?"} @ ${leg.game?.homeTeam ?? "?"}`;
+}
+
+// ── LegTable ─────────────────────────────────────────────────────────────────
+
+function LegTable({ legs, compact = false }: { legs: any[]; compact?: boolean }) {
+  if (legs.length === 0) {
+    return <p className="text-sm text-muted-foreground italic py-2 px-1">No legs.</p>;
+  }
+  return (
+    <div className="rounded-lg overflow-hidden border border-white/5">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-muted/30 text-muted-foreground text-xs">
+            <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
+            <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
+            <th className="text-left px-3 py-2 font-medium">Pick</th>
+            {!compact && <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>}
+            {!compact && <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>}
+            <th className="text-left px-3 py-2 font-medium">Result</th>
+          </tr>
+        </thead>
+        <tbody>
+          {legs.map((leg: any, i: number) => (
+            <Fragment key={leg.id ?? i}>
+              <tr
+                className={cn(
+                  "border-t border-white/5",
+                  i % 2 === 1 && "bg-muted/10",
+                  leg.result === "win" && "bg-primary/10",
+                  leg.result === "loss" && "bg-destructive/5"
+                )}
+              >
+                <td className="px-3 py-2 font-medium">
+                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                    {leg.gameSegment && (
+                      <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 leading-none shrink-0">
+                        {leg.gameSegment}
+                      </span>
+                    )}
+                    <span className="truncate max-w-[130px] text-xs">{legMatchup(leg)}</span>
+                  </div>
+                </td>
+                <td className="px-3 py-2 hidden sm:table-cell">
+                  <Badge variant="outline" className="text-xs px-1.5 py-0">
+                    {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
+                  </Badge>
+                </td>
+                <td className="px-3 py-2 text-muted-foreground text-xs">{formatPickLabel(leg)}</td>
+                {!compact && (
+                  <td className="px-3 py-2 text-muted-foreground hidden md:table-cell text-xs">{leg.line || "—"}</td>
+                )}
+                {!compact && (
+                  <td className="px-3 py-2 text-muted-foreground hidden md:table-cell text-xs">{leg.odds || "—"}</td>
+                )}
+                <td className={cn("px-3 py-2 font-medium text-xs", resultColor(leg.result))}>
+                  {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
+                </td>
+              </tr>
+              {leg.notes && (
+                <tr className="border-t border-white/5">
+                  <td
+                    colSpan={compact ? 3 : 5}
+                    className="px-4 py-1.5 text-xs text-muted-foreground italic border-l-2 border-white/10"
+                  >
+                    {leg.notes}
+                  </td>
+                </tr>
+              )}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── HistoryParlayCard ─────────────────────────────────────────────────────────
+
+function HistoryParlayCard({
+  parlay,
+  onCopySlip,
+  copiedId,
+  initialCollapsed,
+}: {
+  parlay: ParlayWithLegs;
+  onCopySlip: (p: any) => void;
+  copiedId: number | null;
+  initialCollapsed: boolean;
+}) {
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
+
+  useEffect(() => {
+    setCollapsed(initialCollapsed);
+  }, [initialCollapsed]);
+  const [showAll, setShowAll] = useState(false);
+
+  const { data: allLeagueParlays, isLoading: loadingAll } = useAllLeagueParlays(
+    parlay.leagueId,
+    showAll,
+  );
+
+  const otherParlays = showAll
+    ? (allLeagueParlays ?? []).filter(p => p.weekId === parlay.weekId && p.id !== parlay.id)
+    : [];
+
+  const wins     = parlay.legs.filter((l: any) => l.result === "win").length;
+  const losses   = parlay.legs.filter((l: any) => l.result === "loss").length;
+  const pushes   = parlay.legs.filter((l: any) => l.result === "push").length;
+  const resolved = wins + losses + pushes;
+  const pct      = resolved > 0 ? Math.round((wins / resolved) * 100) : 0;
+  const perfect  = pct === 100 && resolved > 0;
+  const pending  = parlay.legs.filter((l: any) => !l.result).length;
+
+  return (
+    <Card
+      className={cn(
+        "border transition-all duration-500",
+        perfect
+          ? "border-green-400/60 bg-card/50"
+          : "border-white/10 bg-card/50",
+        parlay.status === "void" && "opacity-60"
+      )}
+      style={
+        perfect
+          ? { boxShadow: "0 0 18px 2px rgba(74,222,128,0.22), 0 0 4px 1px rgba(74,222,128,0.18)" }
+          : undefined
+      }
+      data-testid={`card-parlay-history-${parlay.id}`}
+    >
+      <CardHeader className="relative overflow-hidden pb-3">
+        {/* Progress bar background */}
+        {pct > 0 && (
+          <div
+            aria-hidden="true"
+            className={cn(
+              "absolute inset-y-0 left-0 pointer-events-none transition-all duration-700 ease-out",
+              perfect && "animate-pulse"
+            )}
+            style={{
+              width: `${pct}%`,
+              background: perfect
+                ? "linear-gradient(to right, rgba(74,222,128,0.35), rgba(74,222,128,0.10))"
+                : "linear-gradient(to right, rgba(74,222,128,0.18), rgba(74,222,128,0.03))",
+              boxShadow: perfect
+                ? "inset -4px 0 12px rgba(74,222,128,0.25)"
+                : "inset -2px 0 6px rgba(74,222,128,0.08)",
+            }}
+          />
+        )}
+
+        {/* Header row */}
+        <div className="relative z-10 flex flex-wrap items-center gap-2 sm:gap-3">
+          {/* Collapse toggle */}
+          <button
+            className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            onClick={() => setCollapsed(c => !c)}
+            title={collapsed ? "Expand" : "Collapse"}
+          >
+            <ChevronRight
+              className={cn("w-4 h-4 transition-transform duration-150", !collapsed && "rotate-90")}
+            />
+          </button>
+
+          {/* Week + date */}
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
+            <span className="font-semibold truncate">
+              {parlay.week?.label ?? `Week ${parlay.weekId}`}
+            </span>
+            {parlay.createdAt && (
+              <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
+                {format(new Date(parlay.createdAt), "MMM d, yyyy")}
+              </span>
+            )}
+            <span className="text-xs text-muted-foreground/50">#{parlay.id}</span>
+            {collapsed && parlay.legs.length > 0 && (
+              <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal text-muted-foreground border-white/15">
+                {parlay.legs.length} leg{parlay.legs.length !== 1 ? "s" : ""}
+              </Badge>
+            )}
+          </div>
+
+          {/* Win stats */}
+          {resolved > 0 && (
+            <span
+              className={cn(
+                "text-xs font-semibold tabular-nums shrink-0",
+                pct >= 60 ? "text-green-400" : pct >= 40 ? "text-yellow-400" : "text-red-400"
+              )}
+            >
+              {wins}
+              <span className="text-muted-foreground/50 font-normal">/{resolved}</span>
+              <span className="ml-1 text-muted-foreground/60 font-normal">({pct}%)</span>
+            </span>
+          )}
+          {pending > 0 && resolved === 0 && (
+            <span className="text-xs text-muted-foreground/50 shrink-0">{pending} pending</span>
+          )}
+
+          {/* Status badge + copy */}
+          <div className="flex items-center gap-2 shrink-0">
+            <Badge
+              variant={getStatusVariant(parlay.status)}
+              className={parlay.status === "void" ? "text-muted-foreground border-white/10" : ""}
+            >
+              {parlay.status === "void" ? "Void" : parlay.status}
+            </Badge>
+            {parlay.status !== "void" && (
+              <button
+                onClick={() => onCopySlip(parlay)}
+                title="Copy bet slip"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+              >
+                {copiedId === parlay.id
+                  ? <Check className="w-3.5 h-3.5 text-green-400" />
+                  : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            )}
+          </div>
+        </div>
+      </CardHeader>
+
+      {!collapsed && (
+        <CardContent className="pt-0">
+          {parlay.status === "void" ? (
+            <p className="text-sm text-muted-foreground italic py-2">No submission — missed this week</p>
+          ) : (
+            <>
+              {/* My legs */}
+              <LegTable legs={parlay.legs} />
+
+              {/* Show full parlay toggle */}
+              <div className="mt-4 flex items-center gap-2.5">
+                <Checkbox
+                  id={`show-all-${parlay.id}`}
+                  checked={showAll}
+                  onCheckedChange={v => setShowAll(!!v)}
+                />
+                <label
+                  htmlFor={`show-all-${parlay.id}`}
+                  className="text-sm text-muted-foreground cursor-pointer select-none"
+                >
+                  Show all league members' picks for this week
+                </label>
+                {loadingAll && showAll && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                )}
+              </div>
+
+              {/* Other members */}
+              {showAll && !loadingAll && otherParlays.length === 0 && (
+                <p className="mt-3 text-sm text-muted-foreground italic">
+                  No other members submitted a parlay this week.
+                </p>
+              )}
+
+              {showAll && otherParlays.length > 0 && (
+                <div className="mt-4 space-y-3">
+                  <p className="text-xs text-muted-foreground uppercase font-medium tracking-wide">
+                    Other members ({otherParlays.length})
+                  </p>
+                  {otherParlays.map(other => {
+                    const displayName =
+                      (other.user as any)?.settings?.displayName ||
+                      other.user?.firstName ||
+                      "Member";
+                    const oWins     = other.legs.filter((l: any) => l.result === "win").length;
+                    const oLosses   = other.legs.filter((l: any) => l.result === "loss").length;
+                    const oPushes   = other.legs.filter((l: any) => l.result === "push").length;
+                    const oResolved = oWins + oLosses + oPushes;
+                    const oPct      = oResolved > 0 ? Math.round((oWins / oResolved) * 100) : 0;
+
+                    return (
+                      <div key={other.id} className="rounded-lg border border-white/5 bg-muted/10 overflow-hidden">
+                        <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-white/5">
+                          <span className="text-sm font-semibold flex items-center gap-2">
+                            <User className="w-3.5 h-3.5 text-muted-foreground" />
+                            {displayName}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {oResolved > 0 && (
+                              <span
+                                className={cn(
+                                  "text-xs font-semibold tabular-nums",
+                                  oPct >= 60 ? "text-green-400" : oPct >= 40 ? "text-yellow-400" : "text-red-400"
+                                )}
+                              >
+                                {oWins}/{oResolved} ({oPct}%)
+                              </span>
+                            )}
+                            <Badge
+                              variant={getStatusVariant(other.status)}
+                              className="text-xs"
+                            >
+                              {other.status}
+                            </Badge>
+                          </div>
+                        </div>
+                        <LegTable legs={other.legs} compact />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function History() {
   const { toast } = useToast();
   const { data: leagues } = useLeagues();
   const [selectedLeagueId, setSelectedLeagueId] = useState<string>("all");
   const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [allCollapsed, setAllCollapsed] = useState(true);
 
   const handleCopySlip = async (parlay: Parameters<typeof buildSlipText>[0]) => {
     try {
@@ -25,51 +371,41 @@ export default function History() {
       toast({ title: "Copy failed", description: "Please copy the text manually.", variant: "destructive" });
     }
   };
-  
+
   const leagueId = selectedLeagueId === "all" ? undefined : Number(selectedLeagueId);
   const { data: parlays, isLoading } = useMyParlayHistory(leagueId);
 
-  const getStatusVariant = (status: string | null): "default" | "destructive" | "secondary" | "outline" => {
-    switch (status) {
-      case 'win': return 'default';
-      case 'loss': return 'destructive';
-      case 'push': return 'secondary';
-      case 'approved': return 'outline';
-      case 'rejected': return 'destructive';
-      case 'void': return 'outline';
-      default: return 'secondary';
-    }
-  };
-
-  const activeParlays = parlays?.filter(p => p.status !== 'void') ?? [];
+  const activeParlays = parlays?.filter(p => p.status !== "void") ?? [];
   const stats = {
     total: activeParlays.length,
-    wins: activeParlays.filter(p => p.status === 'win').length,
-    losses: activeParlays.filter(p => p.status === 'loss').length,
-    pending: activeParlays.filter(p => ['pending', 'approved'].includes(p.status || '')).length,
-    missed: parlays?.filter(p => p.status === 'void').length || 0,
+    wins: activeParlays.filter(p => p.status === "win").length,
+    losses: activeParlays.filter(p => p.status === "loss").length,
+    pending: activeParlays.filter(p => ["pending", "approved"].includes(p.status || "")).length,
+    missed: parlays?.filter(p => p.status === "void").length || 0,
   };
-  const winRate = (stats.wins + stats.losses) > 0 
-    ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1) 
-    : '0.0';
+  const winRate =
+    (stats.wins + stats.losses) > 0
+      ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1)
+      : "0.0";
 
-  // Leg-level breakdown: game outcomes vs player props
   const allLegs = parlays?.flatMap(p => p.legs) ?? [];
-  const gameLegs = allLegs.filter(l => l.betType !== 'player_prop');
-  const propLegs = allLegs.filter(l => l.betType === 'player_prop');
+  const gameLegs = allLegs.filter(l => l.betType !== "player_prop");
+  const propLegs = allLegs.filter(l => l.betType === "player_prop");
   const totalLegs = allLegs.length;
 
-  const gameLegsWithResult = gameLegs.filter(l => l.result === 'win' || l.result === 'loss');
-  const propLegsWithResult = propLegs.filter(l => l.result === 'win' || l.result === 'loss');
+  const gameLegsWithResult = gameLegs.filter(l => l.result === "win" || l.result === "loss");
+  const propLegsWithResult = propLegs.filter(l => l.result === "win" || l.result === "loss");
 
-  const gamePct = totalLegs > 0 ? ((gameLegs.length / totalLegs) * 100).toFixed(0) : '—';
-  const propPct = totalLegs > 0 ? ((propLegs.length / totalLegs) * 100).toFixed(0) : '—';
-  const gameWinRate = gameLegsWithResult.length > 0
-    ? ((gameLegs.filter(l => l.result === 'win').length / gameLegsWithResult.length) * 100).toFixed(1)
-    : '—';
-  const propWinRate = propLegsWithResult.length > 0
-    ? ((propLegs.filter(l => l.result === 'win').length / propLegsWithResult.length) * 100).toFixed(1)
-    : '—';
+  const gamePct = totalLegs > 0 ? ((gameLegs.length / totalLegs) * 100).toFixed(0) : "—";
+  const propPct = totalLegs > 0 ? ((propLegs.length / totalLegs) * 100).toFixed(0) : "—";
+  const gameWinRate =
+    gameLegsWithResult.length > 0
+      ? ((gameLegs.filter(l => l.result === "win").length / gameLegsWithResult.length) * 100).toFixed(1)
+      : "—";
+  const propWinRate =
+    propLegsWithResult.length > 0
+      ? ((propLegs.filter(l => l.result === "win").length / propLegsWithResult.length) * 100).toFixed(1)
+      : "—";
 
   if (isLoading) {
     return (
@@ -90,7 +426,7 @@ export default function History() {
           </h1>
           <p className="text-muted-foreground">Track your parlay performance over time</p>
         </div>
-        
+
         <Select value={selectedLeagueId} onValueChange={setSelectedLeagueId}>
           <SelectTrigger className="w-48 bg-background border-white/10">
             <Filter className="w-4 h-4 text-primary mr-2" />
@@ -98,7 +434,7 @@ export default function History() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Leagues</SelectItem>
-            {leagues?.map((league) => (
+            {leagues?.map(league => (
               <SelectItem key={league.id} value={league.id.toString()}>
                 {league.name}
               </SelectItem>
@@ -132,64 +468,54 @@ export default function History() {
         </Card>
         <Card className="bg-card/50 border-white/5">
           <CardContent className="p-4 text-center">
-            <p className={cn(
-              "text-2xl font-bold font-mono",
-              parseFloat(winRate) >= 50 ? "text-primary" : "text-muted-foreground"
-            )}>
+            <p className={cn("text-2xl font-bold font-mono", parseFloat(winRate) >= 50 ? "text-primary" : "text-muted-foreground")}>
               {winRate}%
             </p>
             <p className="text-xs text-muted-foreground uppercase">Win Rate</p>
           </CardContent>
         </Card>
 
-        {/* Game Outcome vs Player Prop breakdown */}
         <Card className="bg-card/50 border-white/5">
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold font-mono text-blue-400">
-              {gamePct === '—' ? '—' : `${gamePct}%`}
+              {gamePct === "—" ? "—" : `${gamePct}%`}
             </p>
             <p className="text-xs text-muted-foreground uppercase">Game Outcome Legs</p>
-            <p className="text-xs text-blue-400/60 mt-0.5">
-              {gameLegs.length} leg{gameLegs.length !== 1 ? 's' : ''}
-            </p>
+            <p className="text-xs text-blue-400/60 mt-0.5">{gameLegs.length} leg{gameLegs.length !== 1 ? "s" : ""}</p>
           </CardContent>
         </Card>
         <Card className="bg-card/50 border-white/5">
           <CardContent className="p-4 text-center">
-            <p className={cn(
-              "text-2xl font-bold font-mono",
-              gameWinRate !== '—' && parseFloat(gameWinRate) >= 50 ? "text-primary" : "text-muted-foreground"
-            )}>
-              {gameWinRate === '—' ? '—' : `${gameWinRate}%`}
+            <p className={cn("text-2xl font-bold font-mono", gameWinRate !== "—" && parseFloat(gameWinRate) >= 50 ? "text-primary" : "text-muted-foreground")}>
+              {gameWinRate === "—" ? "—" : `${gameWinRate}%`}
             </p>
             <p className="text-xs text-muted-foreground uppercase">Game Outcome Win %</p>
             <p className="text-xs text-muted-foreground/50 mt-0.5">
-              {gameLegsWithResult.length > 0 ? `${gameLegs.filter(l => l.result === 'win').length}W / ${gameLegsWithResult.length} settled` : 'no results yet'}
+              {gameLegsWithResult.length > 0
+                ? `${gameLegs.filter(l => l.result === "win").length}W / ${gameLegsWithResult.length} settled`
+                : "no results yet"}
             </p>
           </CardContent>
         </Card>
         <Card className="bg-card/50 border-white/5">
           <CardContent className="p-4 text-center">
             <p className="text-2xl font-bold font-mono text-violet-400">
-              {propPct === '—' ? '—' : `${propPct}%`}
+              {propPct === "—" ? "—" : `${propPct}%`}
             </p>
             <p className="text-xs text-muted-foreground uppercase">Player Prop Legs</p>
-            <p className="text-xs text-violet-400/60 mt-0.5">
-              {propLegs.length} leg{propLegs.length !== 1 ? 's' : ''}
-            </p>
+            <p className="text-xs text-violet-400/60 mt-0.5">{propLegs.length} leg{propLegs.length !== 1 ? "s" : ""}</p>
           </CardContent>
         </Card>
         <Card className="bg-card/50 border-white/5">
           <CardContent className="p-4 text-center">
-            <p className={cn(
-              "text-2xl font-bold font-mono",
-              propWinRate !== '—' && parseFloat(propWinRate) >= 50 ? "text-primary" : "text-muted-foreground"
-            )}>
-              {propWinRate === '—' ? '—' : `${propWinRate}%`}
+            <p className={cn("text-2xl font-bold font-mono", propWinRate !== "—" && parseFloat(propWinRate) >= 50 ? "text-primary" : "text-muted-foreground")}>
+              {propWinRate === "—" ? "—" : `${propWinRate}%`}
             </p>
             <p className="text-xs text-muted-foreground uppercase">Player Prop Win %</p>
             <p className="text-xs text-muted-foreground/50 mt-0.5">
-              {propLegsWithResult.length > 0 ? `${propLegs.filter(l => l.result === 'win').length}W / ${propLegsWithResult.length} settled` : 'no results yet'}
+              {propLegsWithResult.length > 0
+                ? `${propLegs.filter(l => l.result === "win").length}W / ${propLegsWithResult.length} settled`
+                : "no results yet"}
             </p>
           </CardContent>
         </Card>
@@ -204,107 +530,26 @@ export default function History() {
         </div>
       ) : (
         <div className="space-y-4">
-          {parlays.map((parlay) => (
-            <Card
-              key={parlay.id}
-              className={cn("border-white/5", parlay.status === 'void' ? "bg-card/20 opacity-60" : "bg-card/50")}
-              data-testid={`card-parlay-history-${parlay.id}`}
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              {parlays.length} parlay{parlays.length !== 1 ? "s" : ""}
+            </p>
+            <button
+              onClick={() => setAllCollapsed(c => !c)}
+              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded-md hover:bg-white/5"
             >
-              <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
-                <div className="flex items-center gap-3">
-                  <Calendar className="w-5 h-5 text-muted-foreground" />
-                  <div>
-                    <CardTitle className="text-base">{parlay.week.label}</CardTitle>
-                    <p className="text-xs text-muted-foreground">
-                      {parlay.createdAt && format(new Date(parlay.createdAt), "MMM d, yyyy")}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {parlay.status !== 'void' && (
-                    <button
-                      onClick={() => handleCopySlip(parlay)}
-                      title="Copy bet slip"
-                      className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
-                    >
-                      {copiedId === parlay.id
-                        ? <Check className="w-3.5 h-3.5 text-green-400" />
-                        : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  )}
-                  <Badge variant={getStatusVariant(parlay.status)} className={parlay.status === 'void' ? 'text-muted-foreground border-white/10' : ''}>
-                    {parlay.status === 'void' ? 'Void' : parlay.status}
-                  </Badge>
-                </div>
-              </CardHeader>
-              {parlay.status === 'void' ? (
-                <CardContent>
-                  <p className="text-sm text-muted-foreground italic">No submission — missed this week</p>
-                </CardContent>
-              ) : (
-              <CardContent>
-                <div className="space-y-2">
-                  {parlay.legs.map((leg, i) => (
-                    <div 
-                      key={i} 
-                      className={cn(
-                        "flex flex-col gap-1 text-sm p-3 rounded-lg",
-                        leg.result === 'win' ? "bg-primary/10" :
-                        leg.result === 'loss' ? "bg-destructive/10" :
-                        "bg-white/5"
-                      )}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {(leg as any).gameSegment && (
-                            <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 leading-none">
-                              {(leg as any).gameSegment}
-                            </span>
-                          )}
-                          <span className="text-muted-foreground">
-                            {leg.betType === 'player_prop'
-                              ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}` : ''}`
-                              : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-xs">
-                            {leg.betType === 'player_prop'
-                              ? `${leg.pick.charAt(0).toUpperCase()}${leg.pick.slice(1)}${leg.line ? ` ${leg.line}` : ''}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                              : leg.betType === 'over'
-                              ? `Over ${leg.line || leg.game?.overUnder}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                              : leg.betType === 'under'
-                              ? `Under ${leg.line || leg.game?.overUnder}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`
-                              : leg.betType === 'moneyline'
-                              ? `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}${(leg as any).odds ? ` ${(leg as any).odds}` : ''}`
-                              : `${leg.pick === 'home' ? leg.game?.homeTeam : leg.game?.awayTeam}${leg.line ? ` ${leg.line}` : ''}${(leg as any).odds ? ` (${(leg as any).odds})` : ''}`}
-                          </Badge>
-                          {leg.result && (
-                            <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
-                              {leg.result}
-                            </Badge>
-                          )}
-                        </div>
-                      </div>
-                      {leg.notes && (
-                        <p className="text-xs text-muted-foreground italic pl-1 border-l border-white/10">
-                          {leg.notes}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                
-                {parlay.legs.some(l => l.game?.isFinished) && (
-                  <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">
-                      {parlay.legs.filter(l => l.result === 'win').length} / {parlay.legs.length} legs hit
-                    </span>
-                  </div>
-                )}
-              </CardContent>
-              )}
-            </Card>
+              <ChevronsUpDown className="w-3.5 h-3.5" />
+              {allCollapsed ? "Expand All" : "Collapse All"}
+            </button>
+          </div>
+          {parlays.map(parlay => (
+            <HistoryParlayCard
+              key={parlay.id}
+              parlay={parlay}
+              onCopySlip={handleCopySlip}
+              copiedId={copiedId}
+              initialCollapsed={allCollapsed}
+            />
           ))}
         </div>
       )}
