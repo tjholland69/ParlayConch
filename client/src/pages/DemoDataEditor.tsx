@@ -13,9 +13,9 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Pencil, Plus, Loader2, User, Calendar, GitMerge, CheckSquare, Square, RefreshCw, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronDown, ChevronUp, Scissors } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
-import { useEnrichParlayLeg, type EnrichLog } from "@/hooks/use-bets";
+import { useEnrichParlayLeg, useSplitParlayLegs, type EnrichLog } from "@/hooks/use-bets";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -310,6 +310,14 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
   const [enrichResults, setEnrichResults] = useState<Record<number, EnrichLog>>({});
   const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
   const [fetchAllState, setFetchAllState] = useState<{ running: boolean; done: number; total: number; errors: number } | null>(null);
+  const [splitMode, setSplitMode] = useState(false);
+  const [splitSelected, setSplitSelected] = useState<Set<number>>(new Set());
+  const splitLegs = useSplitParlayLegs(leagueId);
+
+  const toggleSplitLeg = (legId: number) =>
+    setSplitSelected(prev => { const n = new Set(prev); n.has(legId) ? n.delete(legId) : n.add(legId); return n; });
+
+  const exitSplitMode = () => { setSplitMode(false); setSplitSelected(new Set()); };
 
   const handleFetchAll = async () => {
     const legs = parlay.legs.filter(l => !l.result);
@@ -412,6 +420,30 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
                   </Button>
                 )}
 
+                {/* Split mode toggle */}
+                {parlay.legs.length >= 2 && !splitMode && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Split legs into a new parlay"
+                    className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-primary"
+                    onClick={() => setSplitMode(true)}
+                  >
+                    <Scissors className="w-3.5 h-3.5" />
+                    Split
+                  </Button>
+                )}
+                {splitMode && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                    onClick={exitSplitMode}
+                  >
+                    Cancel Split
+                  </Button>
+                )}
+
                 <Button
                   variant="ghost"
                   size="sm"
@@ -433,13 +465,14 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-muted/30 text-muted-foreground text-xs">
+                    {splitMode && <th className="px-3 py-2 w-8" />}
                     <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
                     <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
                     <th className="text-left px-3 py-2 font-medium">Pick</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
-                    {!selectMode && <th className="px-2 py-2" />}
+                    {!selectMode && !splitMode && <th className="px-2 py-2" />}
                   </tr>
                 </thead>
                 <tbody>
@@ -459,7 +492,24 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
 
                     return (
                       <React.Fragment key={leg.id}>
-                        <tr className={cn("border-t border-white/5", i % 2 === 1 && "bg-muted/10")}>
+                        <tr
+                          className={cn(
+                            "border-t border-white/5",
+                            i % 2 === 1 && "bg-muted/10",
+                            splitMode && "cursor-pointer hover:bg-primary/5",
+                            splitMode && splitSelected.has(leg.id) && "bg-primary/10"
+                          )}
+                          onClick={splitMode ? () => toggleSplitLeg(leg.id) : undefined}
+                        >
+                          {splitMode && (
+                            <td className="px-3 py-2 w-8">
+                              <div className="text-primary">
+                                {splitSelected.has(leg.id)
+                                  ? <CheckSquare className="w-4 h-4" />
+                                  : <Square className="w-4 h-4 text-muted-foreground" />}
+                              </div>
+                            </td>
+                          )}
                           <td className="px-3 py-2 font-medium truncate max-w-[140px]">{legLabel(leg)}</td>
                           <td className="px-3 py-2 hidden sm:table-cell">
                             <Badge variant="outline" className="text-xs px-1.5 py-0">
@@ -472,7 +522,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
                           <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
                             {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
                           </td>
-                          {!selectMode && (
+                          {!selectMode && !splitMode && (
                             <td className="px-2 py-2">
                               <div className="flex gap-1 items-center">
                                 <Button
@@ -540,7 +590,7 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
             </div>
           )}
 
-          {!selectMode && (
+          {!selectMode && !splitMode && (
             <Button
               variant="outline"
               size="sm"
@@ -550,6 +600,32 @@ function ParlayCard({ parlay, leagueId, selectMode, isSelected, onToggleSelect }
               <Plus className="w-3.5 h-3.5 mr-1" />
               Add Leg
             </Button>
+          )}
+
+          {splitMode && (
+            <div className="mt-3 flex items-center gap-3">
+              <p className="text-xs text-muted-foreground flex-1">
+                {splitSelected.size === 0
+                  ? "Click legs to select which ones to split off into a new parlay"
+                  : splitSelected.size === parlay.legs.length
+                    ? "Can't split all legs — deselect at least one to keep in the original"
+                    : `${splitSelected.size} leg${splitSelected.size !== 1 ? "s" : ""} selected to split off`}
+              </p>
+              <Button
+                size="sm"
+                className="h-8 gap-1.5 text-xs shrink-0"
+                disabled={splitSelected.size === 0 || splitSelected.size === parlay.legs.length || splitLegs.isPending}
+                onClick={() => splitLegs.mutate(
+                  { parlayId: parlay.id, legIds: [...splitSelected] },
+                  { onSuccess: exitSplitMode }
+                )}
+              >
+                {splitLegs.isPending
+                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  : <Scissors className="w-3.5 h-3.5" />}
+                Split into new parlay
+              </Button>
+            </div>
           )}
         </CardContent>
       </Card>

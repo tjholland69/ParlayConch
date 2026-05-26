@@ -79,6 +79,7 @@ export interface IStorage {
   updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg>;
   addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'>): Promise<ParlayLeg>;
   mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
+  splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay>;
 
   // Imports
   createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
@@ -716,6 +717,27 @@ export class DatabaseStorage implements IStorage {
       }
     });
     emitLeague(leagueId, target.weekId, "parlays_updated");
+  }
+
+  async splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay> {
+    const source = await this.getParlay(parlayId);
+    if (!source || source.leagueId !== leagueId) throw new Error("Parlay not found in this league");
+    if (legIds.length === 0) throw new Error("No legs selected to split");
+    const newParlay = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(parlays).values({
+        userId: source.userId,
+        weekId: source.weekId,
+        leagueId: source.leagueId,
+        status: source.status ?? "pending",
+        source: "imported",
+      }).returning();
+      await tx.update(parlayLegs)
+        .set({ parlayId: created.id })
+        .where(and(eq(parlayLegs.parlayId, parlayId), inArray(parlayLegs.id, legIds)));
+      return created;
+    });
+    emitLeague(leagueId, source.weekId, "parlays_updated");
+    return newParlay;
   }
 
   // Imports

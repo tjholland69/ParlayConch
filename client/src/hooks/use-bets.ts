@@ -763,6 +763,28 @@ export function useUpdateParlayStatus(leagueId: number) {
   });
 }
 
+export function useSplitParlayLegs(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ parlayId, legIds }: { parlayId: number; legIds: number[] }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlays/${parlayId}/split`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ legIds }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json() as Promise<{ message: string; newParlayId: number }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Legs Split", description: data.message });
+    },
+    onError: (e: Error) => toast({ title: "Split failed", description: e.message, variant: "destructive" }),
+  });
+}
+
 export function useAddParlayLeg(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();

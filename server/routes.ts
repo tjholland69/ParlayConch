@@ -1152,6 +1152,23 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/leagues/:leagueId/parlays/:parlayId/split", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const parlayId = Number(req.params.parlayId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const { legIds } = req.body;
+      if (!Array.isArray(legIds) || legIds.length === 0) {
+        return res.status(400).json({ message: "legIds[] is required and must be non-empty" });
+      }
+      const newParlay = await storage.splitParlayLegs(leagueId, parlayId, legIds);
+      res.json({ message: `Split ${legIds.length} leg(s) into new parlay #${newParlay.id}`, newParlayId: newParlay.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/leagues/:id/parlays/all", isAuthenticated, async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
