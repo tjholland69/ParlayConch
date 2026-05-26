@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Component, type ReactNode, useState } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLeagues, useAllLeagueParlays, useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useWeeks, useLeagueMembersWithUsers } from "@/hooks/use-bets";
@@ -18,6 +18,38 @@ import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+
+// ── Error Boundary ─────────────────────────────────────────────────────────────
+type EBState = { error: Error | null };
+class CardErrorBoundary extends Component<{ parlayId: number; children: ReactNode }, EBState> {
+  state: EBState = { error: null };
+  static getDerivedStateFromError(error: Error): EBState { return { error }; }
+  componentDidCatch(error: Error, info: { componentStack: string }) {
+    console.error(`[ParlayCard #${this.props.parlayId}] crashed:`, error.message, info.componentStack);
+  }
+  reset = () => this.setState({ error: null });
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 space-y-2">
+          <p className="text-sm font-semibold text-destructive">
+            Card #{this.props.parlayId} crashed — {this.state.error.message}
+          </p>
+          <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+            {this.state.error.stack}
+          </pre>
+          <button
+            className="text-xs underline text-muted-foreground hover:text-foreground"
+            onClick={this.reset}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
 const PICK_OPTIONS: Record<string, string[]> = {
@@ -704,14 +736,15 @@ export default function DemoDataEditor() {
       ) : (
         <div className="space-y-4">
           {filtered.map(parlay => (
-            <ParlayCard
-              key={parlay.id}
-              parlay={parlay}
-              leagueId={leagueId}
-              selectMode={selectMode}
-              isSelected={selectedIds.has(parlay.id)}
-              onToggleSelect={toggleSelect}
-            />
+            <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
+              <ParlayCard
+                parlay={parlay}
+                leagueId={leagueId}
+                selectMode={selectMode}
+                isSelected={selectedIds.has(parlay.id)}
+                onToggleSelect={toggleSelect}
+              />
+            </CardErrorBoundary>
           ))}
         </div>
       )}
