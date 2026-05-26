@@ -23,10 +23,14 @@ function schedulesUrl() {
   return "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv";
 }
 
-function playerStatsUrl(season: number) {
-  // Per-season file is much smaller than the all-seasons file
-  return `${BASE}/player_stats/player_stats_${season}.csv`;
-}
+// Per-season files (e.g. player_stats_2024.csv) are published with a lag —
+// nflverse often doesn't publish the per-season file for the most recent year
+// until months after the season ends. When it 404s we fall back to the
+// all-seasons combined file (player_stats.csv, ~33 MB) and filter in memory.
+const PLAYER_STATS_PER_SEASON_URL = (season: number) =>
+  `${BASE}/player_stats/player_stats_${season}.csv`;
+const PLAYER_STATS_ALL_SEASONS_URL =
+  `${BASE}/player_stats/player_stats.csv`;
 
 // ─── Team abbreviation mapping ──────────────────────────────────────────────
 // nflverse uses standard NFL abbreviations; our games table uses short names
@@ -94,6 +98,40 @@ async function fetchCsv(url: string): Promise<Record<string, string>[]> {
     console.warn(`[nflverse] CSV parse warning: ${firstErr.message} (row ${firstErr.row})`);
   }
   return parsed.data;
+}
+
+/**
+ * Fetch player stats for a given season, trying the small per-season file
+ * first and falling back to the large all-seasons file if the per-season
+ * file hasn't been published yet (nflverse publishes these with a lag).
+ */
+async function fetchPlayerStatsCsv(season: number): Promise<Record<string, string>[]> {
+  const perSeasonUrl = PLAYER_STATS_PER_SEASON_URL(season);
+  const res = await fetch(perSeasonUrl, {
+    headers: { "User-Agent": "parlayconch-app/1.0" },
+  });
+
+  if (res.ok) {
+    const text = await res.text();
+    const parsed = Papa.parse<Record<string, string>>(text, {
+      header: true, skipEmptyLines: true,
+      transformHeader: (h) => h.trim().toLowerCase(),
+    });
+    return parsed.data;
+  }
+
+  if (res.status === 404) {
+    // Per-season file not yet published — fall back to all-seasons combined file.
+    console.warn(
+      `[nflverse] player_stats_${season}.csv not found (${res.status}). ` +
+      `Falling back to combined all-seasons file (this will be slower — ~33 MB download).`
+    );
+    const allRows = await fetchCsv(PLAYER_STATS_ALL_SEASONS_URL);
+    // Filter to the requested season so downstream logic is unchanged.
+    return allRows.filter(r => parseInt(r.season) === season);
+  }
+
+  throw new Error(`nflverse fetch failed: ${res.status} ${res.statusText} — ${perSeasonUrl}`);
 }
 
 // ─── Game score sync ─────────────────────────────────────────────────────────
@@ -279,7 +317,7 @@ export async function syncPlayerStatsForGames(
   }
 
   console.log(`[nflverse] Fetching player stats for season ${season}, week ${week}, teams: ${Array.from(teamAbbrevs).join(", ")}…`);
-  const rows = (await fetchCsv(playerStatsUrl(season))) as unknown as NflversePlayerStatRow[];
+  const rows = (await fetchPlayerStatsCsv(season)) as unknown as NflversePlayerStatRow[];
 
   // Filter to our target week + teams
   const relevant = rows.filter(
