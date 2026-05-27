@@ -47,6 +47,10 @@ export async function registerRoutes(
   }
   registerRealtimeWebSocket(httpServer, app);
 
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
   // The override is only applied when a super user has set an active act-as session.
