@@ -10,7 +10,10 @@ import {
   type Notification, type LeagueNotificationSettings,
   type LeagueWeekLock, type WeekLockStatus,
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
+  type UserSettings,
 } from "@shared/schema";
+import { normalizeJoinedGame, normalizeParlayLegPatch } from "@shared/dataIntegrity";
+import { countParlayOutcomes, mergeUserSettings, buildUserStat, normalizeOutcomeCounts } from "@shared/statsAggregation";
 import { eq, and, desc, inArray, sql, ilike, not } from "drizzle-orm";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 
@@ -237,22 +240,18 @@ export class DatabaseStorage implements IStorage {
 
     return rows
       .map(row => {
-        const wins = Number(row.wins);
-        const losses = Number(row.losses);
-        const pushes = Number(row.pushes);
-        const totalDecided = wins + losses;
-        const winRate = totalDecided > 0 ? (wins / totalDecided) * 100 : 0;
-        const settings = row.settings as any;
-        return {
-          userId: row.userId,
-          username: settings?.displayName || row.firstName || row.email || 'Unknown',
-          profileImageUrl: row.profileImageUrl,
-          wins,
-          losses,
-          pushes,
-          winRate,
-          region: settings?.region || null,
-        };
+        const counts = normalizeOutcomeCounts(row);
+        const settings = row.settings as UserSettings | null;
+        return buildUserStat(
+          {
+            userId: row.userId,
+            firstName: row.firstName,
+            email: row.email,
+            profileImageUrl: row.profileImageUrl,
+            settings,
+          },
+          counts,
+        );
       })
       .sort((a, b) => b.winRate - a.winRate);
   }
@@ -267,23 +266,18 @@ export class DatabaseStorage implements IStorage {
     const leagueParlays = await db.select().from(parlays).where(eq(parlays.leagueId, leagueId));
 
     return memberUsers.map(user => {
-      const userParlays = leagueParlays.filter(p => p.userId === user.id && ['win', 'loss', 'push'].includes(p.status || ''));
-      const wins = userParlays.filter(p => p.status === 'win').length;
-      const losses = userParlays.filter(p => p.status === 'loss').length;
-      const pushes = userParlays.filter(p => p.status === 'push').length;
-      const totalDecided = wins + losses;
-      const winRate = totalDecided > 0 ? (wins / totalDecided) * 100 : 0;
-
-      return {
-        userId: user.id,
-        username: (user.settings as any)?.displayName || user.firstName || user.email || 'Unknown',
-        profileImageUrl: user.profileImageUrl,
-        wins,
-        losses,
-        pushes,
-        winRate,
-        region: (user.settings as any)?.region || null,
-      };
+      const userParlays = leagueParlays.filter(p => p.userId === user.id);
+      const counts = countParlayOutcomes(userParlays);
+      return buildUserStat(
+        {
+          userId: user.id,
+          firstName: user.firstName,
+          email: user.email,
+          profileImageUrl: user.profileImageUrl,
+          settings: user.settings as UserSettings | null,
+        },
+        counts,
+      );
     }).sort((a, b) => b.winRate - a.winRate);
   }
 
@@ -585,7 +579,7 @@ export class DatabaseStorage implements IStorage {
 
     return {
       ...parlay,
-      legs: legs.map(l => ({ ...l.leg, game: l.game ?? null })),
+      legs: legs.map(l => ({ ...l.leg, game: normalizeJoinedGame(l.game) })),
       week
     };
   }
@@ -612,7 +606,7 @@ export class DatabaseStorage implements IStorage {
     const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
     for (const { leg, game } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
-      existing.push({ ...leg, game });
+      existing.push({ ...leg, game: normalizeJoinedGame(game) });
       legsByParlayId.set(leg.parlayId, existing);
     }
 
@@ -663,7 +657,7 @@ export class DatabaseStorage implements IStorage {
     const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
     for (const { leg, game } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
-      existing.push({ ...leg, game });
+      existing.push({ ...leg, game: normalizeJoinedGame(game) });
       legsByParlayId.set(leg.parlayId, existing);
     }
 
@@ -733,7 +727,7 @@ export class DatabaseStorage implements IStorage {
     const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
     for (const { leg, game } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
-      existing.push({ ...leg, game });
+      existing.push({ ...leg, game: normalizeJoinedGame(game) });
       legsByParlayId.set(leg.parlayId, existing);
     }
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
@@ -760,7 +754,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg> {
-    const [updated] = await db.update(parlayLegs).set(updates).where(eq(parlayLegs.id, legId)).returning();
+    const normalized = normalizeParlayLegPatch(updates);
+    const [updated] = await db.update(parlayLegs).set(normalized).where(eq(parlayLegs.id, legId)).returning();
     return updated;
   }
 
@@ -999,7 +994,10 @@ export class DatabaseStorage implements IStorage {
 
   async updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void> {
     const [current] = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId));
-    const merged = { ...(current?.settings as Record<string, unknown> || {}), ...settings };
+    const merged = mergeUserSettings(
+      current?.settings as UserSettings | null | undefined,
+      settings as UserSettings,
+    );
     await db.update(users).set({ settings: merged }).where(eq(users.id, userId));
   }
 
