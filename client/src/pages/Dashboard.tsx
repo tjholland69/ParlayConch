@@ -78,7 +78,7 @@ export default function Dashboard() {
                       "font-mono font-bold text-xl",
                       stat.winRate >= 50 ? "text-primary" : "text-muted-foreground"
                     )}>
-                      {stat.winRate}%
+                      {stat.winRate.toFixed(1)}%
                     </p>
                   </div>
                 </div>

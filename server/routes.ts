@@ -12,8 +12,10 @@ import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
+import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
+import { enrichSingleLeg } from "./services/legEnrich";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
 import { parseTicketImages } from "./services/screenshotParser";
 import multer from "multer";
@@ -204,6 +206,23 @@ export async function registerRoutes(
     const member = await storage.joinLeague(userId, inviteCode);
     if (!member) return res.status(404).json({ message: "Invalid invite code" });
     res.json(member);
+  });
+
+  // Must be before /api/leagues/:id to avoid route conflict
+  app.get("/api/leagues/overview-stats", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const userLeagues = await storage.getUserLeagues(userId);
+    const leagueIds = userLeagues.map(l => l.id);
+    const stats = await storage.getLeagueOverviewStats(leagueIds);
+    res.json(stats);
+  });
+
+  app.get("/api/leagues/active-week-status", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const userLeagues = await storage.getUserLeagues(userId);
+    const leagueIds = userLeagues.map(l => l.id);
+    const status = await storage.getActiveWeekParlayStatus(leagueIds);
+    res.json(status);
   });
 
   app.get("/api/leagues/:id", isAuthenticated, async (req, res) => {
@@ -814,8 +833,49 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/admin/resolve-props
+  // Resolves all pending player-prop legs using already-synced nflverse player stats.
+  // No body required — scans every prop leg across all leagues.
+  app.post("/api/admin/resolve-props", isAuthenticated, async (req, res) => {
+    try {
+      const result = await resolvePropsFromStats();
+      res.json({ message: "Prop resolution complete", ...result });
+    } catch (err: any) {
+      console.error("[prop-resolve] error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/admin/fetch-prop-lines
+  // Fetches player prop lines/odds from The Odds API for a specific league+week.
+  // Body: { leagueId: number, weekId: number }
+  app.post("/api/admin/fetch-prop-lines", isAuthenticated, async (req, res) => {
+    try {
+      const { leagueId, weekId } = req.body;
+      if (!leagueId || !weekId) {
+        return res.status(400).json({ message: "leagueId and weekId are required" });
+      }
+      const result = await fetchPropLinesFromOddsApi(Number(leagueId), Number(weekId));
+      res.json({ message: "Prop lines fetch complete", ...result });
+    } catch (err: any) {
+      console.error("[prop-lines] error:", err);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // GET /api/games/:gameId/player-stats
   // Returns player stats for all players on both teams in a given game
+  // Backfill: promote all fully-resolved parlays from 'approved'/'pending' to win/loss/push
+  app.post("/api/admin/rollup-parlay-statuses", isAuthenticated, async (req, res) => {
+    try {
+      const { leagueId } = req.body;
+      const result = await storage.rollupLeagueParlayStatuses(leagueId ? Number(leagueId) : undefined);
+      res.json({ message: "Rollup complete", ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/games/:gameId/player-stats", isAuthenticated, async (req, res) => {
     try {
       const gameId = Number(req.params.gameId);
@@ -1132,6 +1192,58 @@ export async function registerRoutes(
     return userId;
   }
 
+  app.post("/api/leagues/:leagueId/parlays/merge", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const { targetParlayId, sourceParlayIds } = req.body;
+      if (!targetParlayId || !Array.isArray(sourceParlayIds) || sourceParlayIds.length === 0) {
+        return res.status(400).json({ message: "targetParlayId and sourceParlayIds[] are required" });
+      }
+      if (sourceParlayIds.includes(targetParlayId)) {
+        return res.status(400).json({ message: "Target parlay cannot also be a source" });
+      }
+      await storage.mergeParlays(leagueId, targetParlayId, sourceParlayIds);
+      res.json({ message: `Merged ${sourceParlayIds.length} parlay(s) into parlay #${targetParlayId}` });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/leagues/:leagueId/parlays/historical", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const { userId, weekId, legs } = req.body;
+      if (!userId || !weekId) {
+        return res.status(400).json({ message: "userId and weekId are required" });
+      }
+      const parlay = await storage.createHistoricalParlay(userId, leagueId, Number(weekId), legs ?? []);
+      res.json(parlay);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/leagues/:leagueId/parlays/:parlayId/split", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const parlayId = Number(req.params.parlayId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const { legIds } = req.body;
+      if (!Array.isArray(legIds) || legIds.length === 0) {
+        return res.status(400).json({ message: "legIds[] is required and must be non-empty" });
+      }
+      const newParlay = await storage.splitParlayLegs(leagueId, parlayId, legIds);
+      res.json({ message: `Split ${legIds.length} leg(s) into new parlay #${newParlay.id}`, newParlayId: newParlay.id });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/leagues/:id/parlays/all", isAuthenticated, async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
@@ -1186,6 +1298,22 @@ export async function registerRoutes(
       const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment } = req.body;
       const updated = await storage.updateParlayLeg(legId, { betType, pick, line, odds, result, playerName, propType, notes, gameSegment });
       res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/parlay-legs/:legId/enrich", isAuthenticated, async (req, res) => {
+    try {
+      const legId = Number(req.params.legId);
+      const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+      if (!leg) return res.status(404).json({ message: "Leg not found" });
+      const parlay = await storage.getParlay(leg.parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      if (!uid) return;
+      const log = await enrichSingleLeg(legId);
+      res.json(log);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

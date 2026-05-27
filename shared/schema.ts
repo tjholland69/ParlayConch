@@ -83,7 +83,7 @@ export const games = pgTable("games", {
   underOdds: text("under_odds"),
   moneylineHome: text("moneyline_home"),
   moneylineAway: text("moneyline_away"),
-  gameTime: timestamp("game_time").notNull(),
+  gameTime: timestamp("game_time"),
   homeScore: integer("home_score"),
   awayScore: integer("away_score"),
   isFinished: boolean("is_finished").default(false),
@@ -166,7 +166,6 @@ export const parlays = pgTable("parlays", {
 }, (table) => [
   index("parlays_user_league_week_idx").on(table.userId, table.leagueId, table.weekId),
   index("parlays_league_week_idx").on(table.leagueId, table.weekId),
-  uniqueIndex("parlays_user_league_week_uidx").on(table.userId, table.leagueId, table.weekId),
 ]);
 
 // Valid player prop types for reference
@@ -216,6 +215,7 @@ export const parlayLegs = pgTable("parlay_legs", {
   playerName: text("player_name"), // for player_prop bets: the player's name
   propType: text("prop_type"),     // for player_prop bets: the prop category (e.g. 'rush_yards')
   notes: text("notes"),            // free-text note, display only
+  enrichmentLog: text("enrichment_log"), // JSON: { at, changes, warnings, errors } — last data-fetch attempt
 }, (table) => [
   index("parlay_legs_parlay_id_idx").on(table.parlayId),
 ]);

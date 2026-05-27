@@ -31,6 +31,8 @@
 
   --card: 220 15% 13%;
   --card-foreground: 210 20% 98%;
+  --popover: 220 15% 11%;
+  --popover-foreground: 210 20% 98%;
   --border: 215 15% 20%;
   --input: 215 15% 20%;
   --ring: 221 83% 53%;
@@ -60,6 +62,8 @@
 
   --card: 0 0% 100%;
   --card-foreground: 220 20% 8%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 20% 8%;
   --border: 220 15% 82%;
   --input: 220 15% 82%;
   --ring: 221 83% 48%;

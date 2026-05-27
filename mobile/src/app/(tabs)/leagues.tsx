@@ -11,7 +11,6 @@ import {
   ActivityIndicator,
   Alert,
   StyleSheet,
-  useWindowDimensions,
 } from "react-native";
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
@@ -29,7 +28,6 @@ export default function LeaguesScreen() {
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
 
   const [modal, setModal] = useState<ModalType>(null);
   const [leagueName, setLeagueName] = useState("");
@@ -81,7 +79,7 @@ export default function LeaguesScreen() {
     <View style={styles.container}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { width }]}
+        contentContainerStyle={styles.scrollContent}
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}

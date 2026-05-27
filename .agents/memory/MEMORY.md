@@ -1,0 +1,1 @@
+- [nflverse player stats URL](nflverse-player-stats-url.md) — per-season files are named `player_stats_season_YYYY.csv`, NOT `player_stats_YYYY.csv`; 2025+ data unavailable until season ends.

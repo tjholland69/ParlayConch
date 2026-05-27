@@ -1,25 +1,40 @@
-import { useState, useEffect } from "react";
-import { useWeeks, useGames, useLeagues } from "@/hooks/use-bets";
+import { useState, useEffect, useMemo } from "react";
+import { useWeeks, useGames, useLeagues, useLeaguesActiveStatus } from "@/hooks/use-bets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Calendar, Users, ArrowRight } from "lucide-react";
+import { Loader2, Calendar, Users, ArrowRight, Info } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
+import { cn } from "@/lib/utils";
 
 export default function Picks() {
   const { data: weeks, isLoading: isLoadingWeeks } = useWeeks();
   const { data: leagues, isLoading: isLoadingLeagues } = useLeagues();
+
+  const currentYear = new Date().getFullYear();
+  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [selectedWeekId, setSelectedWeekId] = useState<string | undefined>();
-  
+
+  const years = useMemo(
+    () => [...new Set(weeks?.map(w => w.season) ?? [])].sort((a, b) => b - a),
+    [weeks]
+  );
+
+  const weeksForYear = useMemo(
+    () => weeks?.filter(w => w.season === selectedYear) ?? [],
+    [weeks, selectedYear]
+  );
+
   useEffect(() => {
-    if (weeks?.length && !selectedWeekId) {
-      const activeWeek = weeks.find(w => w.isActive);
-      setSelectedWeekId(activeWeek ? String(activeWeek.id) : String(weeks[0].id));
-    }
-  }, [weeks, selectedWeekId]);
+    if (!weeksForYear.length) return;
+    const activeWeek = weeksForYear.find(w => w.isActive);
+    const week1 = weeksForYear.find(w => w.weekNumber === 1) ?? weeksForYear[0];
+    setSelectedWeekId(activeWeek ? String(activeWeek.id) : String(week1.id));
+  }, [selectedYear, weeks]);
 
   const { data: games, isLoading: isLoadingGames } = useGames(Number(selectedWeekId));
+  const { data: activeStatus } = useLeaguesActiveStatus();
 
   if (isLoadingWeeks || isLoadingLeagues) {
     return (
@@ -29,7 +44,6 @@ export default function Picks() {
     );
   }
 
-  // If user has no leagues, prompt them to join/create one
   if (!leagues?.length) {
     return (
       <div className="max-w-2xl mx-auto space-y-8 pb-12">
@@ -57,22 +71,38 @@ export default function Picks() {
           <h1 className="text-3xl font-display font-bold" data-testid="text-picks-title">Quick View</h1>
           <p className="text-muted-foreground">Browse games for the week. Make picks in your league.</p>
         </div>
-        
-        <div className="w-full md:w-64">
-          <Select 
-            value={selectedWeekId} 
+
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          {/* Year filter */}
+          <Select
+            value={String(selectedYear)}
+            onValueChange={v => setSelectedYear(Number(v))}
+          >
+            <SelectTrigger className="bg-background border-white/10 h-12 w-24 shrink-0">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {years.map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Week filter */}
+          <Select
+            value={selectedWeekId}
             onValueChange={setSelectedWeekId}
           >
-            <SelectTrigger className="bg-background border-white/10 h-12">
+            <SelectTrigger className="bg-background border-white/10 h-12 flex-1 md:w-44 md:flex-none">
               <div className="flex items-center gap-2">
-                <Calendar className="w-4 h-4 text-primary" />
+                <Calendar className="w-4 h-4 text-primary shrink-0" />
                 <SelectValue placeholder="Select Week" />
               </div>
             </SelectTrigger>
             <SelectContent>
-              {weeks?.map((week) => (
+              {weeksForYear.map(week => (
                 <SelectItem key={week.id} value={String(week.id)}>
-                  {week.label} {week.isActive && "(Current)"}
+                  {week.label}{week.isActive ? " (Current)" : ""}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -82,22 +112,69 @@ export default function Picks() {
 
       {/* League Shortcuts */}
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-        {leagues.map((league) => (
-          <Link key={league.id} href={`/leagues/${league.id}`}>
-            <Card className="bg-card/50 border-white/5 hover:bg-white/5 transition-colors cursor-pointer" data-testid={`card-league-quick-${league.id}`}>
-              <CardContent className="p-4 flex items-center justify-between">
-                <div>
-                  <p className="font-bold">{league.name}</p>
-                  <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
-                </div>
-                <Button size="sm" variant="ghost">
-                  Make Picks
-                  <ArrowRight className="w-3 h-3 ml-1" />
-                </Button>
-              </CardContent>
-            </Card>
-          </Link>
-        ))}
+        {leagues.map((league) => {
+          const status = activeStatus?.[league.id];
+          const hasOpenParlay = !!(status && status.submittedCount > 0 && !status.isLocked);
+          const pct = hasOpenParlay
+            ? Math.round((status!.submittedCount / Math.max(league.memberCount, 1)) * 100)
+            : 0;
+
+          return (
+            <Link key={league.id} href={`/leagues/${league.id}`}>
+              <Card
+                className={cn(
+                  "relative overflow-hidden border cursor-pointer transition-all duration-300",
+                  hasOpenParlay
+                    ? "border-red-500/50 bg-card/50 hover:bg-red-950/20"
+                    : "border-white/5 bg-card/50 hover:bg-white/5"
+                )}
+                style={hasOpenParlay ? {
+                  boxShadow: "0 0 18px 3px rgba(239,68,68,0.22), 0 0 5px 1px rgba(239,68,68,0.16)"
+                } : undefined}
+                data-testid={`card-league-quick-${league.id}`}
+              >
+                {/* Red progress bar background */}
+                {hasOpenParlay && (
+                  <div
+                    aria-hidden="true"
+                    className="absolute inset-y-0 left-0 pointer-events-none transition-all duration-700 ease-out"
+                    style={{
+                      width: `${pct}%`,
+                      background: "linear-gradient(to right, rgba(239,68,68,0.28), rgba(239,68,68,0.07))",
+                      boxShadow: "inset -2px 0 8px rgba(239,68,68,0.14)",
+                    }}
+                  />
+                )}
+                <CardContent className="p-4 flex items-center justify-between relative z-10">
+                  <div>
+                    <p className="font-bold">{league.name}</p>
+                    {hasOpenParlay ? (
+                      <>
+                        <p className="text-xs text-red-400 font-medium flex items-center gap-1.5 mt-0.5">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
+                          Parlay Loading...
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {status!.submittedCount}/{league.memberCount} members in
+                        </p>
+                      </>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={hasOpenParlay ? "text-red-400 hover:text-red-300 shrink-0" : "shrink-0"}
+                  >
+                    {hasOpenParlay ? "Join Parlay" : "Make Picks"}
+                    <ArrowRight className="w-3 h-3 ml-1" />
+                  </Button>
+                </CardContent>
+              </Card>
+            </Link>
+          );
+        })}
       </div>
 
       {/* Games Preview */}
@@ -114,42 +191,61 @@ export default function Picks() {
             <p className="text-muted-foreground">No games scheduled for this week yet.</p>
           </div>
         ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {games?.map((game) => (
-              <Card key={game.id} className="bg-card/50 border-white/5" data-testid={`card-game-preview-${game.id}`}>
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-muted-foreground">
-                      {format(new Date(game.gameTime), "EEE, MMM d h:mm a")}
-                    </span>
-                    {game.isFinished && (
-                      <span className="text-xs font-mono text-muted-foreground">Final</span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <p className="font-bold">{game.awayTeam}</p>
-                      <p className="text-xs text-muted-foreground">{game.awayRecord}</p>
-                    </div>
-                    <div className="px-4 text-center">
-                      {game.isFinished ? (
-                        <p className="font-mono">{game.awayScore} - {game.homeScore}</p>
-                      ) : (
-                        <>
-                          <p className="text-xs text-muted-foreground">@</p>
-                          <p className="font-mono text-sm">{game.spread}</p>
-                        </>
-                      )}
-                    </div>
-                    <div className="flex-1 text-right">
-                      <p className="font-bold">{game.homeTeam}</p>
-                      <p className="text-xs text-muted-foreground">{game.homeRecord}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+          <>
+            {games?.some(g => !g.spread) && (
+              <div className="flex items-start gap-2 text-xs text-muted-foreground bg-white/5 border border-white/10 rounded-xl px-4 py-3 mb-4">
+                <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/70" />
+                <span>Lines and game times will be posted closer to kickoff. Check back soon!</span>
+              </div>
+            )}
+            <div className="grid gap-3 md:grid-cols-2">
+              {games?.map((game) => {
+                const hasOdds = !!(game.spread || game.overUnder || game.moneylineHome);
+                const hasTime = !!game.gameTime;
+                return (
+                  <Card key={game.id} className="bg-card/50 border-white/5" data-testid={`card-game-preview-${game.id}`}>
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-muted-foreground">
+                          {hasTime
+                            ? format(new Date(game.gameTime!), "EEE, MMM d h:mm a")
+                            : <span className="italic">Time TBD</span>}
+                        </span>
+                        {game.isFinished && (
+                          <span className="text-xs font-mono text-muted-foreground">Final</span>
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <p className="font-bold">{game.awayTeam}</p>
+                          <p className="text-xs text-muted-foreground">{game.awayRecord ?? ""}</p>
+                        </div>
+                        <div className="px-3 text-center min-w-[90px]">
+                          {game.isFinished ? (
+                            <p className="font-mono">{game.awayScore} - {game.homeScore}</p>
+                          ) : hasOdds ? (
+                            <>
+                              <p className="text-xs text-muted-foreground">@</p>
+                              <p className="font-mono text-sm">{game.spread}</p>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-[9px] text-primary/60 font-semibold uppercase tracking-wide leading-tight">More Info</p>
+                              <p className="text-[9px] text-primary/60 font-semibold uppercase tracking-wide leading-tight">Coming Soon</p>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex-1 text-right">
+                          <p className="font-bold">{game.homeTeam}</p>
+                          <p className="text-xs text-muted-foreground">{game.homeRecord ?? ""}</p>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
     </div>

@@ -124,5 +124,11 @@ export async function enrichLeagueParlayLegs(leagueId?: number): Promise<{
     }
   }
 
+  // After enriching legs, roll up parlay-level statuses so the Dashboard
+  // leaderboard (which counts parlay.status = 'win'/'loss'/'push') reflects
+  // the individual leg results.
+  const rollupResult = await storage.rollupLeagueParlayStatuses(leagueId);
+  console.log(`[Enrichment] rollup: ${rollupResult.updated} parlay(s) promoted to win/loss/push, ${rollupResult.skipped} skipped`);
+
   return { enriched, resultsFilled, linesFilled, skipped };
 }

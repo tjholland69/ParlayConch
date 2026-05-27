@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLeagues, useCreateLeague, useJoinLeague } from "@/hooks/use-bets";
+import { useLeagues, useCreateLeague, useJoinLeague, useLeaguesOverviewStats } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { Link } from "wouter";
 
 export default function Leagues() {
   const { data: leagues, isLoading } = useLeagues();
+  const { data: overviewStats } = useLeaguesOverviewStats();
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
   const { toast } = useToast();
@@ -190,6 +191,22 @@ export default function Leagues() {
                   <div>
                     <span>{league.minLegsPerParlay}-{league.maxLegsPerParlay} legs per parlay</span>
                   </div>
+                  {(() => {
+                    const stat = overviewStats?.[league.id];
+                    if (!stat || stat.totalDecided === 0) return null;
+                    const color =
+                      stat.winRate >= 60 ? "text-green-400" :
+                      stat.winRate >= 40 ? "text-yellow-400" :
+                      "text-red-400";
+                    return (
+                      <div className="ml-auto flex items-center gap-1.5 shrink-0">
+                        <span className={`font-bold text-sm ${color}`}>
+                          {stat.winRate.toFixed(1)}%
+                        </span>
+                        <span className="text-xs text-muted-foreground/60">Overall Win</span>
+                      </div>
+                    );
+                  })()}
                 </div>
               </CardContent>
             </Card>
