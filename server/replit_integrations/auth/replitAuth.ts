@@ -9,6 +9,7 @@ import connectPg from "connect-pg-simple";
 import { RedisStore } from "connect-redis";
 import { authStorage } from "./storage";
 import { getSessionRedis, redisKeyPrefix } from "../../redis-clients";
+import { pool } from "../../db";
 
 const getOidcConfig = memoize(
   async () => {
@@ -31,7 +32,7 @@ export function getSession() {
     : (() => {
         const pgStore = connectPg(session);
         return new pgStore({
-          conString: process.env.DATABASE_URL,
+          pool,
           createTableIfMissing: false,
           ttl: sessionTtl,
           tableName: "sessions",
