@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Shell, Shield, Coins, ArrowRight, Trophy, Eye, EyeOff, Loader2 } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 
 function getNflSeasonInfo(): { inSeason: boolean; year: number } {
@@ -27,7 +26,6 @@ interface AuthFormProps {
 }
 
 function AuthForm({ mode, onSuccess, onSwitch }: AuthFormProps) {
-  const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
@@ -145,24 +143,6 @@ function AuthForm({ mode, onSuccess, onSwitch }: AuthFormProps) {
           )}
         </Button>
       </form>
-
-      <div className="relative my-5">
-        <div className="absolute inset-0 flex items-center">
-          <div className="w-full border-t border-white/10" />
-        </div>
-        <div className="relative flex justify-center text-xs uppercase text-muted-foreground">
-          <span className="bg-background px-2">or</span>
-        </div>
-      </div>
-
-      <Button
-        variant="outline"
-        className="w-full border-white/10 hover:bg-white/5"
-        onClick={() => { window.location.href = "/api/login"; }}
-      >
-        <Shell className="w-4 h-4 mr-2 text-blue-500" />
-        Continue with Replit
-      </Button>
 
       <p className="text-center text-sm text-muted-foreground mt-5">
         {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
