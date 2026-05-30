@@ -80,6 +80,23 @@ export async function setupAuth(app: Express) {
   passport.serializeUser((user: Express.User, cb) => cb(null, user));
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
+  // Logout always works regardless of auth provider
+  app.get("/api/logout", async (req, res) => {
+    if (process.env.REPL_ID) {
+      const config = await getOidcConfig();
+      req.logout(() => {
+        res.redirect(
+          client.buildEndSessionUrl(config, {
+            client_id: process.env.REPL_ID!,
+            post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
+          }).href
+        );
+      });
+    } else {
+      req.logout(() => res.redirect("/"));
+    }
+  });
+
   // Replit OIDC is only available when running on Replit
   if (!process.env.REPL_ID) return;
 
@@ -130,17 +147,6 @@ export async function setupAuth(app: Express) {
       successReturnToOrRedirect: "/",
       failureRedirect: "/api/login",
     })(req, res, next);
-  });
-
-  app.get("/api/logout", (req, res) => {
-    req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
-    });
   });
 }
 
