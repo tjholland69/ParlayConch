@@ -164,7 +164,7 @@ export const parlays = pgTable("parlays", {
     onDelete: "set null",
   }),
 }, (table) => [
-  index("parlays_user_league_week_idx").on(table.userId, table.leagueId, table.weekId),
+  uniqueIndex("parlays_user_league_week_uidx").on(table.userId, table.leagueId, table.weekId),
   index("parlays_league_week_idx").on(table.leagueId, table.weekId),
 ]);
 
