@@ -204,6 +204,7 @@ export const parlayLegs = pgTable("parlay_legs", {
   parlayId: integer("parlay_id")
     .notNull()
     .references(() => parlays.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }), // league member who contributed this leg — distinct from parlays.userId (the orchestrator); nullable until existing legs are backfilled
   gameId: integer("game_id").references(() => games.id, { onDelete: "set null" }), // nullable — player prop bets may not reference a specific game
   betType: text("bet_type").notNull(), // 'spread', 'moneyline', 'over', 'under', 'player_prop'
   pick: text("pick").notNull(), // 'home', 'away', 'over', 'under', 'yes', 'no'
@@ -218,6 +219,7 @@ export const parlayLegs = pgTable("parlay_legs", {
   enrichmentLog: text("enrichment_log"), // JSON: { at, changes, warnings, errors } — last data-fetch attempt
 }, (table) => [
   index("parlay_legs_parlay_id_idx").on(table.parlayId),
+  index("parlay_legs_user_id_idx").on(table.userId),
 ]);
 
 // Parlay week locks — tracks when a Parlay Maestro locks a week's submissions
