@@ -204,7 +204,9 @@ export const parlayLegs = pgTable("parlay_legs", {
   parlayId: integer("parlay_id")
     .notNull()
     .references(() => parlays.id, { onDelete: "cascade" }),
-  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }), // league member who contributed this leg — distinct from parlays.userId (the orchestrator); nullable until existing legs are backfilled
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }), // league member who contributed this leg — distinct from parlays.userId (the orchestrator)
   gameId: integer("game_id").references(() => games.id, { onDelete: "set null" }), // nullable — player prop bets may not reference a specific game
   betType: text("bet_type").notNull(), // 'spread', 'moneyline', 'over', 'under', 'player_prop'
   pick: text("pick").notNull(), // 'home', 'away', 'over', 'under', 'yes', 'no'
