@@ -142,12 +142,8 @@ export function NewsFeed() {
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
-        <Tabs defaultValue="headlines">
+        <Tabs defaultValue="injuries">
           <TabsList className="w-full mb-4">
-            <TabsTrigger value="headlines" className="flex-1 gap-1.5 text-xs">
-              <Newspaper className="w-3.5 h-3.5" />
-              Headlines
-            </TabsTrigger>
             <TabsTrigger value="injuries" className="flex-1 gap-1.5 text-xs">
               <ActivitySquare className="w-3.5 h-3.5" />
               Injuries
@@ -156,11 +152,11 @@ export function NewsFeed() {
               <Trophy className="w-3.5 h-3.5" />
               Scores
             </TabsTrigger>
+            <TabsTrigger value="headlines" className="flex-1 gap-1.5 text-xs">
+              <Newspaper className="w-3.5 h-3.5" />
+              Headlines
+            </TabsTrigger>
           </TabsList>
-
-          <TabsContent value="headlines">
-            <NewsList feed="headlines" tagColors={{}} />
-          </TabsContent>
 
           <TabsContent value="injuries">
             <NewsList feed="injuries" tagColors={INJURY_TAG_COLORS} />
@@ -168,6 +164,10 @@ export function NewsFeed() {
 
           <TabsContent value="scores">
             <NewsList feed="scores" tagColors={SCORE_TAG_COLORS} />
+          </TabsContent>
+
+          <TabsContent value="headlines">
+            <NewsList feed="headlines" tagColors={{}} />
           </TabsContent>
         </Tabs>
       </CardContent>

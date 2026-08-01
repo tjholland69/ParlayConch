@@ -12,6 +12,7 @@ import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
+import { getUserSummary, getUserPatterns, getWinRateTimeSeries } from "./services/dashboardAnalytics";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
@@ -181,6 +182,26 @@ export async function registerRoutes(
     res.json(stats);
   });
 
+  // ===== DASHBOARD =====
+  app.get("/api/dashboard/summary", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const summary = await getUserSummary(userId);
+    res.json(summary);
+  });
+
+  app.get("/api/dashboard/patterns", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const patterns = await getUserPatterns(userId);
+    res.json(patterns);
+  });
+
+  app.get("/api/dashboard/performance", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+    const series = await getWinRateTimeSeries(userId, leagueId);
+    res.json(series);
+  });
+
   // ===== LEAGUES =====
   app.get("/api/leagues", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
@@ -274,6 +295,7 @@ export async function registerRoutes(
         userId,
         { leagueId: input.leagueId, weekId: input.weekId },
         input.legs.map(l => ({
+          userId,
           gameId: l.gameId,
           betType: l.betType,
           pick: l.pick,
@@ -1328,7 +1350,7 @@ export async function registerRoutes(
       if (!uid) return;
       const { betType, pick, line, odds, playerName, propType, notes, gameSegment } = req.body;
       if (!betType || !pick) return res.status(400).json({ message: "betType and pick are required" });
-      const newLeg = await storage.addParlayLeg(parlayId, { betType, pick, line, odds, playerName, propType, notes, gameSegment });
+      const newLeg = await storage.addParlayLeg(parlayId, { userId: parlay.userId, betType, pick, line, odds, playerName, propType, notes, gameSegment });
       res.json(newLeg);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

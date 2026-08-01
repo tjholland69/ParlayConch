@@ -25,6 +25,11 @@ export const api = {
   },
   stats: {
     list: { method: 'GET' as const, path: '/api/stats' },
+  },
+  dashboard: {
+    summary: { method: 'GET' as const, path: '/api/dashboard/summary' },
+    patterns: { method: 'GET' as const, path: '/api/dashboard/patterns' },
+    performance: { method: 'GET' as const, path: '/api/dashboard/performance' },
   }
 };
 
