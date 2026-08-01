@@ -1,10 +1,10 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
+import type { Server } from "http";
 import { storage } from "./storage";
-import { pool, db } from "./db";
+import { db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
-import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs } from "@shared/schema";
+import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs } from "@shared/schema";
 import { ilike, eq, and } from "drizzle-orm";
 import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { runOddsSyncQueued, startOddsSyncWorker } from "./jobs/odds-sync-queue";
@@ -28,7 +28,7 @@ async function hasLeaguePermission(leagueId: number, userId: string, permission:
   if (!isLt) return false;
   const league = await storage.getLeague(leagueId);
   const perms = (league?.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS;
-  return perms[permission] === true;
+  return perms[permission];
 }
 
 export async function registerRoutes(
@@ -274,7 +274,6 @@ export async function registerRoutes(
         userId,
         { leagueId: input.leagueId, weekId: input.weekId },
         input.legs.map(l => ({
-          parlayId: 0, // Will be set by storage
           gameId: l.gameId,
           betType: l.betType,
           pick: l.pick,
@@ -796,8 +795,6 @@ export async function registerRoutes(
   // season (and optionally a specific week). Only touches games already in our DB.
   app.post("/api/admin/sync-nflverse", isAuthenticated, async (req, res) => {
     try {
-      const userId = (req.user as any).claims.sub;
-
       // Require the user to be an admin in at least one league (rough guard)
       // A dedicated global-admin check can be added later
       const { season, week, mode = "all" } = req.body;
@@ -817,8 +814,7 @@ export async function registerRoutes(
         console.log(`[nflverse] scores sync:`, scoreSync);
 
         // Re-run enrichment after scores are updated
-        const enrichResult = await enrichLeagueParlayLegs();
-        result.enrichment = enrichResult;
+        result.enrichment = await enrichLeagueParlayLegs();
       }
 
       if (mode === "players" || mode === "all") {
@@ -1477,113 +1473,6 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
-    }
-  });
-
-  // ONE-TIME MIGRATION: copy dev data snapshot into this database (production use only)
-  // Gated by PROD_MIGRATION_ENABLED=true env var + must be authenticated as the owner account
-  app.post("/api/admin/migrate-dev-to-prod", isAuthenticated, async (req, res) => {
-    try {
-      if (process.env.PROD_MIGRATION_ENABLED !== "true") {
-        return res.status(403).json({ message: "Migration not enabled" });
-      }
-      const userId = (req.user as any).claims.sub;
-      if (userId !== "52372237") {
-        return res.status(403).json({ message: "Only the owner account can run this migration" });
-      }
-
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-
-        // 1. Upsert all 17 dev users
-        await client.query(`
-          INSERT INTO users (id, first_name, last_name, email, profile_image_url, is_demo, settings, created_at, updated_at) VALUES
-            ('52372237', 'Tim', 'Holland', 'hollandtim917@gmail.com', NULL, false, '{}', '2026-01-04 02:15:51.029151', '2026-01-19 21:42:51.235'),
-            ('55226224', NULL, NULL, 'parlayconchtest1@gmail.com', 'https://lh3.googleusercontent.com/a/ACg8ocKQxu6tW1_-Y4_g3QrqoqVVohWMBYSqb85bekdTEYfC3qj52A=s96-c', true, '{"displayName": "Test 1"}', '2026-02-24 03:51:49.360548', '2026-03-29 18:59:32.129'),
-            ('admin-priv-test-001', 'Admin', 'Tester', 'adminprivtest@example.com', NULL, false, '{}', '2026-03-30 03:10:57.554269', '2026-03-30 03:10:57.554269'),
-            ('demo_user_01', 'ParlayConch Demo 1', NULL, 'demo1@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.014062', '2026-04-02 00:50:51.014062'),
-            ('demo_user_02', 'ParlayConch Demo 2', NULL, 'demo2@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.051363', '2026-04-02 00:50:51.051363'),
-            ('demo_user_03', 'ParlayConch Demo 3', NULL, 'demo3@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.055654', '2026-04-02 00:50:51.055654'),
-            ('demo_user_04', 'ParlayConch Demo 4', NULL, 'demo4@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.059640', '2026-04-02 00:50:51.059640'),
-            ('demo_user_05', 'ParlayConch Demo 5', NULL, 'demo5@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.063067', '2026-04-02 00:50:51.063067'),
-            ('demo_user_06', 'ParlayConch Demo 6', NULL, 'demo6@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.065880', '2026-04-02 00:50:51.065880'),
-            ('demo_user_07', 'ParlayConch Demo 7', NULL, 'demo7@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.068128', '2026-04-02 00:50:51.068128'),
-            ('demo_user_08', 'ParlayConch Demo 8', NULL, 'demo8@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.071019', '2026-04-02 00:50:51.071019'),
-            ('demo_user_09', 'ParlayConch Demo 9', NULL, 'demo9@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.074396', '2026-04-02 00:50:51.074396'),
-            ('demo_user_10', 'ParlayConch Demo 10', NULL, 'demo10@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.077579', '2026-04-02 00:50:51.077579'),
-            ('demo_user_11', 'ParlayConch Demo 11', NULL, 'demo11@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.080674', '2026-04-02 00:50:51.080674'),
-            ('demo_user_12', 'ParlayConch Demo 12', NULL, 'demo12@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.083996', '2026-04-02 00:50:51.083996'),
-            ('lock-test-admin', 'Lock', 'Admin', 'lockadmin@example.com', NULL, false, '{}', '2026-03-30 02:54:18.220776', '2026-03-30 02:54:18.220776'),
-            ('notif-test-001', 'Notif', 'Tester', 'notiftest@example.com', NULL, false, '{"notificationPreferences":{"sms":true,"push":false,"email":true,"phone":"+1 555 123 4567"}}', '2026-03-29 18:30:34.459406', '2026-03-29 18:30:34.459406')
-          ON CONFLICT (id) DO UPDATE SET
-            first_name = EXCLUDED.first_name,
-            last_name = EXCLUDED.last_name,
-            email = EXCLUDED.email,
-            profile_image_url = EXCLUDED.profile_image_url,
-            is_demo = EXCLUDED.is_demo,
-            settings = EXCLUDED.settings,
-            updated_at = EXCLUDED.updated_at
-        `);
-
-        // 2. Replace leagues and league_members (delete FK children first)
-        await client.query("DELETE FROM league_week_locks");
-        await client.query("DELETE FROM notifications");
-        await client.query("DELETE FROM parlay_legs");
-        await client.query("DELETE FROM parlays");
-        await client.query("DELETE FROM import_batches");
-        await client.query("DELETE FROM league_members");
-        await client.query("DELETE FROM leagues");
-
-        await client.query(`
-          INSERT INTO leagues (id, name, description, invite_code, max_parlays_per_week, min_legs_per_parlay, max_legs_per_parlay, created_at, is_demo, lieutenant_permissions, notification_settings) VALUES
-            (1, 'ParlayKirk69', 'DKE House Fantasy League', 'O16LFN', 1, 3, 5, '2026-01-04 02:16:42.713739', false, NULL, NULL),
-            (2, 'TestingWithTheBoys1', 'Testing with the boys 1', 'X0GXHN', 1, 3, 5, '2026-02-24 03:57:08.060994', false, NULL, NULL),
-            (3, 'Lock Test League', 'League for lock/unlock testing', 'X4VRKG', 1, 3, 5, '2026-03-30 02:54:49.187388', false, NULL, NULL),
-            (4, 'Admin Priv Test League', 'League created for admin privileges test', '5T1OHN', 1, 3, 5, '2026-03-30 03:11:58.588873', false, NULL, NULL)
-        `);
-        await client.query("SELECT setval('leagues_id_seq', 4)");
-
-        // 3. League members
-        await client.query(`
-          INSERT INTO league_members (id, league_id, user_id, role, joined_at) VALUES
-            (1, 1, '52372237', 'admin', '2026-01-04 02:16:42.721631'),
-            (2, 2, '55226224', 'admin', '2026-02-24 03:57:08.078734'),
-            (3, 3, 'lock-test-admin', 'admin', '2026-03-30 02:54:49.194456'),
-            (4, 4, 'admin-priv-test-001', 'admin', '2026-03-30 03:11:58.593102')
-        `);
-        await client.query("SELECT setval('league_members_id_seq', 4)");
-
-        // 4. Weeks
-        await client.query("DELETE FROM games");
-        await client.query("DELETE FROM weeks");
-        await client.query(`
-          INSERT INTO weeks (id, season, week_number, label, is_active) VALUES
-            (1, 2024, 1, 'Week 1', true),
-            (2, 2024, 2, 'Week 2', true)
-        `);
-        await client.query("SELECT setval('weeks_id_seq', 2)");
-
-        // 5. Games
-        await client.query(`
-          INSERT INTO games (id, week_id, home_team, away_team, spread, game_time, home_score, away_score, is_finished, winner) VALUES
-            (1, 1, 'Chiefs', 'Ravens', '-3.0', '2024-09-05 20:20:00', 27, 20, true, 'home'),
-            (2, 1, 'Eagles', 'Packers', '-2.5', '2024-09-06 20:15:00', 34, 29, true, 'home'),
-            (3, 2, 'Dolphins', 'Bills', '-1.5', '2024-09-12 20:15:00', NULL, NULL, false, NULL)
-        `);
-        await client.query("SELECT setval('games_id_seq', 3)");
-
-        await client.query("COMMIT");
-        res.json({ success: true, message: "Migration completed successfully" });
-      } catch (err) {
-        await client.query("ROLLBACK");
-        throw err;
-      } finally {
-        client.release();
-      }
-    } catch (err: any) {
-      console.error("Migration error:", err);
-      res.status(500).json({ message: err.message });
     }
   });
 

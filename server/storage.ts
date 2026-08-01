@@ -6,7 +6,7 @@ import {
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
   type ImportBatch, type InsertImportBatch, type ImportParlayLeg,
-  type LieutenantPermissions, type LeagueMemberWithUser, DEFAULT_LIEUTENANT_PERMISSIONS,
+  type LieutenantPermissions, type LeagueMemberWithUser,
   type Notification, type LeagueNotificationSettings,
   type LeagueWeekLock, type WeekLockStatus,
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
@@ -66,7 +66,7 @@ export interface IStorage {
 
   // Parlays
   getParlay(id: number): Promise<Parlay | undefined>;
-  createParlay(userId: string, parlay: InsertParlay, legs: InsertParlayLeg[]): Promise<Parlay>;
+  createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId">[]): Promise<Parlay>;
   getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(leagueId: number): Promise<ParlayWithLegs[]>;
@@ -219,6 +219,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getStats(): Promise<UserStat[]> {
+    // noinspection SqlResolve
     const rows = await db
       .select({
         userId: users.id,
@@ -514,7 +515,7 @@ export class DatabaseStorage implements IStorage {
     return parlay;
   }
 
-  async createParlay(userId: string, parlay: InsertParlay, legs: InsertParlayLeg[]): Promise<Parlay> {
+  async createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId">[]): Promise<Parlay> {
     return await db.transaction(async (tx) => {
       const existing = await tx
         .select()
