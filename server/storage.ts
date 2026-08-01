@@ -811,6 +811,7 @@ export class DatabaseStorage implements IStorage {
       if (legs.length > 0) {
         await tx.insert(parlayLegs).values(legs.map(leg => ({
           parlayId: created.id,
+          userId,
           betType: leg.betType,
           pick: leg.pick,
           line: leg.line ?? null,
@@ -841,8 +842,9 @@ export class DatabaseStorage implements IStorage {
         .returning();
 
       if (legs.length > 0) {
-        await tx.insert(parlayLegs).values(legs.map(leg => ({ 
+        await tx.insert(parlayLegs).values(legs.map(leg => ({
           gameId: leg.gameId ?? null,
+          userId,
           betType: leg.betType,
           pick: leg.pick,
           line: leg.line,
