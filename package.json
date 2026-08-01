@@ -15,7 +15,7 @@
     "test:watch": "vitest",
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "tsx script/migrate.ts",
     "db:seed": "tsx --env-file=.env.local scripts/seed-dev.ts"
   },
   "dependencies": {
