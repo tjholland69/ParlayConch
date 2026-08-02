@@ -12,7 +12,7 @@ import {
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
   type ActiveWeekStatus, type LeagueDataStats, type PopularPick,
 } from "@shared/schema";
-import { eq, and, desc, inArray, sql, ilike, not } from "drizzle-orm";
+import { eq, and, desc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 
 function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
@@ -34,6 +34,7 @@ export interface IStorage {
   getWeeks(): Promise<Week[]>;
   getWeek(id: number): Promise<Week | undefined>;
   createWeek(week: any): Promise<Week>;
+  setActiveWeek(weekId: number): Promise<void>;
 
   // Games
   getGamesByWeek(weekId: number, userId?: string): Promise<GameWithBet[]>;
@@ -58,7 +59,7 @@ export interface IStorage {
   isSuperUser(userId: string): Promise<boolean>;
   isLeagueAdmin(leagueId: number, userId: string): Promise<boolean>;
   isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean>;
-  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay'>>): Promise<League>;
+  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'insightsEnabled' | 'loserLabel'>>): Promise<League>;
   updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League>;
   setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember>;
   getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]>;
@@ -85,7 +86,7 @@ export interface IStorage {
 
   // Parlay status rollup
   rollupParlayStatus(parlayId: number): Promise<void>;
-  rollupLeagueParlayStatuses(leagueId?: number): Promise<{ updated: number; skipped: number }>;
+  rollupLeagueParlayStatuses(leagueId?: number, recomputeTerminal?: boolean): Promise<{ updated: number; skipped: number }>;
 
   // Imports
   createImportBatch(batch: InsertImportBatch): Promise<ImportBatch>;
@@ -131,6 +132,7 @@ export interface IStorage {
   getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game | null })[]>;
   enrichParlayLeg(legId: number, updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
   updateGameScores(gameId: number, homeScore: number, awayScore: number, isFinished: boolean, winner?: string): Promise<void>;
+  backfillGameFinishedAt(): Promise<{ updated: number }>;
   patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
   getUser(userId: string): Promise<typeof users.$inferSelect | null>;
 
@@ -157,6 +159,13 @@ export class DatabaseStorage implements IStorage {
   async createWeek(week: any): Promise<Week> {
     const [newWeek] = await db.insert(weeks).values(week).returning();
     return newWeek;
+  }
+
+  /** The only code path allowed to flip a week's isActive to true — deactivates every
+   * other week first so at most one week is ever active at a time. */
+  async setActiveWeek(weekId: number): Promise<void> {
+    await db.update(weeks).set({ isActive: false });
+    await db.update(weeks).set({ isActive: true }).where(eq(weeks.id, weekId));
   }
 
   async getGamesByWeek(weekId: number, userId?: string): Promise<GameWithBet[]> {
@@ -388,7 +397,8 @@ export class DatabaseStorage implements IStorage {
             firstName: m.user.firstName,
             email: m.user.email,
             profileImageUrl: m.user.profileImageUrl,
-            isDemo: m.user.isDemo
+            isDemo: m.user.isDemo,
+            settings: m.user.settings as any,
           }
         })),
         memberCount: members.length,
@@ -562,7 +572,7 @@ export class DatabaseStorage implements IStorage {
     return all.filter(m => m.role === 'lieutenant');
   }
 
-  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'insightsEnabled'>>): Promise<League> {
+  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'insightsEnabled' | 'loserLabel'>>): Promise<League> {
     const [updated] = await db.update(leagues)
       .set(updates)
       .where(eq(leagues.id, leagueId))
@@ -715,7 +725,7 @@ export class DatabaseStorage implements IStorage {
       ...parlay,
       legs: legsByParlayId.get(parlay.id) ?? [],
       week,
-      user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo }
+      user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any }
     }));
   }
 
@@ -961,14 +971,18 @@ export class DatabaseStorage implements IStorage {
 
   /**
    * Compute a parlay's outcome from its legs and update its status to
-   * 'win' / 'loss' / 'push' if all legs are resolved.
+   * 'win' / 'loss' if all legs are resolved.
    *
    * Rules:
    *  - Skip if status is already a terminal result or is 'rejected'/'void'
    *  - Skip if any leg still has no result
-   *  - Any leg = 'loss'  → parlay = 'loss'
-   *  - All legs = 'push' → parlay = 'push'
-   *  - Otherwise (all wins, or wins + pushes) → parlay = 'win'
+   *  - Any leg = 'loss' → parlay = 'loss'
+   *  - Otherwise (all wins, or wins + pushes, zero losses) → parlay = 'win'
+   *
+   * A parlay only wins if every leg hits; a single push doesn't break that,
+   * but a single loss always makes it a loss. 'push' is no longer an
+   * automatically-computed parlay status — it remains a manually-settable
+   * override for admins, but the rollup never assigns it itself.
    */
   async rollupParlayStatus(parlayId: number): Promise<void> {
     const [parlay] = await db.select().from(parlays).where(eq(parlays.id, parlayId));
@@ -981,37 +995,34 @@ export class DatabaseStorage implements IStorage {
     if (legs.length === 0) return;
     if (legs.some(l => !l.result)) return; // not all resolved yet
 
-    let newStatus: string;
-    if (legs.some(l => l.result === 'loss')) {
-      newStatus = 'loss';
-    } else if (legs.every(l => l.result === 'push')) {
-      newStatus = 'push';
-    } else {
-      newStatus = 'win'; // all wins, or wins + pushes
-    }
+    const newStatus = legs.some(l => l.result === 'loss') ? 'loss' : 'win';
 
     await db.update(parlays).set({ status: newStatus }).where(eq(parlays.id, parlayId));
   }
 
   /**
    * Roll up parlay statuses for all parlays in a league (or all leagues if
-   * leagueId is omitted) that are not already in a terminal state.
+   * leagueId is omitted).
    *
-   * Safe to call repeatedly — skips parlays with pending legs or terminal
-   * statuses. Returns counts of updated vs skipped parlays.
+   * By default, only touches parlays not already in a terminal state — safe
+   * to call repeatedly. Pass `recomputeTerminal: true` to also recompute
+   * parlays already marked 'win' or 'push' (e.g. a one-time backfill after
+   * changing the win/loss rule) — 'rejected'/'void' are never recomputed
+   * since those are administrative, not leg-driven. Returns counts of
+   * updated vs skipped parlays.
    */
-  async rollupLeagueParlayStatuses(leagueId?: number): Promise<{ updated: number; skipped: number }> {
+  async rollupLeagueParlayStatuses(leagueId?: number, recomputeTerminal = false): Promise<{ updated: number; skipped: number }> {
     const terminalStatuses = ['win', 'loss', 'push', 'rejected', 'void'];
+    const excludedStatuses = recomputeTerminal ? ['rejected', 'void'] : terminalStatuses;
 
-    // Fetch candidate parlays (not yet in a terminal status)
     const allParlays = leagueId
       ? await db.select().from(parlays)
           .where(and(
             eq(parlays.leagueId, leagueId),
-            not(inArray(parlays.status as any, terminalStatuses))
+            not(inArray(parlays.status as any, excludedStatuses))
           ))
       : await db.select().from(parlays)
-          .where(not(inArray(parlays.status as any, terminalStatuses)));
+          .where(not(inArray(parlays.status as any, excludedStatuses)));
 
     let updated = 0;
     let skipped = 0;
@@ -1020,14 +1031,7 @@ export class DatabaseStorage implements IStorage {
       const legs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlay.id));
       if (legs.length === 0 || legs.some(l => !l.result)) { skipped++; continue; }
 
-      let newStatus: string;
-      if (legs.some(l => l.result === 'loss')) {
-        newStatus = 'loss';
-      } else if (legs.every(l => l.result === 'push')) {
-        newStatus = 'push';
-      } else {
-        newStatus = 'win';
-      }
+      const newStatus = legs.some(l => l.result === 'loss') ? 'loss' : 'win';
 
       await db.update(parlays).set({ status: newStatus }).where(eq(parlays.id, parlay.id));
       updated++;
@@ -1271,8 +1275,26 @@ export class DatabaseStorage implements IStorage {
   ): Promise<void> {
     const w = winner ?? (homeScore > awayScore ? "home" : awayScore > homeScore ? "away" : "tie");
     await db.update(games)
-      .set({ homeScore, awayScore, isFinished, winner: w })
+      .set({ homeScore, awayScore, isFinished, winner: w, finishedAt: isFinished ? new Date() : null })
       .where(eq(games.id, gameId));
+  }
+
+  /**
+   * One-time backfill for games that were finished before `finishedAt` existed.
+   * Estimates finish time as kickoff + ~3.5 hours (typical NFL game length) —
+   * an approximation, not a recorded fact, so "Parlay Loser" also works for
+   * historical parlays instead of only ones resolved from now on.
+   */
+  async backfillGameFinishedAt(): Promise<{ updated: number }> {
+    const rows = await db.select().from(games).where(and(eq(games.isFinished, true), isNull(games.finishedAt)));
+    let updated = 0;
+    for (const g of rows) {
+      if (!g.gameTime) continue;
+      const estimate = new Date(new Date(g.gameTime).getTime() + 3.5 * 60 * 60 * 1000);
+      await db.update(games).set({ finishedAt: estimate }).where(eq(games.id, g.id));
+      updated++;
+    }
+    return { updated };
   }
 
   async patchGameOdds(

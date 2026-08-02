@@ -125,7 +125,7 @@ type AddHistoricalBetSheetProps = {
   onOpenChange: (v: boolean) => void;
   leagueId: number;
   weeks: Array<{ id: number; season: number; weekNumber: number; label: string }>;
-  members: Array<{ userId: string; user?: { firstName?: string | null; email?: string | null } | null }>;
+  members: Array<{ userId: string; user?: { firstName?: string | null; email?: string | null; settings?: unknown } | null }>;
 };
 
 function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }: AddHistoricalBetSheetProps) {
@@ -456,7 +456,7 @@ export default function DemoDataEditor() {
               <SelectItem value="all">All Members</SelectItem>
               {members?.map(m => (
                 <SelectItem key={m.userId} value={m.userId}>
-                  {m.user?.firstName || m.user?.email || m.userId.slice(0, 8)}
+                  {getDisplayName(m.user, m.userId.slice(0, 8))}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -580,6 +580,7 @@ export default function DemoDataEditor() {
                   expandSignal={expandSignal}
                   versionNumber={versionMap.get(parlay.id)}
                   participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
+                  loserLabel={league.loserLabel}
                 />
               </CardErrorBoundary>
             ));

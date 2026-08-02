@@ -55,3 +55,12 @@ export function getParlayVisualStyle(pct: number | null, participationRate = 1):
     barGradient: `linear-gradient(to right, rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)}), rgba(${r}, ${g}, ${b}, ${(alpha * 0.25).toFixed(2)}))`,
   };
 }
+
+/**
+ * Buckets a parlay's own win % (wins / resolved legs) into 10-point groups,
+ * used as a "how close was it" indicator on losing parlays. E.g. 0-9%, 10-19%, … 90-99%.
+ */
+export function getResultPercentileBucket(pct: number): string {
+  const bucket = Math.min(90, Math.max(0, Math.floor(pct / 10) * 10));
+  return `${bucket}-${bucket + 9}%`;
+}

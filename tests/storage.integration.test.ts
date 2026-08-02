@@ -171,4 +171,70 @@ describe("DatabaseStorage integration", () => {
     expect(legs.length).toBe(1);
     expect(legs[0]!.betType).toBe("moneyline");
   });
+
+  test("rollupLeagueParlayStatuses: a single loss makes the whole parlay a loss, but a push alone is still a win", async ({ skip }) => {
+    skip(!dbReady, "database not available");
+    const { db } = await import("../server/db");
+    const { storage } = await import("../server/storage");
+
+    const userId = "test-user-rollup";
+    await db.insert(users).values({ id: userId, email: "rolluptest@example.com" });
+
+    const [week] = await db
+      .insert(weeks)
+      .values({ season: 2025, weekNumber: 3, label: "Week 3" })
+      .returning();
+
+    const [league] = await db
+      .insert(leagues)
+      .values({ name: "L3", inviteCode: "ROLLUP1" })
+      .returning();
+
+    await db.insert(leagueMembers).values({ leagueId: league.id, userId, role: "admin" });
+
+    const [gameA] = await db
+      .insert(games)
+      .values({ weekId: week.id, homeTeam: "A", awayTeam: "B", gameTime: new Date() })
+      .returning();
+    const [gameB] = await db
+      .insert(games)
+      .values({ weekId: week.id, homeTeam: "C", awayTeam: "D", gameTime: new Date() })
+      .returning();
+
+    // Parlay 1: win + push, zero losses — should roll up to 'win'.
+    const [winPushParlay] = await db
+      .insert(parlays)
+      .values({ userId, leagueId: league.id, weekId: week.id, status: "approved" })
+      .returning();
+    await db.insert(parlayLegs).values([
+      { parlayId: winPushParlay.id, userId, gameId: gameA.id, betType: "spread", pick: "home", result: "win" },
+      { parlayId: winPushParlay.id, userId, gameId: gameB.id, betType: "spread", pick: "away", result: "push" },
+    ]);
+
+    // Parlay 2: win + loss — should roll up to 'loss'.
+    const [lossParlay] = await db
+      .insert(parlays)
+      .values({ userId, leagueId: league.id, weekId: week.id, status: "approved" })
+      .returning();
+    await db.insert(parlayLegs).values([
+      { parlayId: lossParlay.id, userId, gameId: gameA.id, betType: "moneyline", pick: "home", result: "win" },
+      { parlayId: lossParlay.id, userId, gameId: gameB.id, betType: "moneyline", pick: "away", result: "loss" },
+    ]);
+
+    const result = await storage.rollupLeagueParlayStatuses(league.id);
+    expect(result.updated).toBe(2);
+
+    const [updatedWinPush] = await db.select().from(parlays).where(eq(parlays.id, winPushParlay.id));
+    const [updatedLoss] = await db.select().from(parlays).where(eq(parlays.id, lossParlay.id));
+    expect(updatedWinPush!.status).toBe("win");
+    expect(updatedLoss!.status).toBe("loss");
+
+    // Backfill: recomputeTerminal should be able to flip an already-'push' parlay to 'win'
+    // under the new rule (no losses = win), but leave already-'loss' parlays alone.
+    await db.update(parlays).set({ status: "push" }).where(eq(parlays.id, winPushParlay.id));
+    const backfill = await storage.rollupLeagueParlayStatuses(league.id, true);
+    expect(backfill.updated).toBe(2);
+    const [recomputed] = await db.select().from(parlays).where(eq(parlays.id, winPushParlay.id));
+    expect(recomputed!.status).toBe("win");
+  });
 });

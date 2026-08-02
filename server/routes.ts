@@ -406,92 +406,6 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  // Seed Data Endpoint
-  app.post("/api/seed", async (req, res) => {
-    const existingWeeks = await storage.getWeeks();
-    if (existingWeeks.length === 0) {
-      const w1 = await storage.createWeek({ season: 2024, weekNumber: 1, label: "Week 1" });
-      const w2 = await storage.createWeek({ season: 2024, weekNumber: 2, label: "Week 2" });
-      const w3 = await storage.createWeek({ season: 2024, weekNumber: 3, label: "Week 3" });
-      
-      // Week 1 games
-      await storage.createGame({
-        weekId: w1.id, homeTeam: "Chiefs", awayTeam: "Ravens", spread: "-3.0",
-        overUnder: "47.5", moneylineHome: "-155", moneylineAway: "+135",
-        gameTime: new Date("2024-09-05T20:20:00Z"), isFinished: true,
-        homeScore: 27, awayScore: 20, winner: "home",
-        venue: "Arrowhead Stadium", homeRecord: "1-0", awayRecord: "0-1"
-      });
-      await storage.createGame({
-        weekId: w1.id, homeTeam: "Eagles", awayTeam: "Packers", spread: "-2.5",
-        overUnder: "49.0", moneylineHome: "-130", moneylineAway: "+110",
-        gameTime: new Date("2024-09-06T20:15:00Z"), isFinished: true,
-        homeScore: 34, awayScore: 29, winner: "home",
-        venue: "Lincoln Financial Field", homeRecord: "1-0", awayRecord: "0-1"
-      });
-      await storage.createGame({
-        weekId: w1.id, homeTeam: "Cowboys", awayTeam: "Browns", spread: "-6.5",
-        overUnder: "44.5", moneylineHome: "-280", moneylineAway: "+230",
-        gameTime: new Date("2024-09-08T13:00:00Z"), isFinished: true,
-        homeScore: 33, awayScore: 17, winner: "home",
-        venue: "AT&T Stadium", homeRecord: "1-0", awayRecord: "0-1"
-      });
-      await storage.createGame({
-        weekId: w1.id, homeTeam: "49ers", awayTeam: "Jets", spread: "-9.0",
-        overUnder: "43.0", moneylineHome: "-400", moneylineAway: "+320",
-        gameTime: new Date("2024-09-09T20:15:00Z"), isFinished: true,
-        homeScore: 30, awayScore: 17, winner: "home",
-        venue: "Levi's Stadium", homeRecord: "1-0", awayRecord: "0-1"
-      });
-
-      // Week 2 games
-      await storage.createGame({
-        weekId: w2.id, homeTeam: "Dolphins", awayTeam: "Bills", spread: "-1.5",
-        overUnder: "52.0", moneylineHome: "-115", moneylineAway: "-105",
-        gameTime: new Date("2024-09-12T20:15:00Z"), isFinished: true,
-        homeScore: 20, awayScore: 31, winner: "away",
-        venue: "Hard Rock Stadium", homeRecord: "1-1", awayRecord: "2-0"
-      });
-      await storage.createGame({
-        weekId: w2.id, homeTeam: "Steelers", awayTeam: "Broncos", spread: "-3.0",
-        overUnder: "36.5", moneylineHome: "-150", moneylineAway: "+130",
-        gameTime: new Date("2024-09-15T13:00:00Z"), isFinished: true,
-        homeScore: 13, awayScore: 6, winner: "home",
-        venue: "Acrisure Stadium", homeRecord: "2-0", awayRecord: "0-2"
-      });
-
-      // Week 3 games (current/future)
-      await storage.createGame({
-        weekId: w3.id, homeTeam: "Saints", awayTeam: "Eagles", spread: "+3.5",
-        overUnder: "48.5", moneylineHome: "+150", moneylineAway: "-175",
-        gameTime: new Date("2025-09-21T13:00:00Z"),
-        venue: "Caesars Superdome", homeRecord: "2-0", awayRecord: "1-1"
-      });
-      await storage.createGame({
-        weekId: w3.id, homeTeam: "Ravens", awayTeam: "Cowboys", spread: "-1.0",
-        overUnder: "51.5", moneylineHome: "-110", moneylineAway: "-110",
-        gameTime: new Date("2025-09-21T16:25:00Z"),
-        venue: "M&T Bank Stadium", homeRecord: "0-2", awayRecord: "1-1"
-      });
-      await storage.createGame({
-        weekId: w3.id, homeTeam: "Chiefs", awayTeam: "Falcons", spread: "-5.5",
-        overUnder: "46.0", moneylineHome: "-230", moneylineAway: "+190",
-        gameTime: new Date("2025-09-22T20:20:00Z"),
-        venue: "Arrowhead Stadium", homeRecord: "2-0", awayRecord: "1-1"
-      });
-      await storage.createGame({
-        weekId: w3.id, homeTeam: "Bengals", awayTeam: "Commanders", spread: "-6.0",
-        overUnder: "47.5", moneylineHome: "-250", moneylineAway: "+210",
-        gameTime: new Date("2025-09-23T20:15:00Z"),
-        venue: "Paycor Stadium", homeRecord: "0-2", awayRecord: "1-1"
-      });
-
-      res.json({ message: "Seeded with sample data" });
-    } else {
-      res.json({ message: "Already seeded" });
-    }
-  });
-
   // ===== ODDS API INTEGRATION =====
   app.get("/api/odds/upcoming", isAuthenticated, async (req, res) => {
     try {
@@ -920,11 +834,37 @@ export async function registerRoutes(
   // GET /api/games/:gameId/player-stats
   // Returns player stats for all players on both teams in a given game
   // Backfill: promote all fully-resolved parlays from 'approved'/'pending' to win/loss/push
+  app.post("/api/admin/weeks/:id/activate", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      await storage.setActiveWeek(Number(req.params.id));
+      res.json({ message: "Active week updated" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/admin/rollup-parlay-statuses", isAuthenticated, async (req, res) => {
     try {
-      const { leagueId } = req.body;
-      const result = await storage.rollupLeagueParlayStatuses(leagueId ? Number(leagueId) : undefined);
+      const { leagueId, recomputeTerminal } = req.body;
+      const result = await storage.rollupLeagueParlayStatuses(leagueId ? Number(leagueId) : undefined, !!recomputeTerminal);
       res.json({ message: "Rollup complete", ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/backfill-game-finished-at", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const result = await storage.backfillGameFinishedAt();
+      res.json({ message: "Backfill complete", ...result });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -1084,6 +1024,7 @@ export async function registerRoutes(
         minLegsPerParlay: z.number().int().min(1).optional(),
         maxLegsPerParlay: z.number().int().min(1).optional(),
         insightsEnabled: z.boolean().optional(),
+        loserLabel: z.enum(['parlay_loser', 'asshole']).optional(),
       });
       const updates = schema.parse(req.body);
       const league = await storage.updateLeagueSettings(leagueId, updates);

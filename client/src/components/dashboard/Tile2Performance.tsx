@@ -106,7 +106,6 @@ export function Tile2Performance() {
 
   return (
     <SlidingCard
-      icon={<BarChart3 className="w-64 h-64 rotate-12" />}
       headerExtra={<LeagueFilter value={leagueFilter} onChange={setLeagueFilter} />}
       slides={[
         { label: "Performance", content: <PerformanceChartSlide leagueFilter={leagueFilter} /> },

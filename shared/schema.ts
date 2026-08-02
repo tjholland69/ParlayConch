@@ -66,7 +66,7 @@ export const weeks = pgTable("weeks", {
   season: integer("season").notNull(),
   weekNumber: integer("week_number").notNull(),
   label: text("label").notNull(),
-  isActive: boolean("is_active").default(true),
+  isActive: boolean("is_active").default(false),
 });
 
 export const games = pgTable("games", {
@@ -87,6 +87,10 @@ export const games = pgTable("games", {
   homeScore: integer("home_score"),
   awayScore: integer("away_score"),
   isFinished: boolean("is_finished").default(false),
+  // Approximate "bust moment" for a leg tied to this game — stamped when we learn
+  // (via the periodic score sync) that the game finished, not the true real-time
+  // final whistle. Used to order which leg busted first within a losing parlay.
+  finishedAt: timestamp("finished_at"),
   winner: text("winner"),
   venue: text("venue"),
   weather: text("weather"),
@@ -110,6 +114,8 @@ export const leagues = pgTable("leagues", {
   insightsEnabled: boolean("insights_enabled").default(false),
   lieutenantPermissions: jsonb("lieutenant_permissions").$type<LieutenantPermissions>(),
   notificationSettings: jsonb("notification_settings").$type<LeagueNotificationSettings>(),
+  // What to call the member whose bet busts first each losing week: 'parlay_loser' or 'asshole'.
+  loserLabel: text("loser_label").default("parlay_loser"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, useLeagueDataStats, usePopularPicks, useMyParlayHistory } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -96,6 +96,24 @@ export default function LeagueDetail() {
   const activeWeekId = activeWeek?.id;
   const historicalWeeksDesc = (weeks ?? [])
     .filter(w => !w.isActive)
+    .sort((a, b) => (b.season - a.season) || (b.weekNumber - a.weekNumber));
+
+  // All Parlays tab: independent Year / Week / Member filters, defaulting to the
+  // current active week. Separate from the header week dropdown above.
+  const [allYearFilter, setAllYearFilter] = useState<string>("all");
+  const [allWeekFilter, setAllWeekFilter] = useState<string>("all");
+  const [allMemberFilter, setAllMemberFilter] = useState<string>("all");
+  const [allFiltersInitialized, setAllFiltersInitialized] = useState(false);
+  useEffect(() => {
+    if (!allFiltersInitialized && activeWeek) {
+      setAllYearFilter(String(activeWeek.season));
+      setAllWeekFilter(String(activeWeek.id));
+      setAllFiltersInitialized(true);
+    }
+  }, [activeWeek, allFiltersInitialized]);
+  const allSeasons = [...new Set((weeks ?? []).map(w => w.season))].sort((a, b) => b - a);
+  const allVisibleWeeksDesc = (weeks ?? [])
+    .filter(w => allYearFilter === "all" || w.season === Number(allYearFilter))
     .sort((a, b) => (b.season - a.season) || (b.weekNumber - a.weekNumber));
 
   const { data: stats } = useLeagueStats(leagueId);
@@ -347,6 +365,18 @@ export default function LeagueDetail() {
 
         {/* Open Parlays Tab — always scoped to the active week, ignores the header week dropdown */}
         <TabsContent value="open" className="space-y-6">
+          {!activeWeekId ? (
+            <Card className="bg-card/50 border-white/5">
+              <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
+                <Calendar className="w-10 h-10 text-muted-foreground" />
+                <p className="text-lg font-semibold">No Active Week</p>
+                <p className="text-sm text-muted-foreground max-w-xs">
+                  The season hasn't started yet — check back once the next week's games are live.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+          <>
           {/* Lock header row — visible to Parlay Maestro */}
           {league.isAdmin && (
             <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-card/40 border border-white/5">
@@ -637,6 +667,7 @@ export default function LeagueDetail() {
                             collapseSignal={openCollapseSignal}
                             expandSignal={openExpandSignal}
                             participationRate={openParticipationRate}
+                            loserLabel={league.loserLabel}
                           />
                         </CardErrorBoundary>
                       </div>
@@ -730,6 +761,8 @@ export default function LeagueDetail() {
               )}
             </>
           )}
+          </>
+          )}
         </TabsContent>
 
         {/* All Parlays Tab */}
@@ -757,10 +790,73 @@ export default function LeagueDetail() {
             );
           })()}
 
+          {/* Year / Week / Member filters */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Label className="text-sm shrink-0 text-muted-foreground">Year:</Label>
+              <Select
+                value={allYearFilter}
+                onValueChange={(v) => {
+                  setAllYearFilter(v);
+                  if (v !== "all" && allWeekFilter !== "all") {
+                    const stillValid = (weeks ?? []).some(w => String(w.id) === allWeekFilter && w.season === Number(v));
+                    if (!stillValid) setAllWeekFilter("all");
+                  }
+                }}
+              >
+                <SelectTrigger className="w-28 h-9 text-sm" data-testid="select-all-year">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Years</SelectItem>
+                  {allSeasons.map(s => <SelectItem key={s} value={String(s)}>{s}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-sm shrink-0 text-muted-foreground">Week:</Label>
+              <Select value={allWeekFilter} onValueChange={setAllWeekFilter}>
+                <SelectTrigger className="w-36 h-9 text-sm" data-testid="select-all-week">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Weeks</SelectItem>
+                  {allVisibleWeeksDesc.map(w => (
+                    <SelectItem key={w.id} value={String(w.id)}>
+                      {w.label} {w.isActive && "(Current)"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-sm shrink-0 text-muted-foreground">Member:</Label>
+              <Select value={allMemberFilter} onValueChange={setAllMemberFilter}>
+                <SelectTrigger className="w-44 h-9 text-sm" data-testid="select-all-member">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Members</SelectItem>
+                  {members?.map(m => (
+                    <SelectItem key={m.userId} value={m.userId}>
+                      {getDisplayName(m.user, m.userId.slice(0, 8))}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           {(() => {
             let list = allParlays ?? [];
-            if (selectedWeekId !== "all") {
-              list = list.filter(p => p.weekId === selectedWeekId);
+            if (allYearFilter !== "all") {
+              list = list.filter(p => p.week?.season === Number(allYearFilter));
+            }
+            if (allWeekFilter !== "all") {
+              list = list.filter(p => p.weekId === Number(allWeekFilter));
+            }
+            if (allMemberFilter !== "all") {
+              list = list.filter(p => p.userId === allMemberFilter);
             }
             if (loadingAllParlays) {
               return (
@@ -800,6 +896,7 @@ export default function LeagueDetail() {
                       collapseSignal={allCollapseSignal}
                       expandSignal={allExpandSignal}
                       participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
+                      loserLabel={league.loserLabel}
                     />
                   </CardErrorBoundary>
                 ))}
