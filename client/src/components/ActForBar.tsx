@@ -138,7 +138,7 @@ export function ActForBar() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
           <Input
             ref={inputRef}
-            placeholder="Act for user..."
+            placeholder="Act for user (name or email)..."
             className="h-8 w-44 pl-8 text-xs bg-white/5 border-white/10 focus:border-yellow-500/50 focus:ring-1 focus:ring-yellow-500/20 placeholder:text-muted-foreground/60"
             value={query}
             onChange={(e) => {
