@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
-import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs } from "@shared/schema";
+import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";
 import { ilike, eq, and, or, sql as drizzleSql } from "drizzle-orm";
 import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { runOddsSyncQueued, startOddsSyncWorker } from "./jobs/odds-sync-queue";
@@ -12,7 +12,7 @@ import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
-import { getUserSummary, getUserPatterns, getWinRateTimeSeries } from "./services/dashboardAnalytics";
+import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries } from "./services/dashboardAnalytics";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
@@ -204,6 +204,191 @@ export async function registerRoutes(
     const userId = (req.user as any).claims.sub;
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
     const series = await getWinRateTimeSeries(userId, leagueId);
+    res.json(series);
+  });
+
+  // Ad-hoc, nothing persisted — the "Advanced Filters" view.
+  app.get("/api/dashboard/performance/advanced", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+
+    const csvNumbers = (v: unknown): number[] | undefined => {
+      if (typeof v !== "string" || !v.trim()) return undefined;
+      const nums = v.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+      return nums.length > 0 ? nums : undefined;
+    };
+    const csvStrings = (v: unknown): string[] | undefined => {
+      if (typeof v !== "string" || !v.trim()) return undefined;
+      const parts = v.split(",").map(s => s.trim()).filter(Boolean);
+      return parts.length > 0 ? parts : undefined;
+    };
+    const str = (v: unknown): string | undefined =>
+      typeof v === "string" && v.trim() ? v.trim() : undefined;
+
+    const series = await computeWinRateSeries(userId, {
+      leagueIds: csvNumbers(req.query.leagueIds),
+      betTypes: csvStrings(req.query.betTypes),
+      propTypes: csvStrings(req.query.propTypes),
+      playerName: str(req.query.playerName),
+      teamName: str(req.query.teamName),
+    });
+    res.json(series);
+  });
+
+  // ===== CUSTOM INDEXES =====
+
+  /** Visibility rule shared by list and per-index reads. */
+  async function canViewCustomIndex(index: { id: number; ownerId: string; scope: string | null; publishedLeagueId: number | null }, userId: string): Promise<boolean> {
+    if (index.ownerId === userId) return true;
+    const shares = await storage.getCustomIndexShares(index.id);
+    if (shares.includes(userId)) return true;
+    if (index.scope === 'league' && index.publishedLeagueId) {
+      const members = await storage.getLeagueMembers(index.publishedLeagueId);
+      return members.some(m => m.userId === userId);
+    }
+    return false;
+  }
+
+  app.get("/api/custom-indexes", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const indexes = await storage.listVisibleCustomIndexes(userId);
+    res.json(indexes);
+  });
+
+  app.post("/api/custom-indexes", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const input = insertCustomIndexSchema.parse(req.body);
+
+      if (input.scope === 'league') {
+        if (!input.publishedLeagueId) {
+          return res.status(400).json({ message: "A league must be selected to publish a league default index" });
+        }
+        const isAdmin = await storage.isLeagueAdmin(input.publishedLeagueId, userId);
+        if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can publish a league default index" });
+      }
+
+      // Block duplicates against anything already in the user's list (owned, shared,
+      // or league-published) — an identical filter set just clutters the dropdown.
+      const visible = await storage.listVisibleCustomIndexes(userId);
+      const dupe = visible.find((idx) => customIndexFiltersEqual(idx.filters, input.filters));
+      if (dupe) {
+        return res.status(409).json({
+          message: `You already have an index with these exact filters: "${dupe.displayName}"`,
+          existingId: dupe.id,
+        });
+      }
+
+      const created = await storage.createCustomIndex(userId, input);
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.errors?.[0]?.message ?? err.message });
+    }
+  });
+
+  app.patch("/api/custom-indexes/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const id = Number(req.params.id);
+
+      const existing = await storage.getCustomIndex(id);
+      if (!existing) return res.status(404).json({ message: "Custom index not found" });
+      if (existing.ownerId !== userId) return res.status(403).json({ message: "Only the owner can edit this index" });
+
+      const updates = updateCustomIndexSchema.parse(req.body);
+
+      if (updates.scope === 'league') {
+        const leagueId = updates.publishedLeagueId ?? existing.publishedLeagueId;
+        if (!leagueId) {
+          return res.status(400).json({ message: "A league must be selected to publish a league default index" });
+        }
+        const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+        if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can publish a league default index" });
+        updates.publishedLeagueId = leagueId;
+      }
+
+      if (updates.filters) {
+        const visible = await storage.listVisibleCustomIndexes(userId);
+        const dupe = visible.find((idx) => idx.id !== id && customIndexFiltersEqual(idx.filters, updates.filters!));
+        if (dupe) {
+          return res.status(409).json({
+            message: `You already have an index with these exact filters: "${dupe.displayName}"`,
+            existingId: dupe.id,
+          });
+        }
+      }
+
+      const updated = await storage.updateCustomIndex(id, updates);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.errors?.[0]?.message ?? err.message });
+    }
+  });
+
+  app.delete("/api/custom-indexes/:id", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const id = Number(req.params.id);
+
+    const existing = await storage.getCustomIndex(id);
+    if (!existing) return res.status(404).json({ message: "Custom index not found" });
+    if (existing.ownerId !== userId) return res.status(403).json({ message: "Only the owner can delete this index" });
+
+    await storage.deleteCustomIndex(id);
+    res.status(204).end();
+  });
+
+  app.post("/api/custom-indexes/:id/share", isAuthenticated, async (req, res) => {
+    try {
+      const ownerId = (req.user as any).claims.sub;
+      const id = Number(req.params.id);
+
+      const existing = await storage.getCustomIndex(id);
+      if (!existing) return res.status(404).json({ message: "Custom index not found" });
+      if (existing.ownerId !== ownerId) return res.status(403).json({ message: "Only the owner can share this index" });
+
+      const { userId: targetUserId } = z.object({ userId: z.string().min(1) }).parse(req.body);
+      if (targetUserId === ownerId) return res.status(400).json({ message: "You already own this index" });
+
+      const shareALeague = await storage.usersShareALeague(ownerId, targetUserId);
+      if (!shareALeague) return res.status(403).json({ message: "You can only share with members of your leagues" });
+
+      await storage.shareCustomIndex(id, targetUserId);
+      res.status(201).json({ customIndexId: id, sharedWithUserId: targetUserId });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.errors?.[0]?.message ?? err.message });
+    }
+  });
+
+  app.delete("/api/custom-indexes/:id/share/:userId", isAuthenticated, async (req, res) => {
+    const ownerId = (req.user as any).claims.sub;
+    const id = Number(req.params.id);
+
+    const existing = await storage.getCustomIndex(id);
+    if (!existing) return res.status(404).json({ message: "Custom index not found" });
+    if (existing.ownerId !== ownerId) return res.status(403).json({ message: "Only the owner can unshare this index" });
+
+    await storage.unshareCustomIndex(id, req.params.userId);
+    res.status(204).end();
+  });
+
+  app.get("/api/custom-indexes/:id/performance", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const id = Number(req.params.id);
+
+    const index = await storage.getCustomIndex(id);
+    if (!index) return res.status(404).json({ message: "Custom index not found" });
+
+    const visible = await canViewCustomIndex(index, userId);
+    if (!visible) return res.status(403).json({ message: "You don't have access to this index" });
+
+    const filters = (index.filters ?? {}) as CustomIndexFilters;
+    const series = await computeWinRateSeries(userId, {
+      leagueIds: filters.leagueIds,
+      memberUserIds: filters.memberUserIds,
+      betTypes: filters.betTypes,
+      propTypes: filters.propTypes,
+      playerName: filters.playerName,
+      teamName: filters.teamName,
+    });
     res.json(series);
   });
 

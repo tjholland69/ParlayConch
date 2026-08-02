@@ -262,6 +262,50 @@ export const notifications = pgTable("notifications", {
   index("notifications_user_id_idx").on(table.userId),
 ]);
 
+// ─── Custom Indexes ────────────────────────────────────────────────────────
+// A named, saved definition of a comparison line ("index") that can be overlaid
+// on performance graphs. Private to its owner by default; can be shared with
+// specific users, or published league-wide by a Parlay Maestro.
+
+export type CustomIndexFilters = {
+  leagueIds: number[];       // empty = all of the creator's leagues
+  memberUserIds: string[];   // whose bets aggregate into the comparison line; empty = all members of leagueIds
+  betTypes: string[];        // subset of 'spread' | 'moneyline' | 'over' | 'under' | 'player_prop'; empty = all
+  propTypes?: string[];      // subset of PLAYER_PROP_TYPES values; empty/undefined = all
+  playerName?: string;       // case-insensitive substring match
+  teamName?: string;         // case-insensitive match against home/away team or player's team
+};
+
+export const customIndexes = pgTable("custom_indexes", {
+  id: serial("id").primaryKey(),
+  ownerId: varchar("owner_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  displayName: text("display_name").notNull(),
+  scope: text("scope").default("private"), // 'private', 'league'
+  publishedLeagueId: integer("published_league_id").references(() => leagues.id, { onDelete: "cascade" }),
+  filters: jsonb("filters").$type<CustomIndexFilters>().notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("custom_indexes_owner_id_idx").on(table.ownerId),
+  index("custom_indexes_published_league_id_idx").on(table.publishedLeagueId),
+]);
+
+export const customIndexShares = pgTable("custom_index_shares", {
+  id: serial("id").primaryKey(),
+  customIndexId: integer("custom_index_id")
+    .notNull()
+    .references(() => customIndexes.id, { onDelete: "cascade" }),
+  sharedWithUserId: varchar("shared_with_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("custom_index_shares_uidx").on(table.customIndexId, table.sharedWithUserId),
+  index("custom_index_shares_user_id_idx").on(table.sharedWithUserId),
+]);
+
 // Legacy bets table (keep for backward compatibility)
 export const bets = pgTable("bets", {
   id: serial("id").primaryKey(),
@@ -355,6 +399,61 @@ export type LeagueMember = typeof leagueMembers.$inferSelect;
 export type Parlay = typeof parlays.$inferSelect;
 export type ParlayLeg = typeof parlayLegs.$inferSelect;
 export type ImportBatch = typeof importBatches.$inferSelect;
+export type CustomIndex = typeof customIndexes.$inferSelect;
+export type CustomIndexShare = typeof customIndexShares.$inferSelect;
+
+/** A custom index as returned to a client, annotated with how the requester can see it. */
+export type CustomIndexWithAccess = CustomIndex & {
+  isOwner: boolean;
+  /** 'owner' | 'shared' | 'league' — which visibility rule granted access. */
+  access: "owner" | "shared" | "league";
+  sharedWithUserIds?: string[];
+};
+
+export const customIndexFiltersSchema = z.object({
+  leagueIds: z.array(z.number().int()).default([]),
+  memberUserIds: z.array(z.string()).default([]),
+  betTypes: z.array(z.enum(["spread", "moneyline", "over", "under", "player_prop"])).default([]),
+  propTypes: z.array(z.string()).default([]),
+  playerName: z.string().default(""),
+  teamName: z.string().default(""),
+});
+
+export const insertCustomIndexSchema = z.object({
+  displayName: z.string().min(1).max(120),
+  scope: z.enum(["private", "league"]).default("private"),
+  publishedLeagueId: z.number().int().nullable().optional(),
+  filters: customIndexFiltersSchema,
+});
+
+export const updateCustomIndexSchema = insertCustomIndexSchema.partial();
+
+export type InsertCustomIndex = z.infer<typeof insertCustomIndexSchema>;
+export type UpdateCustomIndex = z.infer<typeof updateCustomIndexSchema>;
+
+/**
+ * Canonical form of a filter set used for equality comparison — sorted/deduped
+ * arrays, trimmed+lowercased strings, blanks treated as "unset". Two filter sets
+ * that mean the same thing produce identical normalized objects.
+ */
+export function normalizeCustomIndexFilters(filters: Partial<CustomIndexFilters>) {
+  const sortedUnique = (arr?: (string | number)[]) =>
+    Array.from(new Set(arr ?? [])).sort();
+  return {
+    leagueIds: sortedUnique(filters.leagueIds) as number[],
+    memberUserIds: sortedUnique(filters.memberUserIds) as string[],
+    betTypes: sortedUnique(filters.betTypes) as string[],
+    propTypes: sortedUnique(filters.propTypes) as string[],
+    playerName: (filters.playerName ?? "").trim().toLowerCase(),
+    teamName: (filters.teamName ?? "").trim().toLowerCase(),
+  };
+}
+
+export function customIndexFiltersEqual(a: Partial<CustomIndexFilters>, b: Partial<CustomIndexFilters>): boolean {
+  const na = normalizeCustomIndexFilters(a);
+  const nb = normalizeCustomIndexFilters(b);
+  return JSON.stringify(na) === JSON.stringify(nb);
+}
 
 export type LeagueWeekLock = typeof leagueWeekLocks.$inferSelect;
 export type InsertLeagueWeekLock = z.infer<typeof insertLeagueWeekLockSchema>;

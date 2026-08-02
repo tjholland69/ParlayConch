@@ -30,6 +30,16 @@ export const api = {
     summary: { method: 'GET' as const, path: '/api/dashboard/summary' },
     patterns: { method: 'GET' as const, path: '/api/dashboard/patterns' },
     performance: { method: 'GET' as const, path: '/api/dashboard/performance' },
+    advancedPerformance: { method: 'GET' as const, path: '/api/dashboard/performance/advanced' },
+  },
+  customIndexes: {
+    list: { method: 'GET' as const, path: '/api/custom-indexes' },
+    create: { method: 'POST' as const, path: '/api/custom-indexes' },
+    update: { method: 'PATCH' as const, path: '/api/custom-indexes/:id' },
+    remove: { method: 'DELETE' as const, path: '/api/custom-indexes/:id' },
+    share: { method: 'POST' as const, path: '/api/custom-indexes/:id/share' },
+    unshare: { method: 'DELETE' as const, path: '/api/custom-indexes/:id/share/:userId' },
+    performance: { method: 'GET' as const, path: '/api/custom-indexes/:id/performance' },
   }
 };
 

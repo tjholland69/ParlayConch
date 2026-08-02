@@ -36,6 +36,13 @@
       "when": 1785801600000,
       "tag": "0004_games_finished_at_league_loser_label",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785888000000,
+      "tag": "0005_custom_indexes",
+      "breakpoints": true
     }
   ]
 }

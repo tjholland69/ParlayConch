@@ -1,7 +1,8 @@
 import { db } from "./db";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
-  players, playerWeekStats,
+  players, playerWeekStats, customIndexes, customIndexShares,
+  type CustomIndex, type CustomIndexWithAccess, type InsertCustomIndex, type UpdateCustomIndex,
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
@@ -120,6 +121,17 @@ export interface IStorage {
 
   // Aggregate win/loss stats per league (for My Leagues tile)
   getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>>;
+
+  // Custom indexes
+  createCustomIndex(ownerId: string, input: InsertCustomIndex): Promise<CustomIndex>;
+  listVisibleCustomIndexes(userId: string): Promise<CustomIndexWithAccess[]>;
+  getCustomIndex(id: number): Promise<CustomIndex | undefined>;
+  updateCustomIndex(id: number, updates: UpdateCustomIndex): Promise<CustomIndex>;
+  deleteCustomIndex(id: number): Promise<void>;
+  shareCustomIndex(customIndexId: number, sharedWithUserId: string): Promise<void>;
+  unshareCustomIndex(customIndexId: number, sharedWithUserId: string): Promise<void>;
+  getCustomIndexShares(customIndexId: number): Promise<string[]>;
+  usersShareALeague(userIdA: string, userIdB: string): Promise<boolean>;
 
   // Parlay week locking
   getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus>;
@@ -1462,6 +1474,132 @@ export class DatabaseStorage implements IStorage {
 
   async setLegEnrichmentLog(legId: number, log: string): Promise<void> {
     await db.update(parlayLegs).set({ enrichmentLog: log } as any).where(eq(parlayLegs.id, legId));
+  }
+
+  // ===== Custom indexes =====
+
+  async createCustomIndex(ownerId: string, input: InsertCustomIndex): Promise<CustomIndex> {
+    const [created] = await db.insert(customIndexes)
+      .values({
+        ownerId,
+        displayName: input.displayName,
+        scope: input.scope ?? 'private',
+        publishedLeagueId: input.scope === 'league' ? input.publishedLeagueId ?? null : null,
+        filters: input.filters,
+      })
+      .returning();
+    return created;
+  }
+
+  /**
+   * Every index the user may see: their own, ones shared with them, and league
+   * defaults published in a league they belong to. Deduped, owner-first.
+   */
+  async listVisibleCustomIndexes(userId: string): Promise<CustomIndexWithAccess[]> {
+    const memberships = await db
+      .select({ leagueId: leagueMembers.leagueId })
+      .from(leagueMembers)
+      .where(eq(leagueMembers.userId, userId));
+    const myLeagueIds = memberships.map(m => m.leagueId);
+
+    const owned = await db.select().from(customIndexes).where(eq(customIndexes.ownerId, userId));
+
+    const sharedRows = await db.select({ idx: customIndexes })
+      .from(customIndexShares)
+      .innerJoin(customIndexes, eq(customIndexShares.customIndexId, customIndexes.id))
+      .where(eq(customIndexShares.sharedWithUserId, userId));
+
+    const published = myLeagueIds.length > 0
+      ? await db.select().from(customIndexes)
+          .where(and(eq(customIndexes.scope, 'league'), inArray(customIndexes.publishedLeagueId, myLeagueIds)))
+      : [];
+
+    const byId = new Map<number, CustomIndexWithAccess>();
+    const add = (idx: CustomIndex, access: CustomIndexWithAccess['access']) => {
+      if (byId.has(idx.id)) return; // first writer wins: owner > shared > league
+      byId.set(idx.id, { ...idx, isOwner: idx.ownerId === userId, access });
+    };
+
+    owned.forEach(i => add(i, 'owner'));
+    sharedRows.forEach(r => add(r.idx, 'shared'));
+    published.forEach(i => add(i, 'league'));
+
+    // Attach share lists so owners can manage them without an extra round trip
+    const ownedIds = owned.map(i => i.id);
+    if (ownedIds.length > 0) {
+      const shares = await db.select().from(customIndexShares)
+        .where(inArray(customIndexShares.customIndexId, ownedIds));
+      for (const share of shares) {
+        const entry = byId.get(share.customIndexId);
+        if (entry) entry.sharedWithUserIds = [...(entry.sharedWithUserIds ?? []), share.sharedWithUserId];
+      }
+    }
+
+    return Array.from(byId.values());
+  }
+
+  async getCustomIndex(id: number): Promise<CustomIndex | undefined> {
+    const [row] = await db.select().from(customIndexes).where(eq(customIndexes.id, id));
+    return row;
+  }
+
+  async updateCustomIndex(id: number, updates: UpdateCustomIndex): Promise<CustomIndex> {
+    const set: Record<string, unknown> = { updatedAt: new Date() };
+    if (updates.displayName !== undefined) set.displayName = updates.displayName;
+    if (updates.filters !== undefined) set.filters = updates.filters;
+    if (updates.scope !== undefined) {
+      set.scope = updates.scope;
+      // Demoting to private clears the publish target so it can't leak league-wide
+      set.publishedLeagueId = updates.scope === 'league' ? updates.publishedLeagueId ?? null : null;
+    } else if (updates.publishedLeagueId !== undefined) {
+      set.publishedLeagueId = updates.publishedLeagueId;
+    }
+
+    const [updated] = await db.update(customIndexes)
+      .set(set)
+      .where(eq(customIndexes.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteCustomIndex(id: number): Promise<void> {
+    await db.delete(customIndexes).where(eq(customIndexes.id, id));
+  }
+
+  async shareCustomIndex(customIndexId: number, sharedWithUserId: string): Promise<void> {
+    await db.insert(customIndexShares)
+      .values({ customIndexId, sharedWithUserId })
+      .onConflictDoNothing();
+  }
+
+  async unshareCustomIndex(customIndexId: number, sharedWithUserId: string): Promise<void> {
+    await db.delete(customIndexShares)
+      .where(and(
+        eq(customIndexShares.customIndexId, customIndexId),
+        eq(customIndexShares.sharedWithUserId, sharedWithUserId),
+      ));
+  }
+
+  async getCustomIndexShares(customIndexId: number): Promise<string[]> {
+    const rows = await db.select({ userId: customIndexShares.sharedWithUserId })
+      .from(customIndexShares)
+      .where(eq(customIndexShares.customIndexId, customIndexId));
+    return rows.map(r => r.userId);
+  }
+
+  /** True when both users belong to at least one league in common. */
+  async usersShareALeague(userIdA: string, userIdB: string): Promise<boolean> {
+    const a = db.select({ leagueId: leagueMembers.leagueId })
+      .from(leagueMembers)
+      .where(eq(leagueMembers.userId, userIdA));
+    const [row] = await db.select({ leagueId: leagueMembers.leagueId })
+      .from(leagueMembers)
+      .where(and(
+        eq(leagueMembers.userId, userIdB),
+        inArray(leagueMembers.leagueId, a),
+      ))
+      .limit(1);
+    return !!row;
   }
 }
 

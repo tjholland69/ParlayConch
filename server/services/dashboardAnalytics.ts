@@ -1,6 +1,6 @@
 import { db } from "../db";
-import { parlayLegs, parlays, weeks, leagueMembers } from "@shared/schema";
-import { eq, and, inArray, sql, isNotNull } from "drizzle-orm";
+import { parlayLegs, parlays, weeks, leagueMembers, games, players } from "@shared/schema";
+import { eq, and, or, inArray, sql, isNotNull, ilike, exists } from "drizzle-orm";
 
 export interface UserSummary {
   leagueCount: number;
@@ -134,14 +134,37 @@ export interface WinRateTimeSeriesPoint {
   indexWinRate: number | null;
 }
 
-export async function getWinRateTimeSeries(
+export interface WinRateSeriesOptions {
+  /** Leagues to scope to. Empty/undefined = all leagues the requesting user belongs to. */
+  leagueIds?: number[];
+  /** Whose legs aggregate into the index line. Empty/undefined = everyone except the requesting user. */
+  memberUserIds?: string[];
+  /** parlayLegs.betType values to include. Empty/undefined = all. */
+  betTypes?: string[];
+  /** parlayLegs.propType values to include. Empty/undefined = all. */
+  propTypes?: string[];
+  /** Case-insensitive substring match on parlayLegs.playerName. */
+  playerName?: string;
+  /** Team abbreviation/name — matched against the leg's game (home/away) or the prop player's team. */
+  teamName?: string;
+}
+
+/**
+ * Lower-level win-rate time series. Both the "my" line and the "index" line are
+ * filtered by the same league/bet-type/prop/player/team scope, so a custom index
+ * narrows the user's own bets too. Only `memberUserIds` distinguishes the two:
+ * it restricts *who* aggregates into the index line.
+ */
+export async function computeWinRateSeries(
   userId: string,
-  leagueId?: number
+  opts: WinRateSeriesOptions = {}
 ): Promise<{ points: WinRateTimeSeriesPoint[] }> {
+  const { leagueIds, memberUserIds, betTypes, propTypes, playerName, teamName } = opts;
+
   let scopeLeagueIds: number[];
 
-  if (leagueId) {
-    scopeLeagueIds = [leagueId];
+  if (leagueIds && leagueIds.length > 0) {
+    scopeLeagueIds = leagueIds;
   } else {
     const memberships = await db
       .select({ leagueId: leagueMembers.leagueId })
@@ -151,6 +174,47 @@ export async function getWinRateTimeSeries(
   }
 
   if (scopeLeagueIds.length === 0) return { points: [] };
+
+  const conditions = [inArray(parlays.leagueId, scopeLeagueIds), isNotNull(parlayLegs.result)];
+
+  if (betTypes && betTypes.length > 0) {
+    conditions.push(inArray(parlayLegs.betType, betTypes));
+  }
+  if (propTypes && propTypes.length > 0) {
+    conditions.push(inArray(parlayLegs.propType, propTypes));
+  }
+  if (playerName && playerName.trim()) {
+    conditions.push(ilike(parlayLegs.playerName, `%${playerName.trim()}%`));
+  }
+
+  // Team filtering has no column on parlayLegs: a game-tied leg matches through
+  // games.homeTeam/awayTeam, and a player-prop leg without a gameId matches
+  // through the players table on playerName. Expressed as EXISTS subqueries
+  // rather than joins so a duplicated player name can't fan out (double-count) rows.
+  if (teamName && teamName.trim()) {
+    const team = teamName.trim();
+    conditions.push(
+      or(
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(games)
+            .where(
+              and(
+                eq(games.id, parlayLegs.gameId),
+                or(ilike(games.homeTeam, team), ilike(games.awayTeam, team))
+              )
+            )
+        ),
+        exists(
+          db
+            .select({ one: sql`1` })
+            .from(players)
+            .where(and(eq(players.name, parlayLegs.playerName), ilike(players.team, team)))
+        )
+      )!
+    );
+  }
 
   const rows = await db
     .select({
@@ -164,7 +228,7 @@ export async function getWinRateTimeSeries(
     .from(parlayLegs)
     .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
     .innerJoin(weeks, eq(parlays.weekId, weeks.id))
-    .where(and(inArray(parlays.leagueId, scopeLeagueIds), isNotNull(parlayLegs.result)));
+    .where(and(...conditions));
 
   const weekOrder = new Map<number, { season: number; weekNumber: number; label: string }>();
   for (const row of rows) {
@@ -180,13 +244,26 @@ export async function getWinRateTimeSeries(
   const myByWeek = new Map<number, { win: number; loss: number }>();
   const othersByWeek = new Map<number, { win: number; loss: number }>();
 
+  // When memberUserIds is supplied the index line is exactly those members
+  // (the requesting user included, if they named themselves); otherwise it keeps
+  // today's behavior of "everyone else in scope".
+  const indexMembers = memberUserIds && memberUserIds.length > 0 ? new Set(memberUserIds) : null;
+
   for (const row of rows) {
     if (row.result !== "win" && row.result !== "loss") continue;
-    const bucket = row.userId === userId ? myByWeek : othersByWeek;
-    const entry = bucket.get(row.weekId) ?? { win: 0, loss: 0 };
-    if (row.result === "win") entry.win++;
-    else entry.loss++;
-    bucket.set(row.weekId, entry);
+
+    const isMine = row.userId === userId;
+    const inIndex = indexMembers ? indexMembers.has(row.userId) : !isMine;
+
+    const tally = (bucket: Map<number, { win: number; loss: number }>) => {
+      const entry = bucket.get(row.weekId) ?? { win: 0, loss: 0 };
+      if (row.result === "win") entry.win++;
+      else entry.loss++;
+      bucket.set(row.weekId, entry);
+    };
+
+    if (isMine) tally(myByWeek);
+    if (inIndex) tally(othersByWeek);
   }
 
   let myCumWin = 0;
@@ -217,4 +294,16 @@ export async function getWinRateTimeSeries(
   });
 
   return { points };
+}
+
+/**
+ * Dashboard performance series — the requesting user vs. the combined win rate of
+ * every other member of the scoped league(s). Thin wrapper over
+ * `computeWinRateSeries` with no bet-type/member/prop/player/team narrowing.
+ */
+export async function getWinRateTimeSeries(
+  userId: string,
+  leagueId?: number
+): Promise<{ points: WinRateTimeSeriesPoint[] }> {
+  return computeWinRateSeries(userId, { leagueIds: leagueId ? [leagueId] : undefined });
 }

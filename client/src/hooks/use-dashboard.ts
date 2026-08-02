@@ -49,6 +49,37 @@ export function useDashboardPatterns() {
   });
 }
 
+export interface AdvancedPerformanceFilters {
+  leagueIds?: number[];
+  betTypes?: string[];
+  propTypes?: string[];
+  playerName?: string;
+  teamName?: string;
+}
+
+/** Ephemeral, ad-hoc slice of the performance series — nothing is persisted. */
+export function useDashboardAdvancedPerformance(filters: AdvancedPerformanceFilters) {
+  const params = new URLSearchParams();
+  if (filters.leagueIds?.length) params.set("leagueIds", filters.leagueIds.join(","));
+  if (filters.betTypes?.length) params.set("betTypes", filters.betTypes.join(","));
+  if (filters.propTypes?.length) params.set("propTypes", filters.propTypes.join(","));
+  if (filters.playerName?.trim()) params.set("playerName", filters.playerName.trim());
+  if (filters.teamName?.trim()) params.set("teamName", filters.teamName.trim());
+  const qs = params.toString();
+
+  return useQuery<{ points: WinRateTimeSeriesPoint[] }>({
+    queryKey: [api.dashboard.advancedPerformance.path, qs],
+    queryFn: async () => {
+      const url = qs
+        ? `${api.dashboard.advancedPerformance.path}?${qs}`
+        : api.dashboard.advancedPerformance.path;
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch advanced performance");
+      return res.json();
+    },
+  });
+}
+
 export function useDashboardPerformance(leagueId?: number) {
   return useQuery<{ points: WinRateTimeSeriesPoint[] }>({
     queryKey: [api.dashboard.performance.path, leagueId ?? "all"],
