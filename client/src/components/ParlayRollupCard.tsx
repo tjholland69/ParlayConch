@@ -14,7 +14,7 @@ import { formatPickLabel } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { getDisplayName } from "@/lib/displayName";
+import { getDisplayName, shortId } from "@/lib/displayName";
 import { getParlayVisualStyle, getResultPercentileOrdinal, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
@@ -330,7 +330,7 @@ export function ParlayRollupCard({
     }
   };
 
-  const memberName = getDisplayName(parlay.user, `User #${parlay.userId.slice(0, 6)}`);
+  const memberName = getDisplayName(parlay.user, `User #${shortId(parlay.userId)}`);
   const bustedLeg = getBustedLeg(parlay);
   const loserLabelText = loserLabel === "asshole" ? "Asshole" : "Parlay Loser";
 
@@ -632,21 +632,21 @@ export function ParlayRollupCard({
                                 </span>
                               )}
                               {!readOnly && !selectMode && !splitMode && !legSelectMode && members ? (
-                                <Select value={leg.userId} onValueChange={v => handleLegOwnerChange(leg, v)}>
+                                <Select value={leg.userId ?? undefined} onValueChange={v => handleLegOwnerChange(leg, v)}>
                                   <SelectTrigger className={cn("h-6 text-xs w-32 px-1.5 py-0 border-none bg-transparent hover:bg-white/5", !leg.user && "text-amber-400")}>
                                     <SelectValue placeholder="Unknown" />
                                   </SelectTrigger>
                                   <SelectContent>
                                     {members.map(m => (
                                       <SelectItem key={m.userId} value={m.userId}>
-                                        {getDisplayName(m.user, m.userId.slice(0, 8))}
+                                        {getDisplayName(m.user, shortId(m.userId, 8))}
                                       </SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
                               ) : (
                                 <span className={cn(!leg.user && "text-amber-400")}>
-                                  {leg.user ? getDisplayName(leg.user, `User #${leg.userId.slice(0, 6)}`) : "Unknown Owner"}
+                                  {leg.user ? getDisplayName(leg.user, `User #${shortId(leg.userId)}`) : "Unknown Owner"}
                                 </span>
                               )}
                             </div>

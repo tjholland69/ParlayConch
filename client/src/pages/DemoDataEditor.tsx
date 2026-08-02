@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ParlayRollupCard, LegSheet, blankLeg, BET_TYPES, RESULTS, type LegFormState } from "@/components/ParlayRollupCard";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
-import { getDisplayName } from "@/lib/displayName";
+import { getDisplayName, shortId } from "@/lib/displayName";
 
 // ── Merge Dialog ──────────────────────────────────────────────────────────────
 
@@ -76,7 +76,7 @@ function MergeDialog({ open, onOpenChange, selected, leagueId, onDone }: MergeDi
           <p className="text-sm font-medium text-muted-foreground mb-3">Which parlay should be kept as the base?</p>
           <RadioGroup value={targetId} onValueChange={setTargetId} className="space-y-2 overflow-y-auto max-h-[40vh] pr-1">
             {selected.map(p => {
-              const name = getDisplayName(p.user, `User #${p.userId.slice(0, 6)}`);
+              const name = getDisplayName(p.user, `User #${shortId(p.userId)}`);
               const week = p.week?.label ?? `Week ${p.weekId}`;
               return (
                 <label
@@ -212,7 +212,7 @@ function BulkEditLegsDialog({ open, onOpenChange, leagueId, legIds, members, onD
                 <SelectContent>
                   {members.map(m => (
                     <SelectItem key={m.userId} value={m.userId}>
-                      {getDisplayName(m.user, m.userId.slice(0, 8))}
+                      {getDisplayName(m.user, shortId(m.userId, 8))}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -301,7 +301,7 @@ function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }:
                 <SelectContent>
                   {members.map(m => (
                     <SelectItem key={m.userId} value={m.userId}>
-                      {getDisplayName(m.user, m.userId.slice(0, 8))}
+                      {getDisplayName(m.user, shortId(m.userId, 8))}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -597,7 +597,7 @@ export default function DemoDataEditor() {
               <SelectItem value="all">All Members</SelectItem>
               {members?.map(m => (
                 <SelectItem key={m.userId} value={m.userId}>
-                  {getDisplayName(m.user, m.userId.slice(0, 8))}
+                  {getDisplayName(m.user, shortId(m.userId, 8))}
                 </SelectItem>
               ))}
             </SelectContent>
