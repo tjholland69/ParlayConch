@@ -42,7 +42,7 @@ async function resolvedParlay(
     approvedBy: "dev_admin", approvedAt,
   }).returning();
   await db.insert(parlayLegs).values(
-    legs.map(l => ({ ...l, parlayId: p.id, oddsEnriched: true })),
+    legs.map(l => ({ ...l, parlayId: p.id, userId, oddsEnriched: true })),
   );
 }
 
@@ -324,9 +324,9 @@ async function seed() {
     userId: "dev_user1", leagueId: league.id, weekId: w18.id, status: "pending",
   }).returning();
   await db.insert(parlayLegs).values([
-    { parlayId: pAlice.id, gameId: w18g1.id, betType: "spread",    pick: "home",  line: "-3.5"  },
-    { parlayId: pAlice.id, gameId: w18g2.id, betType: "moneyline", pick: "away",  line: "+215"  },
-    { parlayId: pAlice.id, gameId: w18g3.id, betType: "over",      pick: "over",  line: "41.5"  },
+    { parlayId: pAlice.id, userId: "dev_user1", gameId: w18g1.id, betType: "spread",    pick: "home",  line: "-3.5"  },
+    { parlayId: pAlice.id, userId: "dev_user1", gameId: w18g2.id, betType: "moneyline", pick: "away",  line: "+215"  },
+    { parlayId: pAlice.id, userId: "dev_user1", gameId: w18g3.id, betType: "over",      pick: "over",  line: "41.5"  },
   ]);
 
   // Bob — approved
@@ -335,8 +335,8 @@ async function seed() {
     status: "approved", approvedBy: "dev_admin", approvedAt: new Date(),
   }).returning();
   await db.insert(parlayLegs).values([
-    { parlayId: pBob.id, gameId: w18g1.id, betType: "moneyline", pick: "away",  line: "+155"  },
-    { parlayId: pBob.id, gameId: w18g4.id, betType: "spread",    pick: "home",  line: "-9.5"  },
+    { parlayId: pBob.id, userId: "dev_user2", gameId: w18g1.id, betType: "moneyline", pick: "away",  line: "+155"  },
+    { parlayId: pBob.id, userId: "dev_user2", gameId: w18g4.id, betType: "spread",    pick: "home",  line: "-9.5"  },
   ]);
 
   // Carol — rejected
@@ -345,8 +345,8 @@ async function seed() {
     status: "rejected", approvedBy: "dev_admin", approvedAt: new Date(),
   }).returning();
   await db.insert(parlayLegs).values([
-    { parlayId: pCarol.id, gameId: w18g2.id, betType: "spread",    pick: "away",  line: "+6.5"  },
-    { parlayId: pCarol.id, gameId: w18g3.id, betType: "under",     pick: "under", line: "41.5"  },
+    { parlayId: pCarol.id, userId: "dev_user3", gameId: w18g2.id, betType: "spread",    pick: "away",  line: "+6.5"  },
+    { parlayId: pCarol.id, userId: "dev_user3", gameId: w18g3.id, betType: "under",     pick: "under", line: "41.5"  },
   ]);
 
   console.log("  ✓ parlays  (3 resolved weeks + 1 active week)");
