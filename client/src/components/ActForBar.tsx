@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { X, Search, UserCog } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { getDisplayName } from "@/lib/displayName";
 
 type SuperUserResult = {
   id: string;
@@ -115,7 +116,7 @@ export function ActForBar() {
         <UserCog className="w-3.5 h-3.5 text-yellow-400 shrink-0" />
         <span className="text-xs text-yellow-300/70 font-mono hidden sm:inline">Acting as</span>
         <span className="text-xs font-semibold text-yellow-300 max-w-[160px] truncate">
-          {actingAs.settings?.displayName || (actingAs.firstName ? `${actingAs.firstName} ${actingAs.lastName || ""}`.trim() : actingAs.email)}
+          {getDisplayName(actingAs)}
         </span>
         <Button
           size="icon"
@@ -172,12 +173,12 @@ export function ActForBar() {
                 onClick={() => setActAs.mutate(u.id)}
               >
                 <div className="w-7 h-7 rounded-full bg-primary/20 border border-primary/30 flex items-center justify-center text-xs font-bold text-primary shrink-0">
-                  {(u.settings?.displayName || u.firstName || u.email || "?")[0].toUpperCase()}
+                  {getDisplayName(u, "?")[0].toUpperCase()}
                 </div>
                 <div className="min-w-0">
                   {(u.settings?.displayName || u.firstName) && (
                     <div className="text-xs font-medium truncate">
-                      {u.settings?.displayName || `${u.firstName} ${u.lastName || ""}`.trim()}
+                      {getDisplayName(u)}
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground truncate">{u.email}</div>

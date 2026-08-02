@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatPickLabel } from "@/lib/formatPick";
 import { format } from "date-fns";
+import { getDisplayName } from "@/lib/displayName";
 import type { ParlayWithLegs } from "@shared/schema";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -302,10 +303,7 @@ function HistoryParlayCard({
                     Other members ({otherParlays.length})
                   </p>
                   {otherParlays.map(other => {
-                    const displayName =
-                      (other.user as any)?.settings?.displayName ||
-                      other.user?.firstName ||
-                      "Member";
+                    const displayName = getDisplayName(other.user, "Member");
                     const oWins     = other.legs.filter((l: any) => l.result === "win").length;
                     const oLosses   = other.legs.filter((l: any) => l.result === "loss").length;
                     const oPushes   = other.legs.filter((l: any) => l.result === "push").length;

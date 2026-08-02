@@ -220,7 +220,7 @@ export default function Leagues() {
                           <span className={`font-bold text-sm ${color}`}>
                             {stat.winRate.toFixed(1)}%
                           </span>
-                          <span className="text-xs text-muted-foreground/60">Overall Win</span>
+                          <span className="text-xs text-muted-foreground/60">Overall Picks Won</span>
                         </div>
                         <span className="text-xs text-muted-foreground/60">
                           {stat.wins} parlay{stat.wins !== 1 ? "s" : ""} won

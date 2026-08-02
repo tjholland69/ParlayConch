@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { getDisplayName } from "@/lib/displayName";
 import {
   Upload,
   Image,
@@ -392,10 +393,7 @@ function TicketCard({
                 <SelectContent>
                   {members.map((m: any) => {
                     const email = m.user?.email ?? m.userId;
-                    const name =
-                      (m.user?.settings as any)?.displayName ??
-                      m.user?.firstName ??
-                      email;
+                    const name = getDisplayName(m.user, email);
                     return (
                       <SelectItem key={m.userId} value={email}>
                         {name}

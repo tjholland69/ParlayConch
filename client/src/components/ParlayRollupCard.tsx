@@ -13,6 +13,8 @@ import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDown
 import { formatPickLabel } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { getDisplayName } from "@/lib/displayName";
+import { getParlayVisualStyle } from "@/lib/parlayVisuals";
 
 const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
 const PICK_OPTIONS: Record<string, string[]> = {
@@ -199,6 +201,8 @@ export type ParlayCardProps = {
   versionNumber?: number;
   /** When true, hides all admin edit/delete/status/fetch controls — display-only rollup. */
   readOnly?: boolean;
+  /** 0-1 share of the league that submitted a parlay for this parlay's week — drives color boldness. */
+  participationRate?: number;
 };
 
 function logStatus(log: EnrichLog) {
@@ -259,6 +263,7 @@ export function ParlayRollupCard({
   parlay, leagueId,
   selectMode = false, isSelected = false, onToggleSelect = () => {},
   collapseSignal = 0, expandSignal = 0, versionNumber, readOnly = false,
+  participationRate = 1,
 }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
   const deleteLeg = useDeleteParlayLeg(leagueId);
@@ -302,7 +307,13 @@ export function ParlayRollupCard({
     }
   };
 
-  const memberName = (parlay.user as any)?.settings?.displayName || parlay.user?.firstName || `User #${parlay.userId.slice(0, 6)}`;
+  const memberName = getDisplayName(parlay.user, `User #${parlay.userId.slice(0, 6)}`);
+
+  const sortedLegs = [...parlay.legs].sort((a, b) => {
+    const aTime = a.game?.gameTime ? new Date(a.game.gameTime).getTime() : Infinity;
+    const bTime = b.game?.gameTime ? new Date(b.game.gameTime).getTime() : Infinity;
+    return aTime - bTime;
+  });
 
   return (
     <>
@@ -313,19 +324,19 @@ export function ParlayRollupCard({
         const _resolved = _wins + _losses + _pushes;
         const _pct      = _resolved > 0 ? Math.round((_wins / _resolved) * 100) : 0;
         const _perfect  = _pct === 100 && _resolved > 0;
+        const _visual   = getParlayVisualStyle(_resolved > 0 ? _pct : null, participationRate);
 
         return (
           <Card
             className={cn(
               "border transition-all duration-500",
-              selectMode && isSelected
-                ? "border-primary/60 bg-primary/5"
-                : _perfect
-                  ? "border-green-400/60 bg-card/50"
-                  : "border-white/10 bg-card/50",
+              selectMode && isSelected ? "border-primary/60 bg-primary/5" : "bg-card/50",
               selectMode && "cursor-pointer"
             )}
-            style={_perfect ? { boxShadow: "0 0 18px 2px rgba(74,222,128,0.22), 0 0 4px 1px rgba(74,222,128,0.18)" } : undefined}
+            style={selectMode && isSelected ? undefined : {
+              borderColor: _visual.borderColor,
+              boxShadow: _visual.boxShadow,
+            }}
             onClick={selectMode ? () => onToggleSelect(parlay.id) : undefined}
           >
             <CardHeader className="relative overflow-hidden pb-3">
@@ -339,12 +350,7 @@ export function ParlayRollupCard({
                   )}
                   style={{
                     width: `${_pct}%`,
-                    background: _perfect
-                      ? "linear-gradient(to right, rgba(74,222,128,0.35), rgba(74,222,128,0.10))"
-                      : "linear-gradient(to right, rgba(74,222,128,0.18), rgba(74,222,128,0.03))",
-                    boxShadow: _perfect
-                      ? "inset -4px 0 12px rgba(74,222,128,0.25)"
-                      : "inset -2px 0 6px rgba(74,222,128,0.08)",
+                    background: _visual.barGradient,
                   }}
                 />
               )}
@@ -512,18 +518,19 @@ export function ParlayRollupCard({
                 <thead>
                   <tr className="bg-muted/30 text-muted-foreground text-xs">
                     {splitMode && <th className="px-3 py-2 w-8" />}
-                    <th className="text-left px-3 py-2 font-medium">Member</th>
+                    <th className="text-left px-3 py-2 font-medium">Bet Owner</th>
                     <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
                     <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
                     <th className="text-left px-3 py-2 font-medium">Pick</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>
+                    <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Date</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
                     {!readOnly && !selectMode && !splitMode && <th className="px-2 py-2" />}
                   </tr>
                 </thead>
                 <tbody>
-                  {parlay.legs.map((leg, i) => {
+                  {sortedLegs.map((leg, i) => {
                     const liveLog = enrichResults[leg.id];
                     const storedLog: EnrichLog | null = (() => {
                       try { return leg.enrichmentLog ? JSON.parse(leg.enrichmentLog) : null; } catch { return null; }
@@ -567,6 +574,9 @@ export function ParlayRollupCard({
                           <td className="px-3 py-2 text-muted-foreground">{formatPickLabel(leg)}</td>
                           <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.line || "—"}</td>
                           <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.odds || "—"}</td>
+                          <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
+                            {leg.game?.gameTime ? new Date(leg.game.gameTime).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"}
+                          </td>
                           <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
                             {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
                           </td>
@@ -628,7 +638,7 @@ export function ParlayRollupCard({
                         </tr>
                         {activeLog && isExpanded && (
                           <tr key={`log-${leg.id}`} className="border-t border-white/5">
-                            <td colSpan={8} className="px-3 pb-3">
+                            <td colSpan={9} className="px-3 pb-3">
                               <LegLogPanel
                                 log={activeLog}
                                 onClose={() => setExpandedLogs(e => ({ ...e, [leg.id]: false }))}
