@@ -70,11 +70,11 @@ function baseHtml(body: string) {
 <body>
   <div class="container">
     <div class="header">
-      <div class="logo">PARLAY<span>.CLUB</span></div>
+      <div class="logo">PARLAY<span>.CONCH</span></div>
     </div>
     <div class="body">${body}</div>
     <div class="footer">
-      <p>Parlay.Club · <a href="https://parlayconch.com" style="color:#52525b;">parlayconch.com</a></p>
+      <p>Parlay.Conch · <a href="https://parlayconch.com" style="color:#52525b;">parlayconch.com</a></p>
       <p style="margin-top:6px;">You received this because someone invited you to their league. If you weren't expecting this, you can safely ignore it.</p>
     </div>
   </div>
@@ -85,7 +85,7 @@ function baseHtml(body: string) {
 // ─── Sending functions ───────────────────────────────────────────────────────
 
 /**
- * Send a "you've been added" email to an existing Parlay.Club user.
+ * Send a "you've been added" email to an existing Parlay.Conch user.
  */
 export async function sendMemberAddedEmail(opts: {
   toEmail: string;
@@ -102,16 +102,16 @@ export async function sendMemberAddedEmail(opts: {
   const html = baseHtml(`
     <h1>You've been added to ${opts.leagueName}!</h1>
     <p>${greeting}</p>
-    <p><strong>${opts.inviterName}</strong> added you to their Parlay.Club league <strong>${opts.leagueName}</strong>. You can head straight to the league and start submitting picks.</p>
+    <p><strong>${opts.inviterName}</strong> added you to their Parlay.Conch league <strong>${opts.leagueName}</strong>. You can head straight to the league and start submitting picks.</p>
     <a class="cta" href="${appUrl}">View Your League →</a>
     <hr class="divider" />
     <p style="font-size:13px;">Or copy this link into your browser:<br/><span style="color:#71717a;">${appUrl}</span></p>
   `);
 
   await client.emails.send({
-    from: `Parlay.Club <${fromEmail}>`,
+    from: `Parlay.Conch <${fromEmail}>`,
     to: opts.toEmail,
-    subject: `You've been added to ${opts.leagueName} on Parlay.Club`,
+    subject: `You've been added to ${opts.leagueName} on Parlay.Conch`,
     html,
   });
 }
@@ -131,8 +131,8 @@ export async function sendLeagueInviteEmail(opts: {
 
   const html = baseHtml(`
     <h1>You're invited to ${opts.leagueName}!</h1>
-    <p><strong>${opts.inviterName}</strong> has invited you to join their NFL parlay league <strong>${opts.leagueName}</strong> on Parlay.Club.</p>
-    <p>Parlay.Club is where friend groups track their NFL parlay picks head-to-head. Create an account and use the invite code below to join the league.</p>
+    <p><strong>${opts.inviterName}</strong> has invited you to join their NFL parlay league <strong>${opts.leagueName}</strong> on Parlay.Conch.</p>
+    <p>Parlay.Conch is where friend groups track their NFL parlay picks head-to-head. Create an account and use the invite code below to join the league.</p>
     <a class="cta" href="${joinUrl}">Create Your Account →</a>
     <p style="margin-top:8px;font-size:14px;color:#a1a1aa;">Once you're in, enter this invite code to join ${opts.leagueName}:</p>
     <div class="code-block">
@@ -142,9 +142,9 @@ export async function sendLeagueInviteEmail(opts: {
   `);
 
   await client.emails.send({
-    from: `Parlay.Club <${fromEmail}>`,
+    from: `Parlay.Conch <${fromEmail}>`,
     to: opts.toEmail,
-    subject: `${opts.inviterName} invited you to ${opts.leagueName} on Parlay.Club`,
+    subject: `${opts.inviterName} invited you to ${opts.leagueName} on Parlay.Conch`,
     html,
   });
 }

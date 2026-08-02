@@ -4,6 +4,7 @@ import { api } from "@shared/routes";
 export interface UserSummary {
   leagueCount: number;
   parlaysPlaced: number;
+  legsPlaced: number;
   legWins: number;
   legLosses: number;
   legWinRate: number;

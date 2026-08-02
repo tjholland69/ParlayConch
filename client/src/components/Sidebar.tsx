@@ -133,7 +133,7 @@ export function Sidebar() {
       <div className="md:hidden fixed top-0 left-0 right-0 z-50 p-4 bg-background/80 backdrop-blur-md border-b border-white/5 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Shell className="w-6 h-6 text-blue-500" />
-          <span className="font-bold font-display text-lg tracking-tight">PARLAY.CLUB</span>
+          <span className="font-bold font-display text-lg tracking-tight">PARLAYCONCH</span>
         </div>
         <div className="flex items-center gap-1">
           <ActForBar />

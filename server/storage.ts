@@ -270,6 +270,13 @@ export class DatabaseStorage implements IStorage {
       .sort((a, b) => b.winRate - a.winRate);
   }
 
+  /**
+   * Per-member win/loss/push record, based on individual parlay_legs results
+   * (not the parlay's overall status) — each leg is its own bet, attributed
+   * to whichever member contributed it (parlayLegs.userId). Legs belonging to
+   * a 'void' (no submission) or 'rejected' parlay are excluded, since those
+   * don't represent a real decided bet.
+   */
   async getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]> {
     const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
     const memberIds = members.map(m => m.userId);
@@ -277,17 +284,22 @@ export class DatabaseStorage implements IStorage {
     if (memberIds.length === 0) return [];
 
     const memberUsers = await db.select().from(users).where(inArray(users.id, memberIds));
-    const leagueParlays = await db.select().from(parlays).where(
-      weekIds && weekIds.length > 0
-        ? and(eq(parlays.leagueId, leagueId), inArray(parlays.weekId, weekIds))
-        : eq(parlays.leagueId, leagueId)
-    );
+
+    const legRows = await db.select({ userId: parlayLegs.userId, result: parlayLegs.result })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(and(
+        eq(parlays.leagueId, leagueId),
+        not(inArray(parlays.status as any, ['void', 'rejected'])),
+        inArray(parlayLegs.userId, memberIds),
+        weekIds && weekIds.length > 0 ? inArray(parlays.weekId, weekIds) : undefined,
+      ));
 
     return memberUsers.map(user => {
-      const userParlays = leagueParlays.filter(p => p.userId === user.id && ['win', 'loss', 'push'].includes(p.status || ''));
-      const wins = userParlays.filter(p => p.status === 'win').length;
-      const losses = userParlays.filter(p => p.status === 'loss').length;
-      const pushes = userParlays.filter(p => p.status === 'push').length;
+      const userLegs = legRows.filter(l => l.userId === user.id);
+      const wins = userLegs.filter(l => l.result === 'win').length;
+      const losses = userLegs.filter(l => l.result === 'loss').length;
+      const pushes = userLegs.filter(l => l.result === 'push').length;
       const totalDecided = wins + losses;
       const winRate = totalDecided > 0 ? (wins / totalDecided) * 100 : 0;
 

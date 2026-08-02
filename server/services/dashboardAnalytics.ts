@@ -5,6 +5,7 @@ import { eq, and, inArray, sql, isNotNull } from "drizzle-orm";
 export interface UserSummary {
   leagueCount: number;
   parlaysPlaced: number;
+  legsPlaced: number;
   legWins: number;
   legLosses: number;
   legWinRate: number;
@@ -19,6 +20,7 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
   const [row] = await db
     .select({
       parlaysPlaced: sql<number>`count(distinct ${parlayLegs.parlayId})`,
+      legsPlaced: sql<number>`count(*)`,
       legWins: sql<number>`count(*) filter (where ${parlayLegs.result} = 'win')`,
       legLosses: sql<number>`count(*) filter (where ${parlayLegs.result} = 'loss')`,
     })
@@ -32,6 +34,7 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
   return {
     leagueCount: Number(leagueCount ?? 0),
     parlaysPlaced: Number(row?.parlaysPlaced ?? 0),
+    legsPlaced: Number(row?.legsPlaced ?? 0),
     legWins,
     legLosses,
     legWinRate: totalDecided > 0 ? (legWins / totalDecided) * 100 : 0,

@@ -20,7 +20,34 @@ export interface NewsItem {
   imageUrl?: string;
   publishedAt: string;
   tag?: string;
+  // Injuries only
+  team?: string;
+  position?: string;
+  // Scores only — the two competing teams' conference/division, so a game
+  // can be filtered on either side (e.g. an AFC East fan wants to see games
+  // where the Bills are playing, home or away).
+  conferences?: string[];
+  divisions?: string[];
 }
+
+const NFL_TEAM_DIVISIONS: Record<string, { conference: "AFC" | "NFC"; division: string }> = {
+  BUF: { conference: "AFC", division: "East" }, MIA: { conference: "AFC", division: "East" },
+  NE: { conference: "AFC", division: "East" }, NYJ: { conference: "AFC", division: "East" },
+  BAL: { conference: "AFC", division: "North" }, CIN: { conference: "AFC", division: "North" },
+  CLE: { conference: "AFC", division: "North" }, PIT: { conference: "AFC", division: "North" },
+  HOU: { conference: "AFC", division: "South" }, IND: { conference: "AFC", division: "South" },
+  JAX: { conference: "AFC", division: "South" }, TEN: { conference: "AFC", division: "South" },
+  DEN: { conference: "AFC", division: "West" }, KC: { conference: "AFC", division: "West" },
+  LAC: { conference: "AFC", division: "West" }, LV: { conference: "AFC", division: "West" },
+  DAL: { conference: "NFC", division: "East" }, NYG: { conference: "NFC", division: "East" },
+  PHI: { conference: "NFC", division: "East" }, WSH: { conference: "NFC", division: "East" },
+  CHI: { conference: "NFC", division: "North" }, DET: { conference: "NFC", division: "North" },
+  GB: { conference: "NFC", division: "North" }, MIN: { conference: "NFC", division: "North" },
+  ATL: { conference: "NFC", division: "South" }, CAR: { conference: "NFC", division: "South" },
+  NO: { conference: "NFC", division: "South" }, TB: { conference: "NFC", division: "South" },
+  ARI: { conference: "NFC", division: "West" }, LAR: { conference: "NFC", division: "West" },
+  SF: { conference: "NFC", division: "West" }, SEA: { conference: "NFC", division: "West" },
+};
 
 export async function fetchNFLNews(limit: number = 10): Promise<NewsItem[]> {
   const url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/news?limit=" + limit;
@@ -110,6 +137,8 @@ export async function fetchNFLInjuries(): Promise<NewsItem[]> {
         imageUrl: inj.athlete?.headshot?.href,
         publishedAt: inj.date,
         tag,
+        team: teamName,
+        position,
       });
     }
   }
@@ -193,6 +222,14 @@ export async function fetchNFLScores(): Promise<NewsItem[]> {
     const noteHeadline = comp.notes?.[0]?.headline;
     if (noteHeadline) description = `${noteHeadline} — ${description}`;
 
+    const homeInfo = NFL_TEAM_DIVISIONS[home.team.abbreviation];
+    const awayInfo = NFL_TEAM_DIVISIONS[away.team.abbreviation];
+    const conferences = [...new Set([homeInfo?.conference, awayInfo?.conference].filter((c): c is "AFC" | "NFC" => !!c))];
+    const divisions = [...new Set([
+      homeInfo ? `${homeInfo.conference} ${homeInfo.division}` : undefined,
+      awayInfo ? `${awayInfo.conference} ${awayInfo.division}` : undefined,
+    ].filter((d): d is string => !!d))];
+
     items.push({
       id: `score-${event.id}`,
       title,
@@ -200,6 +237,8 @@ export async function fetchNFLScores(): Promise<NewsItem[]> {
       url: event.links?.[0]?.href ?? "",
       publishedAt: event.date,
       tag: completed ? "Final" : statusDesc || "Upcoming",
+      conferences,
+      divisions,
     });
   }
 

@@ -14,8 +14,9 @@ import { formatPickLabel } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { getDisplayName } from "@/lib/displayName";
-import { getParlayVisualStyle, getResultPercentileBucket } from "@/lib/parlayVisuals";
+import { getParlayVisualStyle, getResultPercentileOrdinal, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
+import { ParlayMixBar } from "@/components/ParlayMixBar";
 
 const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
 const PICK_OPTIONS: Record<string, string[]> = {
@@ -385,7 +386,7 @@ export function ParlayRollupCard({
               <span className="text-xs text-muted-foreground/60 shrink-0">#{parlay.id}</span>
               {parlay.status === "loss" && _resolved > 0 && (
                 <Badge variant="outline" className={cn("text-xs px-1.5 py-0 font-normal shrink-0", statusColor(parlay.status))}>
-                  Loss · {getResultPercentileBucket(_pct)} hit rate
+                  Loss, and parlay was in the {getResultPercentileOrdinal(_pct)}
                 </Badge>
               )}
               {bustedLeg && (
@@ -411,19 +412,17 @@ export function ParlayRollupCard({
               const resolved = wins + losses + pushes;
               const pending  = parlay.legs.filter(l => !l.result).length;
               const pct      = resolved > 0 ? Math.round((wins / resolved) * 100) : null;
+              const fractionColor = pct === null ? undefined : (() => {
+                const [r, g, b] = getWinPctColor(pct);
+                return `rgb(${r}, ${g}, ${b})`;
+              })();
               return (
                 <div className="flex items-center gap-1.5 text-xs shrink-0" onClick={e => e.stopPropagation()}>
-                  <span className={cn(
-                    "font-semibold tabular-nums",
-                    pct === null ? "text-muted-foreground/50"
-                      : pct >= 60 ? "text-green-400"
-                      : pct >= 40 ? "text-yellow-400"
-                      : "text-red-400"
-                  )}>
-                    {wins}<span className="text-muted-foreground/40 font-normal">/{resolved}</span>
-                    {pct !== null && (
-                      <span className="ml-1 text-muted-foreground/70 font-normal">({pct}%)</span>
-                    )}
+                  <span
+                    className={cn("font-semibold tabular-nums", pct === null && "text-muted-foreground/50")}
+                    style={fractionColor ? { color: fractionColor } : undefined}
+                  >
+                    {wins}/{resolved}{pct !== null && ` (${pct}%)`}
                   </span>
                   {pending > 0 && (
                     <span className="text-muted-foreground/50">
@@ -522,6 +521,11 @@ export function ParlayRollupCard({
               </div>
             )}
           </div>
+          {!collapsed && (
+            <div className="mt-3 relative z-10">
+              <ParlayMixBar legs={parlay.legs} />
+            </div>
+          )}
         </CardHeader>
 
         {!collapsed && <CardContent className="pt-0" onClick={e => selectMode && e.stopPropagation()}>

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, useLeagueDataStats, usePopularPicks, useMyParlayHistory } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -98,19 +98,11 @@ export default function LeagueDetail() {
     .filter(w => !w.isActive)
     .sort((a, b) => (b.season - a.season) || (b.weekNumber - a.weekNumber));
 
-  // All Parlays tab: independent Year / Week / Member filters, defaulting to the
-  // current active week. Separate from the header week dropdown above.
+  // All Parlays tab: independent Year / Week / Member filters, defaulting to
+  // "All Weeks" / "All Years". Separate from the header week dropdown above.
   const [allYearFilter, setAllYearFilter] = useState<string>("all");
   const [allWeekFilter, setAllWeekFilter] = useState<string>("all");
   const [allMemberFilter, setAllMemberFilter] = useState<string>("all");
-  const [allFiltersInitialized, setAllFiltersInitialized] = useState(false);
-  useEffect(() => {
-    if (!allFiltersInitialized && activeWeek) {
-      setAllYearFilter(String(activeWeek.season));
-      setAllWeekFilter(String(activeWeek.id));
-      setAllFiltersInitialized(true);
-    }
-  }, [activeWeek, allFiltersInitialized]);
   const allSeasons = [...new Set((weeks ?? []).map(w => w.season))].sort((a, b) => b - a);
   const allVisibleWeeksDesc = (weeks ?? [])
     .filter(w => allYearFilter === "all" || w.season === Number(allYearFilter))
