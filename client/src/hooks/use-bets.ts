@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick } from "@shared/schema";
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -199,6 +199,19 @@ export function useMyParlayHistory(leagueId?: number) {
       if (leagueId) url += `?leagueId=${leagueId}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch parlay history");
+      return res.json();
+    },
+  });
+}
+
+export function useMyLegHistory(leagueId?: number) {
+  return useQuery<ParlayLegWithParlayContext[]>({
+    queryKey: [api.parlayLegs.myHistory.path, leagueId],
+    queryFn: async () => {
+      let url = api.parlayLegs.myHistory.path;
+      if (leagueId) url += `?leagueId=${leagueId}`;
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch leg history");
       return res.json();
     },
   });

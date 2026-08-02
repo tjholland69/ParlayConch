@@ -6,6 +6,7 @@ import {
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
+  type ParlayLegWithParlayContext,
   type ImportBatch, type InsertImportBatch, type ImportParlayLeg,
   type LieutenantPermissions, type LeagueMemberWithUser,
   type Notification, type LeagueNotificationSettings,
@@ -76,6 +77,7 @@ export interface IStorage {
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
   getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]>;
+  getUserLegHistory(userId: string, leagueId?: number): Promise<ParlayLegWithParlayContext[]>;
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
   deleteParlayLeg(legId: number): Promise<void>;
@@ -805,6 +807,43 @@ export class DatabaseStorage implements IStorage {
         week: weekById.get(parlay.weekId)!,
       }))
       .sort((a, b) => b.week.weekNumber - a.week.weekNumber);
+  }
+
+  async getUserLegHistory(userId: string, leagueId?: number): Promise<ParlayLegWithParlayContext[]> {
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(users, eq(parlays.userId, users.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(
+        leagueId
+          ? and(eq(parlayLegs.userId, userId), eq(parlays.leagueId, leagueId))
+          : eq(parlayLegs.userId, userId)
+      );
+
+    if (rows.length === 0) return [];
+
+    const weekIds = [...new Set(rows.map(r => r.parlay.weekId))];
+    const allWeeks = await db.select().from(weeks).where(inArray(weeks.id, weekIds));
+    const weekById = new Map(allWeeks.map(w => [w.id, w]));
+
+    return rows
+      .map(({ leg, game, parlay, owner }) => {
+        const isOwnParlay = parlay.userId === userId;
+        return {
+          ...leg,
+          game,
+          parlay: {
+            id: parlay.id,
+            weekId: parlay.weekId,
+            week: weekById.get(parlay.weekId)!,
+            status: parlay.status,
+            isOwnParlay,
+            owner: isOwnParlay ? null : { firstName: owner.firstName, email: owner.email, settings: owner.settings as any },
+          },
+        };
+      })
+      .sort((a, b) => b.parlay.week.weekNumber - a.parlay.week.weekNumber || a.parlay.id - b.parlay.id);
   }
 
   async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay> {

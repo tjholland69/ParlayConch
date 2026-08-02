@@ -540,6 +540,12 @@ export async function registerRoutes(
     res.json(history);
   });
 
+  app.get("/api/parlay-legs/my", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+    res.json(await storage.getUserLegHistory(userId, leagueId));
+  });
+
   app.get("/api/leagues/:leagueId/weeks/:weekId/parlays", isAuthenticated, async (req, res) => {
     const leagueId = Number(req.params.leagueId);
     const weekId = Number(req.params.weekId);

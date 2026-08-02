@@ -506,6 +506,20 @@ export type ParlayWithLegs = Parlay & {
   user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null; settings?: UserSettings | null };
 };
 
+// A single leg the current user contributed, with a pointer back to its parent
+// parlay — including parlays owned/merged by another league member.
+export type ParlayLegWithParlayContext = ParlayLeg & {
+  game: Game | null;
+  parlay: {
+    id: number;
+    weekId: number;
+    week: Week;
+    status: string | null;
+    isOwnParlay: boolean;
+    owner: { firstName?: string | null; email?: string | null; settings?: UserSettings | null } | null;
+  };
+};
+
 export type LeagueStats = {
   leagueId: number;
   leagueName: string;

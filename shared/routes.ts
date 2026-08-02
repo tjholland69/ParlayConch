@@ -23,6 +23,9 @@ export const api = {
     approve: { method: 'POST' as const, path: '/api/parlays/:id/approve' },
     reject: { method: 'POST' as const, path: '/api/parlays/:id/reject' },
   },
+  parlayLegs: {
+    myHistory: { method: 'GET' as const, path: '/api/parlay-legs/my' },
+  },
   stats: {
     list: { method: 'GET' as const, path: '/api/stats' },
   },
