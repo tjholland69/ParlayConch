@@ -5,7 +5,7 @@ import { db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
 import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs } from "@shared/schema";
-import { ilike, eq, and } from "drizzle-orm";
+import { ilike, eq, and, or, sql as drizzleSql } from "drizzle-orm";
 import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { runOddsSyncQueued, startOddsSyncWorker } from "./jobs/odds-sync-queue";
 import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
@@ -108,7 +108,12 @@ export async function registerRoutes(
         results = await db
           .select(userFields)
           .from(users)
-          .where(ilike(users.email, `%${q}%`))
+          .where(or(
+            ilike(users.email, `%${q}%`),
+            ilike(users.firstName, `%${q}%`),
+            ilike(users.lastName, `%${q}%`),
+            ilike(drizzleSql`${users.settings}->>'displayName'`, `%${q}%`),
+          ))
           .limit(10);
       } else {
         // Default: return users who are admins in at least one league
