@@ -452,7 +452,15 @@ export function ParlayRollupCard({
               );
             })()}
 
-            <span className="text-xs text-muted-foreground/50 italic shrink-0 hidden sm:inline whitespace-nowrap">
+            <span className={cn(
+              "text-xs italic shrink-0 hidden sm:inline-flex items-center gap-1 whitespace-nowrap",
+              parlay.user ? "text-muted-foreground/50" : "text-amber-400"
+            )}>
+              {!parlay.user && (
+                <span title="Owner record missing — this parlay may need cleanup (often left over from an import)">
+                  <AlertTriangle className="w-3 h-3" aria-label="Owner record missing" />
+                </span>
+              )}
               (Started by {memberName})
             </span>
 

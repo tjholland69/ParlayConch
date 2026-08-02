@@ -723,12 +723,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]> {
+    // leftJoin (not innerJoin) — a parlay must never disappear from the results just
+    // because its userId doesn't resolve to a row in `users` (e.g. legacy/import
+    // data with a stale owner reference). Missing `user` signals that to callers.
     const leagueParlays = await db.select({
       parlay: parlays,
       user: users
     })
     .from(parlays)
-    .innerJoin(users, eq(parlays.userId, users.id))
+    .leftJoin(users, eq(parlays.userId, users.id))
     .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
 
     if (leagueParlays.length === 0) return [];
@@ -760,7 +763,7 @@ export class DatabaseStorage implements IStorage {
       ...parlay,
       legs: legsByParlayId.get(parlay.id) ?? [],
       week,
-      user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any }
+      user: user ? { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any } : undefined,
     }));
   }
 
@@ -819,10 +822,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserLegHistory(userId: string, leagueId?: number): Promise<ParlayLegWithParlayContext[]> {
+    // leftJoin (not innerJoin) on users — a leg the caller contributed must never
+    // disappear just because the parlay's owner record doesn't resolve (e.g. stale
+    // import data). Missing `owner` (when not the caller's own parlay) signals that.
     const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
-      .innerJoin(users, eq(parlays.userId, users.id))
+      .leftJoin(users, eq(parlays.userId, users.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
       .where(
         leagueId
@@ -848,7 +854,7 @@ export class DatabaseStorage implements IStorage {
             week: weekById.get(parlay.weekId)!,
             status: parlay.status,
             isOwnParlay,
-            owner: isOwnParlay ? null : { firstName: owner.firstName, email: owner.email, settings: owner.settings as any },
+            owner: isOwnParlay || !owner ? null : { firstName: owner.firstName, email: owner.email, settings: owner.settings as any },
           },
         };
       })
@@ -888,9 +894,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllLeagueParlays(leagueId: number): Promise<ParlayWithLegs[]> {
+    // leftJoin (not innerJoin) — a parlay must never disappear from the results just
+    // because its userId doesn't resolve to a row in `users` (e.g. legacy/import
+    // data with a stale owner reference). Missing `user` signals that to callers.
     const leagueParlays = await db.select({ parlay: parlays, user: users })
       .from(parlays)
-      .innerJoin(users, eq(parlays.userId, users.id))
+      .leftJoin(users, eq(parlays.userId, users.id))
       .where(eq(parlays.leagueId, leagueId))
       .orderBy(desc(parlays.createdAt));
 
@@ -927,7 +936,7 @@ export class DatabaseStorage implements IStorage {
       ...parlay,
       legs: legsByParlayId.get(parlay.id) ?? [],
       week: weekById.get(parlay.weekId)!,
-      user: { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any },
+      user: user ? { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any } : undefined,
     }));
   }
 
