@@ -13,7 +13,9 @@ import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartph
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { getDisplayName } from "@/lib/displayName";
-import type { UserNotificationPreferences } from "@shared/schema";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { REGION_TILES } from "@/lib/geo";
+import type { UserNotificationPreferences, UserRegion } from "@shared/schema";
 
 const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
 
@@ -38,7 +40,9 @@ export default function Settings() {
   const [displayName, setDisplayName] = useState((user?.settings as any)?.displayName || user?.firstName || "");
   const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
   const [selectedColor, setSelectedColor] = useState<string>((user?.settings as any)?.primaryColor || "221 83% 53%");
-  const [selectedRegion, setSelectedRegion] = useState<string>((user?.settings as any)?.region || "");
+  const savedRegionInit = (user?.settings as any)?.region as UserRegion | null | undefined;
+  const [selectedContinent, setSelectedContinent] = useState<string>(savedRegionInit?.continent || "");
+  const [selectedPlace, setSelectedPlace] = useState<string>(savedRegionInit?.place || "");
   const [selectedTheme, setSelectedTheme] = useState<"dark" | "light" | "system">((user?.settings as any)?.theme || "dark");
 
   useEffect(() => {
@@ -52,8 +56,11 @@ export default function Settings() {
   }, [user]);
 
   useEffect(() => {
-    const savedRegion = (user?.settings as any)?.region;
-    if (savedRegion) setSelectedRegion(savedRegion);
+    const savedRegion = (user?.settings as any)?.region as UserRegion | null | undefined;
+    if (savedRegion) {
+      setSelectedContinent(savedRegion.continent || "");
+      setSelectedPlace(savedRegion.place || "");
+    }
   }, [user]);
 
   useEffect(() => {
@@ -75,8 +82,15 @@ export default function Settings() {
   };
 
   const handleSaveRegion = () => {
-    updateSettings.mutate({ region: selectedRegion || null });
+    const region: UserRegion | null =
+      selectedContinent && selectedPlace ? { continent: selectedContinent, place: selectedPlace } : null;
+    updateSettings.mutate({ region });
   };
+
+  const savedRegion = (user?.settings as any)?.region as UserRegion | null | undefined;
+  const regionUnchanged =
+    (savedRegion?.continent || "") === selectedContinent && (savedRegion?.place || "") === selectedPlace;
+  const selectedTile = REGION_TILES.find((t) => t.key === selectedContinent);
 
   // Determine the user's highest role across all their leagues
   const adminLeagues = leagues?.filter(l => l.isAdmin) ?? [];
@@ -192,32 +206,44 @@ export default function Settings() {
                     Used to show you on regional leaderboards on the dashboard
                   </p>
                 </div>
-                <div className="flex gap-2">
-                  {[
-                    { key: "US", flag: "🇺🇸", label: "US" },
-                    { key: "EMEA", flag: "🌍", label: "EMEA" },
-                    { key: "APAC", flag: "🌏", label: "APAC" },
-                  ].map(({ key, flag, label }) => (
+                <div className="flex flex-wrap gap-2">
+                  {REGION_TILES.map(({ key, flag, label }) => (
                     <button
                       key={key}
-                      onClick={() => setSelectedRegion(selectedRegion === key ? "" : key)}
+                      onClick={() => {
+                        const next = selectedContinent === key ? "" : key;
+                        setSelectedContinent(next);
+                        setSelectedPlace("");
+                      }}
                       className={cn(
                         "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all",
-                        selectedRegion === key
+                        selectedContinent === key
                           ? "bg-primary text-primary-foreground border-primary"
                           : "bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10"
                       )}
-                      data-testid={`button-region-${key.toLowerCase()}`}
+                      data-testid={`button-region-${key.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
                     >
                       <span>{flag}</span>
                       <span>{label}</span>
                     </button>
                   ))}
                 </div>
+                {selectedTile && (
+                  <Select value={selectedPlace} onValueChange={setSelectedPlace}>
+                    <SelectTrigger className="w-full sm:w-64 bg-background border-white/10" data-testid="select-region-place">
+                      <SelectValue placeholder={selectedTile.key === "US" ? "Select a state" : "Select a country"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedTile.places.map((place) => (
+                        <SelectItem key={place} value={place}>{place}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
                 <Button
                   size="sm"
                   onClick={handleSaveRegion}
-                  disabled={updateSettings.isPending || selectedRegion === ((user?.settings as any)?.region || "")}
+                  disabled={updateSettings.isPending || regionUnchanged}
                   data-testid="button-save-region"
                 >
                   {updateSettings.isPending ? "Saving…" : "Save Region"}

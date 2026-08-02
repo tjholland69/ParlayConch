@@ -40,12 +40,17 @@ export type UserNotificationPreferences = {
   phone?: string;
 };
 
+export type UserRegion = {
+  continent: string; // "US" | "North & Central America" | "South America" | "Europe" | "Africa" | "Asia" | "Oceania"
+  place: string; // state name if continent === "US", else country name
+};
+
 export type UserSettings = {
   displayName?: string;
   notificationPreferences?: UserNotificationPreferences;
   skipImportInstructions?: boolean;
   primaryColor?: string;
-  region?: "US" | "EMEA" | "APAC";
+  region?: UserRegion | null;
   theme?: "dark" | "light" | "system";
 };
 
@@ -486,7 +491,7 @@ export type UserStat = {
   losses: number;
   pushes: number;
   winRate: number;
-  region?: string | null;
+  region?: UserRegion | null;
 };
 
 export type LeagueMemberWithUser = LeagueMember & {

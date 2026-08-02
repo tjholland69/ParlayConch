@@ -57,11 +57,11 @@ function LoadingSkeletons() {
   );
 }
 
-function useNewsFeed(feed: "headlines" | "injuries" | "scores") {
+function useNewsFeed(feed: "headlines" | "injuries" | "scores", limit = 16) {
   return useQuery<NewsItem[]>({
-    queryKey: ["/api/news", feed],
+    queryKey: ["/api/news", feed, limit],
     queryFn: async () => {
-      const res = await fetch(`/api/news?feed=${feed}&limit=16`);
+      const res = await fetch(`/api/news?feed=${feed}&limit=${limit}`);
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
@@ -75,12 +75,14 @@ function NewsItemsView({
   isError,
   tagColors,
   emptyMessage = "No data available right now.",
+  limit,
 }: {
   items: NewsItem[] | undefined;
   isLoading: boolean;
   isError: boolean;
   tagColors: Record<string, string>;
   emptyMessage?: string;
+  limit?: number;
 }) {
   if (isLoading) return <LoadingSkeletons />;
   if (isError || !items?.length) {
@@ -93,7 +95,7 @@ function NewsItemsView({
 
   return (
     <div className="space-y-1">
-      {items.slice(0, 14).map((item) => {
+      {(limit ? items.slice(0, limit) : items).map((item) => {
         const tagClass =
           item.tag ? (tagColors[item.tag] ?? "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300") : "";
         const isLinked = !!item.url;
@@ -155,8 +157,16 @@ function FilterBar({ children }: { children: React.ReactNode }) {
   return <div className="flex flex-wrap items-center gap-2 mb-3">{children}</div>;
 }
 
+const INJURY_PAGE_SIZE_OPTIONS = [
+  { label: "10", value: 10 },
+  { label: "25", value: 25 },
+  { label: "50", value: 50 },
+  { label: "All", value: 60 },
+];
+
 function InjuriesPanel() {
-  const { data: items, isLoading, isError } = useNewsFeed("injuries");
+  const [pageSize, setPageSize] = useState(10);
+  const { data: items, isLoading, isError } = useNewsFeed("injuries", pageSize);
   const [position, setPosition] = useState("all");
   const [team, setTeam] = useState("all");
 
@@ -197,6 +207,19 @@ function InjuriesPanel() {
         tagColors={INJURY_TAG_COLORS}
         emptyMessage={items?.length ? "No injuries match those filters." : "No data available right now."}
       />
+      <div className="flex items-center justify-end gap-2 mt-3">
+        <span className="text-xs text-muted-foreground">Show</span>
+        <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+          <SelectTrigger className="h-8 w-20 text-xs" data-testid="select-injury-page-size">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {INJURY_PAGE_SIZE_OPTIONS.map(o => (
+              <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
     </div>
   );
 }
@@ -240,6 +263,7 @@ function ScoresPanel() {
         isError={isError}
         tagColors={SCORE_TAG_COLORS}
         emptyMessage={items?.length ? "No games match those filters." : "No data available right now."}
+        limit={14}
       />
     </div>
   );
@@ -247,7 +271,7 @@ function ScoresPanel() {
 
 function HeadlinesPanel() {
   const { data: items, isLoading, isError } = useNewsFeed("headlines");
-  return <NewsItemsView items={items} isLoading={isLoading} isError={isError} tagColors={{}} />;
+  return <NewsItemsView items={items} isLoading={isLoading} isError={isError} tagColors={{}} limit={14} />;
 }
 
 export function NewsFeed() {
