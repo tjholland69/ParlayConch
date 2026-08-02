@@ -506,7 +506,10 @@ export type LeagueWithMembers = League & {
 };
 
 export type ParlayWithLegs = Parlay & {
-  legs: (ParlayLeg & { game: Game | null })[];
+  legs: (ParlayLeg & {
+    game: Game | null;
+    user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null; settings?: UserSettings | null };
+  })[];
   week: Week;
   user?: { firstName?: string | null; email?: string | null; profileImageUrl?: string | null; isDemo?: boolean | null; settings?: UserSettings | null };
 };

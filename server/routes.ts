@@ -4,8 +4,8 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
-import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";
-import { ilike, eq, and, or, sql as drizzleSql } from "drizzle-orm";
+import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs, parlays, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";
+import { ilike, eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
 import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { runOddsSyncQueued, startOddsSyncWorker } from "./jobs/odds-sync-queue";
 import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
@@ -1486,8 +1486,82 @@ export async function registerRoutes(
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
-      const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment } = req.body;
-      const updated = await storage.updateParlayLeg(legId, { betType, pick, line, odds, result, playerName, propType, notes, gameSegment });
+      const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment, userId } = req.body;
+
+      if (userId !== undefined && userId !== leg.userId) {
+        const members = await storage.getLeagueMembers(parlay.leagueId);
+        if (!members.some(m => m.userId === userId)) {
+          return res.status(400).json({ message: "Selected user is not a member of this league" });
+        }
+        const siblingLegs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, leg.parlayId));
+        if (siblingLegs.some(l => l.id !== legId && l.userId === userId)) {
+          return res.status(400).json({ message: "This member already has a leg in this parlay" });
+        }
+      }
+
+      const updates: Record<string, unknown> = {};
+      if (betType !== undefined) updates.betType = betType;
+      if (pick !== undefined) updates.pick = pick;
+      if (line !== undefined) updates.line = line;
+      if (odds !== undefined) updates.odds = odds;
+      if (result !== undefined) updates.result = result;
+      if (playerName !== undefined) updates.playerName = playerName;
+      if (propType !== undefined) updates.propType = propType;
+      if (notes !== undefined) updates.notes = notes;
+      if (gameSegment !== undefined) updates.gameSegment = gameSegment;
+      if (userId !== undefined) updates.userId = userId;
+
+      const updated = await storage.updateParlayLeg(legId, updates);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  const BULK_EDITABLE_LEG_FIELDS = ['betType', 'pick', 'line', 'odds', 'result', 'playerName', 'propType', 'notes', 'gameSegment', 'userId'] as const;
+
+  app.post("/api/leagues/:leagueId/parlay-legs/bulk-update", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+
+      const { legIds, field, value } = req.body as { legIds: number[]; field: string; value: string | null };
+      if (!Array.isArray(legIds) || legIds.length === 0) {
+        return res.status(400).json({ message: "legIds[] is required" });
+      }
+      if (!(BULK_EDITABLE_LEG_FIELDS as readonly string[]).includes(field)) {
+        return res.status(400).json({ message: "Unsupported field" });
+      }
+
+      const targetLegs = await db.select().from(parlayLegs).where(inArray(parlayLegs.id, legIds));
+      if (targetLegs.length !== legIds.length) {
+        return res.status(404).json({ message: "One or more legs not found" });
+      }
+      const parlayIds = [...new Set(targetLegs.map(l => l.parlayId))];
+      const targetParlays = await db.select().from(parlays).where(inArray(parlays.id, parlayIds));
+      if (targetParlays.some(p => p.leagueId !== leagueId)) {
+        return res.status(403).json({ message: "Legs must all belong to this league" });
+      }
+
+      if (field === "userId") {
+        const members = await storage.getLeagueMembers(leagueId);
+        if (!members.some(m => m.userId === value)) {
+          return res.status(400).json({ message: "Selected user is not a member of this league" });
+        }
+        const selectedIdSet = new Set(legIds);
+        const allLegsInAffectedParlays = await db.select().from(parlayLegs).where(inArray(parlayLegs.parlayId, parlayIds));
+        for (const parlayId of parlayIds) {
+          const legsInThisParlay = allLegsInAffectedParlays.filter(l => l.parlayId === parlayId);
+          const selectedInThisParlay = legsInThisParlay.filter(l => selectedIdSet.has(l.id));
+          const alreadyOwnedByTarget = legsInThisParlay.some(l => !selectedIdSet.has(l.id) && l.userId === value);
+          if (selectedInThisParlay.length > 1 || alreadyOwnedByTarget) {
+            return res.status(400).json({ message: "This member already has a leg in at least one of the affected parlays" });
+          }
+        }
+      }
+
+      const updated = await storage.bulkUpdateParlayLegs(legIds, field as any, value);
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });

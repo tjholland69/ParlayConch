@@ -801,6 +801,28 @@ export function useUpdateParlayLeg(leagueId: number) {
   });
 }
 
+export function useBulkUpdateParlayLegs(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ legIds, field, value }: { legIds: number[]; field: string; value: string | null }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlay-legs/bulk-update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ legIds, field, value }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Legs Updated", description: `${variables.legIds.length} leg(s) updated.` });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
 export type EnrichLog = { at: string; changes: string[]; warnings: string[]; errors: string[] };
 
 export function useEnrichParlayLeg(leagueId: number) {
