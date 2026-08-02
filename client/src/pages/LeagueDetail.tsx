@@ -1,30 +1,82 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, useLeagueDataStats, usePopularPicks, useMyParlayHistory } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Calendar, Users, Check, X, Clock, ChevronRight, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download } from "lucide-react";
+import { Trophy, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatPickLabel } from "@/lib/formatPick";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
-import { EditParlayDialog } from "@/components/EditParlayDialog";
-import { BettingInsights } from "@/components/BettingInsights";
 import { BetSlipPanel } from "@/components/BetSlipPanel";
+import { ParlayRollupCard } from "@/components/ParlayRollupCard";
+import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
-import type { Game, ParlayWithLegs } from "@shared/schema";
+import type { Game, UserStat } from "@shared/schema";
 
 type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
+
+function StandingsList({ list }: { list: UserStat[] }) {
+  if (!list.length) {
+    return <p className="text-muted-foreground text-center py-8 text-sm">No stats yet.</p>;
+  }
+  return (
+    <div className="space-y-2">
+      {list.map((stat, i) => (
+        <div
+          key={stat.userId}
+          className={cn(
+            "flex items-center justify-between p-3 rounded-xl border border-transparent",
+            i === 0 ? "bg-primary/10 border-primary/20" : "hover:bg-white/5"
+          )}
+        >
+          <div className="flex items-center gap-3">
+            <span className={cn(
+              "font-mono font-bold w-6 text-center text-sm",
+              i === 0 ? "text-primary" : "text-muted-foreground"
+            )}>
+              {i + 1}
+            </span>
+            <div className="flex items-center gap-2">
+              {stat.profileImageUrl ? (
+                <img src={stat.profileImageUrl} alt="" className="w-7 h-7 rounded-full" />
+              ) : (
+                <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-xs">
+                  {stat.username[0]}
+                </div>
+              )}
+              <p className="font-bold text-sm">{stat.username}</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">Record</p>
+              <p className="font-mono text-xs">{stat.wins}-{stat.losses}-{stat.pushes}</p>
+            </div>
+            <div className="text-right min-w-[50px]">
+              <p className={cn(
+                "font-mono font-bold text-base",
+                stat.winRate >= 50 ? "text-primary" : "text-muted-foreground"
+              )}>
+                {stat.winRate.toFixed(1)}%
+              </p>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function LeagueDetail() {
   const [, params] = useRoute("/leagues/:id");
@@ -34,33 +86,37 @@ export default function LeagueDetail() {
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
   
-  const { data: stats, isLoading: loadingStats } = useLeagueStats(leagueId);
   const { data: weeks } = useWeeks();
-  const [selectedWeekId, setSelectedWeekId] = useState<number | undefined>();
-  
-  useEffect(() => {
-    if (weeks?.length && !selectedWeekId) {
-      const active = weeks.find(w => w.isActive);
-      setSelectedWeekId(active?.id || weeks[0].id);
-    }
-  }, [weeks, selectedWeekId]);
+  // Header week dropdown — purely a filter for the All Parlays list. Open Parlays
+  // always operates on the active week directly, ignoring this selection.
+  const [selectedWeekId, setSelectedWeekId] = useState<number | "all">("all");
+  const activeWeek = weeks?.find(w => w.isActive);
+  const activeWeekId = activeWeek?.id;
+  const historicalWeeksDesc = (weeks ?? [])
+    .filter(w => !w.isActive)
+    .sort((a, b) => (b.season - a.season) || (b.weekNumber - a.weekNumber));
 
-  const { data: games } = useGames(selectedWeekId || 0);
-  const { data: leagueParlays } = useLeagueParlays(leagueId, selectedWeekId || 0);
-  const { data: myParlay } = useMyParlay(leagueId, selectedWeekId || 0);
+  const { data: stats } = useLeagueStats(leagueId);
+  const { data: overviewStats } = useLeaguesOverviewStats();
+  const { data: dataStats, isLoading: loadingDataStats } = useLeagueDataStats(leagueId);
+  const { data: allParlays, isLoading: loadingAllParlays } = useAllLeagueParlaysReadOnly(leagueId);
+
+  const { data: games } = useGames(activeWeekId || 0);
+  const { data: leagueParlays } = useLeagueParlays(leagueId, activeWeekId || 0);
+  const { data: myParlay } = useMyParlay(leagueId, activeWeekId || 0);
   const createParlay = useCreateParlay();
   const approveParlay = useApproveParlay();
   const rejectParlay = useRejectParlay();
 
-  const { data: lockStatus } = useWeekLockStatus(leagueId, selectedWeekId || 0);
-  const lockParlay = useLockWeekParlay(leagueId, selectedWeekId || 0);
-  const unlockParlay = useUnlockWeekParlay(leagueId, selectedWeekId || 0);
+  const { data: lockStatus } = useWeekLockStatus(leagueId, activeWeekId || 0);
+  const lockParlay = useLockWeekParlay(leagueId, activeWeekId || 0);
+  const unlockParlay = useUnlockWeekParlay(leagueId, activeWeekId || 0);
+  const { data: popularPicks } = usePopularPicks(leagueId, activeWeekId || 0);
+  const { data: myParlayHistory } = useMyParlayHistory(leagueId);
 
   const [selectedLegs, setSelectedLegs] = useState<ParlayLeg[]>([]);
   const [importInstructionsOpen, setImportInstructionsOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [editParlayOpen, setEditParlayOpen] = useState(false);
-  const [selectedParlay, setSelectedParlay] = useState<ParlayWithLegs | null>(null);
   const [showLockConfirm, setShowLockConfirm] = useState(false);
 
   // CSV export helper
@@ -127,8 +183,8 @@ export default function LeagueDetail() {
   };
 
   const submitParlay = () => {
-    if (!selectedWeekId || !leagueId) return;
-    createParlay.mutate({ leagueId, weekId: selectedWeekId, legs: selectedLegs }, {
+    if (!activeWeekId || !leagueId) return;
+    createParlay.mutate({ leagueId, weekId: activeWeekId, legs: selectedLegs }, {
       onSuccess: () => setSelectedLegs([])
     });
   };
@@ -181,84 +237,167 @@ export default function LeagueDetail() {
           </div>
           
           <div className="flex items-center gap-2 flex-wrap">
-            {league.isAdmin && (
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    const skip = (user?.settings as any)?.skipImportInstructions;
-                    if (skip) {
-                      setImportModalOpen(true);
-                    } else {
-                      setImportInstructionsOpen(true);
-                    }
-                  }}
-                  data-testid="button-import-history"
-                >
-                  <Upload className="w-4 h-4 mr-2" />
-                  Import History
-                </Button>
-                <Link href={`/leagues/${leagueId}/screenshot-import`}>
-                  <Button variant="outline" className="w-full border-primary/40 text-primary hover:bg-primary/10" data-testid="button-screenshot-import">
-                    <Download className="w-4 h-4 mr-2" />
-                    Screenshot Import
-                  </Button>
-                </Link>
-                {league.isDemo ? (
-                  <Link href={`/leagues/${leagueId}/demo-data`}>
-                    <Button variant="outline" className="w-full border-yellow-500/40 text-yellow-400 hover:bg-yellow-500/10" data-testid="button-demo-data-editor">
-                      <Edit className="w-4 h-4 mr-2" />
-                      Data Editor
-                    </Button>
-                  </Link>
-                ) : (
-                  <div />
-                )}
-                <Link href={`/leagues/${leagueId}/settings`}>
-                  <Button variant="outline" className="w-full" data-testid="button-league-settings">
-                    <Settings className="w-4 h-4 mr-2" />
-                    Settings
-                  </Button>
-                </Link>
-              </div>
-            )}
-            <Button
-              variant="ghost"
-              className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-              onClick={() => league.isAdmin ? setShowTransferDialog(true) : setShowLeaveConfirm(true)}
-              data-testid="button-leave-league"
+            <Select
+              value={String(selectedWeekId)}
+              onValueChange={(v) => setSelectedWeekId(v === "all" ? "all" : Number(v))}
             >
-              <LogOut className="w-4 h-4 mr-2" />
-              Leave League 😢
-            </Button>
-            <Select value={selectedWeekId?.toString()} onValueChange={(v) => setSelectedWeekId(Number(v))}>
-              <SelectTrigger className="w-48 bg-background border-white/10">
+              <SelectTrigger className="w-48 bg-background border-white/10" data-testid="select-header-week">
                 <Calendar className="w-4 h-4 text-primary mr-2" />
                 <SelectValue placeholder="Select Week" />
               </SelectTrigger>
               <SelectContent>
-                {weeks?.map((week) => (
+                <SelectItem value="all">All Weeks</SelectItem>
+                {activeWeek && (
+                  <SelectItem value={activeWeek.id.toString()}>
+                    {activeWeek.label} (Current)
+                  </SelectItem>
+                )}
+                {historicalWeeksDesc.map((week) => (
                   <SelectItem key={week.id} value={week.id.toString()}>
-                    {week.label} {week.isActive && "(Current)"}
+                    {week.label}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" data-testid="button-league-actions">
+                  League Actions
+                  <ChevronDown className="w-4 h-4 ml-2" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {league.isAdmin && (
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger data-testid="menu-historical-data">
+                      Historical Data
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent>
+                      {league.isDemo && (
+                        <DropdownMenuItem asChild data-testid="button-demo-data-editor">
+                          <Link href={`/leagues/${leagueId}/demo-data`}>
+                            <Edit className="w-4 h-4 mr-2" />
+                            Data Editor
+                          </Link>
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem
+                        onClick={() => {
+                          const skip = (user?.settings as any)?.skipImportInstructions;
+                          if (skip) {
+                            setImportModalOpen(true);
+                          } else {
+                            setImportInstructionsOpen(true);
+                          }
+                        }}
+                        data-testid="button-import-history"
+                      >
+                        <Upload className="w-4 h-4 mr-2" />
+                        Import History
+                      </DropdownMenuItem>
+                      <DropdownMenuItem asChild data-testid="button-screenshot-import">
+                        <Link href={`/leagues/${leagueId}/screenshot-import`}>
+                          <Download className="w-4 h-4 mr-2" />
+                          Screenshot Import
+                        </Link>
+                      </DropdownMenuItem>
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                )}
+                {league.isAdmin && (
+                  <DropdownMenuItem asChild data-testid="button-league-settings">
+                    <Link href={`/leagues/${leagueId}/settings`}>
+                      <Settings className="w-4 h-4 mr-2" />
+                      Settings
+                    </Link>
+                  </DropdownMenuItem>
+                )}
+                {league.isAdmin && <DropdownMenuSeparator />}
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={() => league.isAdmin ? setShowTransferDialog(true) : setShowLeaveConfirm(true)}
+                  data-testid="button-leave-league"
+                >
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Leave League
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       </div>
 
-      <Tabs defaultValue="picks" className="space-y-6">
+      <Tabs defaultValue="open" className="space-y-6">
         <TabsList className="bg-card/50 border border-white/5">
-          <TabsTrigger value="picks" data-testid="tab-picks">Make Picks</TabsTrigger>
-          <TabsTrigger value="parlays" data-testid="tab-parlays">League Parlays</TabsTrigger>
-          <TabsTrigger value="standings" data-testid="tab-standings">Standings</TabsTrigger>
+          <TabsTrigger value="open" data-testid="tab-open">Open Parlays</TabsTrigger>
+          <TabsTrigger value="all" data-testid="tab-all">All Parlays</TabsTrigger>
+          <TabsTrigger value="data" data-testid="tab-data">League Data</TabsTrigger>
           <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
-          <TabsTrigger value="insights" data-testid="tab-insights">Insights</TabsTrigger>
         </TabsList>
 
-        {/* Make Picks Tab */}
-        <TabsContent value="picks" className="space-y-6">
+        {/* Open Parlays Tab — always scoped to the active week, ignores the header week dropdown */}
+        <TabsContent value="open" className="space-y-6">
+          {/* Lock header row — visible to Parlay Maestro */}
+          {league.isAdmin && (
+            <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-card/40 border border-white/5">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Users className="w-4 h-4" />
+                <span data-testid="text-submission-count">
+                  {lockStatus?.submittedCount ?? 0} / {lockStatus?.totalMembers ?? league.memberCount} submitted
+                </span>
+                {lockStatus?.allSubmitted && !lockStatus?.isLocked && (
+                  <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs ml-1">All in</Badge>
+                )}
+                {lockStatus?.isLocked && lockStatus?.hadMissingBets && (
+                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs ml-1">
+                    <AlertTriangle className="w-3 h-3 mr-1" />Locked with missing bets
+                  </Badge>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                {lockStatus?.isLocked ? (
+                  <>
+                    <Badge className="bg-red-500/20 text-red-400 border-red-500/30" data-testid="badge-parlay-locked">
+                      <Lock className="w-3 h-3 mr-1" />Locked
+                    </Badge>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => unlockParlay.mutate()}
+                      disabled={unlockParlay.isPending}
+                      data-testid="button-unlock-parlay"
+                    >
+                      <LockOpen className="w-4 h-4 mr-1" />Unlock
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (!lockStatus?.allSubmitted) {
+                        setShowLockConfirm(true);
+                      } else {
+                        lockParlay.mutate(false);
+                      }
+                    }}
+                    disabled={lockParlay.isPending}
+                    className={cn(
+                      "transition-all",
+                      lockStatus?.allSubmitted
+                        ? "bg-green-600 hover:bg-green-700 text-white border-green-600"
+                        : "bg-muted text-muted-foreground border-white/10 hover:bg-muted/80"
+                    )}
+                    data-testid="button-lock-parlay"
+                  >
+                    <Lock className="w-4 h-4 mr-1" />
+                    Lock Parlay
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
+
           {lockStatus?.isLocked ? (
             <Card className="bg-card/50 border-white/5">
               <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
@@ -272,63 +411,15 @@ export default function LeagueDetail() {
                 )}
               </CardContent>
             </Card>
-          ) : myParlay ? (
-            <Card className="bg-primary/10 border-primary/20">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Check className="w-5 h-5 text-primary" />
-                  Parlay Submitted
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {myParlay.legs.map((leg, i) => {
-                    const isProp = leg.betType === 'player_prop';
-                    const matchupLabel = isProp
-                      ? (leg.playerName || 'Player')
-                      : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`;
-                    const pickDisplay = formatPickLabel(leg);
-                    const lineDisplay = isProp ? null
-                      : leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game?.moneylineHome : leg.game?.moneylineAway)
-                      : null;
-                    return (
-                      <div key={i} className="flex flex-col gap-1 p-3 bg-white/5 rounded-lg">
-                        <div className="flex items-center justify-between">
-                          <div className="flex flex-col">
-                            <span className="text-sm">{matchupLabel}</span>
-                            {isProp && leg.propType && <span className="text-xs text-muted-foreground">{leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</span>}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
-                            <Badge>{pickDisplay} {lineDisplay && `(${lineDisplay})`}</Badge>
-                          </div>
-                        </div>
-                        {leg.notes && (
-                          <p className="text-xs text-muted-foreground italic pl-1 border-l border-white/10">
-                            {leg.notes}
-                          </p>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="mt-4 flex items-center gap-2">
-                  <Badge variant={myParlay.status === 'approved' ? 'default' : myParlay.status === 'rejected' ? 'destructive' : 'secondary'}>
-                    {myParlay.status}
-                  </Badge>
-                </div>
-                <BetSlipPanel parlay={myParlay} leagueName={league.name} />
-              </CardContent>
-            </Card>
-          ) : (
+          ) : !myParlay ? (
             <>
               {/* Selection Summary */}
               {selectedLegs.length > 0 && (
                 <Card className="bg-card/50 border-white/5">
                   <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
                     <CardTitle className="text-lg">Your Parlay ({selectedLegs.length}/{maxLegs} legs)</CardTitle>
-                    <Button 
-                      onClick={submitParlay} 
+                    <Button
+                      onClick={submitParlay}
                       disabled={!canSubmit || createParlay.isPending}
                       data-testid="button-submit-parlay"
                     >
@@ -338,19 +429,19 @@ export default function LeagueDetail() {
                   <CardContent>
                     {!canSubmit && (
                       <p className="text-sm text-muted-foreground mb-3">
-                        {selectedLegs.length < minLegs 
-                          ? `Select at least ${minLegs} games` 
+                        {selectedLegs.length < minLegs
+                          ? `Select at least ${minLegs} games`
                           : `Maximum ${maxLegs} games allowed`}
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2">
                       {selectedLegs.map((leg, i) => {
                         const game = games?.find(g => g.id === leg.gameId);
-                        const pickLabel = 
+                        const pickLabel =
                           leg.betType === 'over' ? `O ${game?.overUnder}` :
                           leg.betType === 'under' ? `U ${game?.overUnder}` :
                           leg.pick === 'home' ? game?.homeTeam : game?.awayTeam;
-                        const betLabel = 
+                        const betLabel =
                           leg.betType === 'spread' ? 'SPR' :
                           leg.betType === 'moneyline' ? 'ML' : '';
                         return (
@@ -369,13 +460,13 @@ export default function LeagueDetail() {
                 {games?.map((game) => {
                   const pick = getPickForGame(game.id);
                   const isPast = game.gameTime ? new Date(game.gameTime) < new Date() : false;
-                  
+
                   const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
                   const homeSpread = game.spread || null;
-                  
+
                   return (
-                    <Card 
-                      key={game.id} 
+                    <Card
+                      key={game.id}
                       className={cn(
                         "bg-card/50 border-white/5 transition-all",
                         isPast && "opacity-50"
@@ -387,7 +478,7 @@ export default function LeagueDetail() {
                           <span>{game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}</span>
                           {game.venue && <span className="truncate max-w-[120px]">{game.venue}</span>}
                         </div>
-                        
+
                         {/* Teams Header */}
                         <div className="grid grid-cols-4 gap-1 mb-3 text-sm font-medium">
                           <div></div>
@@ -488,307 +579,280 @@ export default function LeagueDetail() {
                 })}
               </div>
             </>
-          )}
-        </TabsContent>
-
-        {/* League Parlays Tab */}
-        <TabsContent value="parlays" className="space-y-4">
-          {/* Lock header row — visible to Parlay Maestro */}
-          {league.isAdmin && (
-            <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-card/40 border border-white/5">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Users className="w-4 h-4" />
-                <span data-testid="text-submission-count">
-                  {lockStatus?.submittedCount ?? 0} / {lockStatus?.totalMembers ?? league.memberCount} submitted
-                </span>
-                {lockStatus?.allSubmitted && !lockStatus?.isLocked && (
-                  <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs ml-1">All in</Badge>
-                )}
-                {lockStatus?.isLocked && lockStatus?.hadMissingBets && (
-                  <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs ml-1">
-                    <AlertTriangle className="w-3 h-3 mr-1" />Locked with missing bets
-                  </Badge>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {lockStatus?.isLocked ? (
-                  <>
-                    <Badge className="bg-red-500/20 text-red-400 border-red-500/30" data-testid="badge-parlay-locked">
-                      <Lock className="w-3 h-3 mr-1" />Locked
-                    </Badge>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => unlockParlay.mutate()}
-                      disabled={unlockParlay.isPending}
-                      data-testid="button-unlock-parlay"
-                    >
-                      <LockOpen className="w-4 h-4 mr-1" />Unlock
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      if (!lockStatus?.allSubmitted) {
-                        setShowLockConfirm(true);
-                      } else {
-                        lockParlay.mutate(false);
-                      }
-                    }}
-                    disabled={lockParlay.isPending}
-                    className={cn(
-                      "transition-all",
-                      lockStatus?.allSubmitted
-                        ? "bg-green-600 hover:bg-green-700 text-white border-green-600"
-                        : "bg-muted text-muted-foreground border-white/10 hover:bg-muted/80"
-                    )}
-                    data-testid="button-lock-parlay"
-                  >
-                    <Lock className="w-4 h-4 mr-1" />
-                    Lock Parlay
-                  </Button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {leagueParlays?.length === 0 && !lockStatus?.isLocked ? (
-            <div className="text-center py-12 bg-card/20 rounded-2xl border border-dashed border-white/10">
-              <p className="text-muted-foreground">No parlays submitted for this week yet.</p>
-            </div>
           ) : (
             <>
-            {leagueParlays?.map((parlay) => (
-              <ContextMenu key={parlay.id}>
-                <ContextMenuTrigger asChild>
-                  <Card
-                    className={cn("border-white/5", parlay.status === 'void' ? "bg-card/20 opacity-60" : "bg-card/50")}
-                    data-testid={`card-parlay-${parlay.id}`}
-                  >
-                    <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
-                      <div className="flex items-center gap-3">
-                        <div className={cn(
-                          "w-8 h-8 rounded-full flex items-center justify-center text-primary-foreground font-bold text-sm",
-                          parlay.status === 'void' ? "bg-muted" : "bg-gradient-to-tr from-primary to-accent"
-                        )}>
-                          {((parlay.user?.settings as any)?.displayName || parlay.user?.firstName || '?')[0]}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <p className={cn("font-bold", parlay.status === 'void' && "text-muted-foreground")}>{(parlay.user?.settings as any)?.displayName || parlay.user?.firstName || parlay.user?.email || 'Unknown'}</p>
-                            {parlay.user?.isDemo && (
-                              <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4" data-testid={`badge-demo-user-${parlay.id}`}>
-                                DEMO
-                              </Badge>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            {parlay.status === 'void' ? 'No submission' : `${parlay.legs.length} leg parlay`}
-                            {parlay.source === 'imported' && <Badge variant="outline" className="ml-2 text-xs">Imported</Badge>}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={
-                          parlay.status === 'void' ? 'outline' :
-                          parlay.status === 'approved' ? 'default' :
-                          parlay.status === 'rejected' ? 'destructive' :
-                          parlay.status === 'win' ? 'default' :
-                          parlay.status === 'loss' ? 'destructive' :
-                          'secondary'
-                        } className={parlay.status === 'void' ? 'text-muted-foreground border-white/10' : ''}>
-                          {parlay.status === 'pending' && <Clock className="w-3 h-3 mr-1" />}
-                          {parlay.status === 'void' ? 'Void' : parlay.status}
-                        </Badge>
-                        
+              {(() => {
+                const openParlays = (leagueParlays ?? []).filter(p => p.status === 'pending' || p.status === 'approved');
+                if (openParlays.length === 0) {
+                  return (
+                    <div className="text-center py-12 bg-card/20 rounded-2xl border border-dashed border-white/10">
+                      <p className="text-muted-foreground">No open parlays for this week yet.</p>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="space-y-4">
+                    {openParlays.map(parlay => (
+                      <div key={parlay.id} className="space-y-2">
                         {league.isAdmin && parlay.status === 'pending' && (
-                          <>
-                            <Button 
-                              size="sm" 
-                              variant="ghost" 
+                          <div className="flex justify-end gap-2 -mb-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
                               onClick={() => approveParlay.mutate(parlay.id)}
                               data-testid={`button-approve-${parlay.id}`}
                             >
-                              <Check className="w-4 h-4 text-green-500" />
+                              <Check className="w-4 h-4 text-green-500 mr-1" />Approve
                             </Button>
-                            <Button 
-                              size="sm" 
-                              variant="ghost" 
+                            <Button
+                              size="sm"
+                              variant="ghost"
                               onClick={() => rejectParlay.mutate(parlay.id)}
                               data-testid={`button-reject-${parlay.id}`}
                             >
-                              <X className="w-4 h-4 text-red-500" />
+                              <X className="w-4 h-4 text-red-500 mr-1" />Reject
                             </Button>
-                          </>
+                          </div>
                         )}
+                        <CardErrorBoundary parlayId={parlay.id}>
+                          <ParlayRollupCard parlay={parlay} leagueId={leagueId} readOnly />
+                        </CardErrorBoundary>
                       </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* Void cards — members who didn't submit when parlay is locked */}
+              {lockStatus?.isLocked && league.members
+                ?.filter(m => !leagueParlays?.some(p => p.userId === m.userId))
+                .map(m => (
+                  <Card key={m.userId} className="bg-card/30 border-white/10 opacity-60" data-testid={`card-void-${m.userId}`}>
+                    <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground font-bold text-sm">
+                          {((m.user?.settings as any)?.displayName || m.user?.firstName || '?')[0]}
+                        </div>
+                        <div>
+                          <p className="font-bold text-muted-foreground">{(m.user?.settings as any)?.displayName || m.user?.firstName || m.user?.email || 'Unknown'}</p>
+                          <p className="text-xs text-muted-foreground">No submission</p>
+                        </div>
+                      </div>
+                      <Badge variant="outline" className="text-muted-foreground border-white/10">
+                        Void
+                      </Badge>
                     </CardHeader>
-                    <CardContent>
-                      {parlay.status === 'void' ? (
-                        <p className="text-sm text-muted-foreground italic">No submission — missed this week</p>
-                      ) : (
-                      <div className="space-y-1">
-                        {parlay.legs.map((leg, i) => {
-                          const isProp = leg.betType === 'player_prop';
-                          const matchupLabel = isProp
-                            ? `${leg.playerName || 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}` : ''}`
-                            : `${leg.game?.awayTeam ?? '?'} @ ${leg.game?.homeTeam ?? '?'}`;
-                          const pickDisplay = formatPickLabel(leg);
-                          const lineDisplay = isProp ? null
-                            : leg.betType === 'moneyline' ? (leg.pick === 'home' ? leg.game?.moneylineHome : leg.game?.moneylineAway)
-                            : null;
-                          return (
-                            <div key={i} className="flex flex-col gap-1 text-sm p-2 bg-white/5 rounded">
-                              <div className="flex items-center justify-between">
-                                <span>{matchupLabel}</span>
-                                <div className="flex items-center gap-2">
-                                  {leg.result && (
-                                    <Badge variant={leg.result === 'win' ? 'default' : leg.result === 'loss' ? 'destructive' : 'secondary'} className="text-xs">
-                                      {leg.result}
-                                    </Badge>
-                                  )}
-                                  <Badge variant="outline" className="text-xs uppercase">{isProp ? 'PROP' : leg.betType}</Badge>
-                                  <Badge variant="outline" className="text-xs">
-                                    {pickDisplay} {lineDisplay && `(${lineDisplay})`}
-                                  </Badge>
-                                </div>
-                              </div>
-                              {leg.notes && (
-                                <p className="text-xs text-muted-foreground italic pl-1 border-l border-white/10">
-                                  {leg.notes}
-                                </p>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      )}
-                    </CardContent>
                   </Card>
-                </ContextMenuTrigger>
-                {league.isAdmin && (
-                  <ContextMenuContent>
-                    <ContextMenuItem 
-                      onClick={() => { setSelectedParlay(parlay); setEditParlayOpen(true); }}
-                      data-testid={`context-edit-${parlay.id}`}
-                    >
-                      <Edit className="w-4 h-4 mr-2" />
-                      Edit Parlay
-                    </ContextMenuItem>
-                  </ContextMenuContent>
-                )}
-              </ContextMenu>
-            ))}
-            {/* Void cards — members who didn't submit when parlay is locked */}
-            {lockStatus?.isLocked && league.members
-              ?.filter(m => !leagueParlays?.some(p => p.userId === m.userId))
-              .map(m => (
-                <Card key={m.userId} className="bg-card/30 border-white/10 opacity-60" data-testid={`card-void-${m.userId}`}>
-                  <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground font-bold text-sm">
-                        {((m.user?.settings as any)?.displayName || m.user?.firstName || '?')[0]}
-                      </div>
-                      <div>
-                        <p className="font-bold text-muted-foreground">{(m.user?.settings as any)?.displayName || m.user?.firstName || m.user?.email || 'Unknown'}</p>
-                        <p className="text-xs text-muted-foreground">No submission</p>
-                      </div>
-                    </div>
-                    <Badge variant="outline" className="text-muted-foreground border-white/10">
-                      Void
-                    </Badge>
+                ))
+              }
+
+              {/* Suggested bets — popular picks this week + your own history */}
+              {((popularPicks?.length ?? 0) > 0 || (myParlayHistory?.length ?? 0) > 0) && (
+                <Card className="bg-card/30 border-white/5">
+                  <CardHeader>
+                    <CardTitle className="text-base">Need inspiration?</CardTitle>
                   </CardHeader>
+                  <CardContent className="space-y-4">
+                    {popularPicks && popularPicks.length > 0 && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-2">Popular picks this week</p>
+                        <div className="flex flex-wrap gap-2">
+                          {popularPicks.map((p, i) => {
+                            const game = games?.find(g => g.id === p.gameId);
+                            const label = p.betType === 'player_prop'
+                              ? `${p.playerName ?? 'Player'}${p.propType ? ` — ${p.propType.replace(/_/g, ' ')}` : ''} ${p.pick}`
+                              : game
+                                ? `${p.pick === 'home' ? game.homeTeam : p.pick === 'away' ? game.awayTeam : p.pick.toUpperCase()} (${p.betType})`
+                                : `${p.pick} (${p.betType})`;
+                            return (
+                              <Badge key={i} variant="outline" className="text-xs">
+                                {label} · {p.count} pick{p.count !== 1 ? "s" : ""}
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {(() => {
+                      const freq = new Map<string, { label: string; count: number }>();
+                      for (const p of myParlayHistory ?? []) {
+                        for (const leg of p.legs) {
+                          const key = leg.betType === 'player_prop'
+                            ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
+                            : `bet:${leg.betType}:${leg.pick}`;
+                          const label = leg.betType === 'player_prop'
+                            ? `${leg.playerName ?? 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ')}` : ''} ${leg.pick}`
+                            : `${leg.betType} — ${leg.pick}`;
+                          const existing = freq.get(key);
+                          if (existing) existing.count++;
+                          else freq.set(key, { label, count: 1 });
+                        }
+                      }
+                      const top = [...freq.values()].sort((a, b) => b.count - a.count).slice(0, 5);
+                      if (top.length === 0) return null;
+                      return (
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-2">Picks you've made before</p>
+                          <div className="flex flex-wrap gap-2">
+                            {top.map((t, i) => (
+                              <Badge key={i} variant="outline" className="text-xs capitalize">
+                                {t.label} · {t.count}x
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </CardContent>
                 </Card>
-              ))
-            }
+              )}
             </>
           )}
         </TabsContent>
 
-        {/* Standings Tab */}
-        <TabsContent value="standings">
+        {/* All Parlays Tab */}
+        <TabsContent value="all" className="space-y-6">
+          {/* Lightweight league stats strip */}
+          {(() => {
+            const overview = overviewStats?.[leagueId];
+            return (
+              <div className="flex flex-wrap items-center gap-6 px-4 py-3 rounded-xl bg-card/40 border border-white/5 text-sm">
+                <span className="flex items-center gap-1.5 text-muted-foreground">
+                  <Calendar className="w-4 h-4" />
+                  {activeWeek?.label ?? "No active week"}
+                </span>
+                {overview && overview.totalDecided > 0 && (
+                  <>
+                    <span className="text-muted-foreground">
+                      League win rate: <strong className="text-foreground">{overview.winRate.toFixed(1)}%</strong>
+                    </span>
+                    <span className="text-muted-foreground">
+                      {overview.wins} won · {overview.losses} lost
+                    </span>
+                  </>
+                )}
+              </div>
+            );
+          })()}
+
+          {(() => {
+            let list = allParlays ?? [];
+            if (selectedWeekId !== "all") {
+              list = list.filter(p => p.weekId === selectedWeekId);
+            }
+            if (loadingAllParlays) {
+              return (
+                <div className="space-y-3">
+                  {[1, 2, 3].map(i => <div key={i} className="h-24 bg-white/5 rounded-xl animate-pulse" />)}
+                </div>
+              );
+            }
+            if (list.length === 0) {
+              return (
+                <div className="text-center py-12 bg-card/20 rounded-2xl border border-dashed border-white/10">
+                  <p className="text-muted-foreground">No parlays found.</p>
+                </div>
+              );
+            }
+            return (
+              <div className="space-y-4">
+                {list.map(parlay => (
+                  <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
+                    <ParlayRollupCard parlay={parlay} leagueId={leagueId} readOnly />
+                  </CardErrorBoundary>
+                ))}
+              </div>
+            );
+          })()}
+        </TabsContent>
+
+        {/* League Data Tab */}
+        <TabsContent value="data" className="space-y-6">
           <Card className="bg-card/50 border-white/5">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Trophy className="w-5 h-5 text-accent" />
-                League Standings
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {loadingStats ? (
-                <div className="space-y-2">
-                  {[1, 2, 3].map(i => <div key={i} className="h-12 bg-white/5 rounded animate-pulse" />)}
+            <CardContent className="pt-6">
+              {loadingDataStats ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                  {[1, 2, 3, 4].map(i => <div key={i} className="h-16 bg-white/5 rounded-xl animate-pulse" />)}
                 </div>
-              ) : !stats?.length ? (
-                <p className="text-muted-foreground text-center py-8">No stats yet. Start making picks!</p>
               ) : (
-                <div className="space-y-2">
-                  {stats.map((stat, i) => (
-                    <div 
-                      key={stat.userId}
-                      className={cn(
-                        "flex items-center justify-between p-4 rounded-xl border border-transparent",
-                        i === 0 ? "bg-primary/10 border-primary/20" : "hover:bg-white/5"
-                      )}
-                    >
-                      <div className="flex items-center gap-4">
-                        <span className={cn(
-                          "font-mono font-bold w-6 text-center",
-                          i === 0 ? "text-primary" : "text-muted-foreground"
-                        )}>
-                          {i + 1}
-                        </span>
-                        <div className="flex items-center gap-3">
-                          {stat.profileImageUrl ? (
-                            <img src={stat.profileImageUrl} alt="" className="w-8 h-8 rounded-full" />
-                          ) : (
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
-                              {stat.username[0]}
-                            </div>
-                          )}
-                          <p className="font-bold">{stat.username}</p>
-                        </div>
-                      </div>
-                      
-                      <div className="flex items-center gap-6">
-                        <div className="text-right">
-                          <p className="text-xs text-muted-foreground">Record</p>
-                          <p className="font-mono text-sm">{stat.wins}-{stat.losses}-{stat.pushes}</p>
-                        </div>
-                        <div className="text-right min-w-[60px]">
-                          <p className={cn(
-                            "font-mono font-bold text-xl",
-                            stat.winRate >= 50 ? "text-primary" : "text-muted-foreground"
-                          )}>
-                            {stat.winRate.toFixed(1)}%
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {stats && stats.length > 0 && (
-                <div className="flex justify-end pt-4 border-t border-white/5 mt-4">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-2"
-                    data-testid="button-export-standings"
-                    onClick={() => downloadCsv(
-                      `${league?.name ?? "league"}-standings.csv`,
-                      ["rank", "user_id", "username", "wins", "losses", "pushes", "win_rate_pct"],
-                      stats.map((s, i) => [i + 1, s.userId, s.username, s.wins, s.losses, s.pushes, s.winRate.toFixed(1)])
-                    )}
-                  >
-                    <Download className="w-4 h-4" />
-                    Export CSV
-                  </Button>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+                  <div>
+                    <p className="text-2xl font-bold">{dataStats?.totalParlays ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">Total Parlays</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold">{dataStats?.totalLegs ?? 0}</p>
+                    <p className="text-xs text-muted-foreground">Total Legs</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold">{dataStats?.memberCount ?? league.memberCount}</p>
+                    <p className="text-xs text-muted-foreground">Members</p>
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold">{(dataStats?.avgLegsPerParlay ?? 0).toFixed(1)}</p>
+                    <p className="text-xs text-muted-foreground">Avg Legs / Parlay</p>
+                  </div>
                 </div>
               )}
             </CardContent>
           </Card>
+
+          <div className="grid gap-6 md:grid-cols-2">
+            <Card className="bg-card/50 border-white/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Trophy className="w-5 h-5 text-accent" />
+                  All-Time Standings
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loadingDataStats ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map(i => <div key={i} className="h-12 bg-white/5 rounded animate-pulse" />)}
+                  </div>
+                ) : (
+                  <StandingsList list={dataStats?.allTimeStandings ?? []} />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/50 border-white/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Trophy className="w-5 h-5 text-primary" />
+                  Current Season Standings
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loadingDataStats ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map(i => <div key={i} className="h-12 bg-white/5 rounded animate-pulse" />)}
+                  </div>
+                ) : (
+                  <StandingsList list={dataStats?.currentSeasonStandings ?? []} />
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {stats && stats.length > 0 && (
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-2"
+                data-testid="button-export-standings"
+                onClick={() => downloadCsv(
+                  `${league?.name ?? "league"}-standings.csv`,
+                  ["rank", "user_id", "username", "wins", "losses", "pushes", "win_rate_pct"],
+                  stats.map((s, i) => [i + 1, s.userId, s.username, s.wins, s.losses, s.pushes, s.winRate.toFixed(1)])
+                )}
+              >
+                <Download className="w-4 h-4" />
+                Export CSV
+              </Button>
+            </div>
+          )}
         </TabsContent>
 
         {/* Members Tab */}
@@ -898,12 +962,6 @@ export default function LeagueDetail() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
-
-        {/* Insights Tab */}
-        <TabsContent value="insights" className="space-y-6">
-          <BettingInsights scope="league" leagueId={leagueId} />
-          <BettingInsights scope="user" leagueId={leagueId} />
         </TabsContent>
       </Tabs>
 
@@ -1051,13 +1109,6 @@ export default function LeagueDetail() {
         open={importModalOpen} 
         onOpenChange={setImportModalOpen} 
         leagueId={leagueId} 
-      />
-      <EditParlayDialog
-        open={editParlayOpen}
-        onOpenChange={setEditParlayOpen}
-        parlay={selectedParlay}
-        leagueId={leagueId}
-        weekId={selectedWeekId || 0}
       />
 
       {/* Lock confirmation dialog — shown when not all bets are in */}

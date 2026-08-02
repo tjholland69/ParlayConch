@@ -406,3 +406,31 @@ export type LeagueStats = {
   leagueName: string;
   standings: UserStat[];
 };
+
+export type ActiveWeekStatus = {
+  weekId: number;
+  weekLabel: string;
+  submittedCount: number;
+  totalMembers: number;
+  allSubmitted: boolean;
+  isLocked: boolean;
+  currentUserSubmitted: boolean;
+};
+
+export type LeagueDataStats = {
+  totalParlays: number;
+  totalLegs: number;
+  memberCount: number;
+  avgLegsPerParlay: number;
+  allTimeStandings: UserStat[];
+  currentSeasonStandings: UserStat[];
+};
+
+export type PopularPick = {
+  gameId: number | null;
+  betType: string;
+  pick: string;
+  playerName?: string | null;
+  propType?: string | null;
+  count: number;
+};

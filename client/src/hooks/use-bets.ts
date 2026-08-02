@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, League, WeekLockStatus } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick } from "@shared/schema";
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -63,7 +63,7 @@ export function useLeaguesOverviewStats() {
 }
 
 export function useLeaguesActiveStatus() {
-  return useQuery<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>>({
+  return useQuery<Record<number, ActiveWeekStatus>>({
     queryKey: ['/api/leagues/active-week-status'],
     queryFn: async () => {
       const res = await fetch('/api/leagues/active-week-status', { credentials: "include" });
@@ -71,6 +71,30 @@ export function useLeaguesActiveStatus() {
       return res.json();
     },
     staleTime: 30_000,
+  });
+}
+
+export function useLeagueDataStats(leagueId: number) {
+  return useQuery<LeagueDataStats>({
+    queryKey: ['/api/leagues', leagueId, 'data-stats'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/data-stats`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch league data stats");
+      return res.json();
+    },
+    enabled: !!leagueId,
+  });
+}
+
+export function usePopularPicks(leagueId: number, weekId: number) {
+  return useQuery<PopularPick[]>({
+    queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'popular-picks'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/popular-picks`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch popular picks");
+      return res.json();
+    },
+    enabled: !!leagueId && !!weekId,
   });
 }
 
@@ -686,6 +710,21 @@ export function useAllLeagueParlays(leagueId: number, enabled = true) {
     queryKey: ['/api/leagues', leagueId, 'parlays', 'all'],
     queryFn: async () => {
       const res = await fetch(`/api/leagues/${leagueId}/parlays/all`, { credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    enabled: !!leagueId && enabled,
+  });
+}
+
+// Member-facing read-only view of all parlays (no demo/admin gating), used by the
+// League Detail "All Parlays" tab. Distinct query key from useAllLeagueParlays so
+// admin-editor mutations don't invalidate/collide with this cache.
+export function useAllLeagueParlaysReadOnly(leagueId: number, enabled = true) {
+  return useQuery<ParlayWithLegs[]>({
+    queryKey: ['/api/leagues', leagueId, 'parlays'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlays`, { credentials: "include" });
       if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
       return res.json();
     },

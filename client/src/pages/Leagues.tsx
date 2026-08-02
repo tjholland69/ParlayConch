@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useLeagues, useCreateLeague, useJoinLeague, useLeaguesOverviewStats } from "@/hooks/use-bets";
+import { useLeagues, useCreateLeague, useJoinLeague, useLeaguesOverviewStats, useLeaguesActiveStatus } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,10 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Users, Plus, LogIn, Copy, Crown, FlaskConical } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import { cn } from "@/lib/utils";
 
 export default function Leagues() {
   const { data: leagues, isLoading } = useLeagues();
   const { data: overviewStats } = useLeaguesOverviewStats();
+  const { data: activeStatus } = useLeaguesActiveStatus();
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
   const { toast } = useToast();
@@ -129,6 +131,8 @@ export default function Leagues() {
         </div>
       </div>
 
+      <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+
       {!leagues?.length ? (
         <div className="text-center py-16 bg-card/20 rounded-2xl border border-dashed border-white/10">
           <Users className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
@@ -137,8 +141,20 @@ export default function Leagues() {
         </div>
       ) : (
         <div className="grid gap-4">
-          {leagues.map((league) => (
-            <Card key={league.id} className="bg-card/50 backdrop-blur-sm border-white/5" data-testid={`card-league-${league.id}`}>
+          {leagues.map((league) => {
+            const status = activeStatus?.[league.id];
+            const anyOpen = !!status && !status.allSubmitted && !status.isLocked;
+            const currentUserOpen = !!status && !status.currentUserSubmitted && !status.isLocked;
+            return (
+            <Card
+              key={league.id}
+              className={cn(
+                "bg-card/50 backdrop-blur-sm border-white/5",
+                anyOpen && "border-orange-500/40 shadow-[0_0_16px_2px_rgba(249,115,22,0.25)]",
+                currentUserOpen && "animate-pulse border-orange-500/70"
+              )}
+              data-testid={`card-league-${league.id}`}
+            >
               <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
                 <div className="flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -199,18 +215,24 @@ export default function Leagues() {
                       stat.winRate >= 40 ? "text-yellow-400" :
                       "text-red-400";
                     return (
-                      <div className="ml-auto flex items-center gap-1.5 shrink-0">
-                        <span className={`font-bold text-sm ${color}`}>
-                          {stat.winRate.toFixed(1)}%
+                      <div className="ml-auto flex flex-col items-end gap-0.5 shrink-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-bold text-sm ${color}`}>
+                            {stat.winRate.toFixed(1)}%
+                          </span>
+                          <span className="text-xs text-muted-foreground/60">Overall Win</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground/60">
+                          {stat.wins} parlay{stat.wins !== 1 ? "s" : ""} won
                         </span>
-                        <span className="text-xs text-muted-foreground/60">Overall Win</span>
                       </div>
                     );
                   })()}
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
