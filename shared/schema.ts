@@ -280,7 +280,9 @@ export const insertBetSchema = createInsertSchema(bets).omit({ id: true, userId:
 export const insertLeagueSchema = createInsertSchema(leagues).omit({ id: true, inviteCode: true, createdAt: true });
 export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({ id: true, joinedAt: true });
 export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true, source: true, importBatchId: true });
-export const insertParlayLegSchema = createInsertSchema(parlayLegs).omit({ id: true, result: true });
+export const insertParlayLegSchema = createInsertSchema(parlayLegs)
+  .omit({ id: true, result: true })
+  .extend({ userId: z.string().optional() }); // server attaches userId before insert; clients need not supply it
 export const insertImportBatchSchema = createInsertSchema(importBatches).omit({ id: true, uploadedAt: true });
 
 // ─── nflverse / Player data ────────────────────────────────────────────────

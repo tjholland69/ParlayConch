@@ -66,7 +66,7 @@ export interface IStorage {
 
   // Parlays
   getParlay(id: number): Promise<Parlay | undefined>;
-  createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId">[]): Promise<Parlay>;
+  createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId" | "userId">[]): Promise<Parlay>;
   getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(leagueId: number): Promise<ParlayWithLegs[]>;
@@ -77,7 +77,7 @@ export interface IStorage {
   deleteParlay(parlayId: number): Promise<void>;
   deleteParlayLeg(legId: number): Promise<void>;
   updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg>;
-  addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'>): Promise<ParlayLeg>;
+  addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'> & { userId: string }): Promise<ParlayLeg>;
   mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
   splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay>;
   createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay>;
@@ -515,7 +515,7 @@ export class DatabaseStorage implements IStorage {
     return parlay;
   }
 
-  async createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId">[]): Promise<Parlay> {
+  async createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId" | "userId">[]): Promise<Parlay> {
     return await db.transaction(async (tx) => {
       const existing = await tx
         .select()
@@ -554,7 +554,7 @@ export class DatabaseStorage implements IStorage {
       if (legs.length > 0) {
         await tx
           .insert(parlayLegs)
-          .values(legs.map((leg) => ({ ...leg, parlayId: parlayRecord.id })));
+          .values(legs.map((leg) => ({ ...leg, parlayId: parlayRecord.id, userId })));
       }
 
       return parlayRecord;
@@ -765,7 +765,7 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'>): Promise<ParlayLeg> {
+  async addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'> & { userId: string }): Promise<ParlayLeg> {
     const [newLeg] = await db.insert(parlayLegs).values({ ...leg, parlayId }).returning();
     return newLeg;
   }
