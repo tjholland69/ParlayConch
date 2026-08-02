@@ -307,3 +307,84 @@ export async function getWinRateTimeSeries(
 ): Promise<{ points: WinRateTimeSeriesPoint[] }> {
   return computeWinRateSeries(userId, { leagueIds: leagueId ? [leagueId] : undefined });
 }
+
+export interface WeeklyWinRatePoint {
+  weekLabel: string;
+  winRate: number;
+}
+
+/**
+ * Per-league, per-week (non-cumulative) win rate for the requesting user's own
+ * legs, from league inception to date. Weeks with no decided legs are omitted
+ * rather than zeroed, so a quiet week doesn't read as a loss streak — mirrors
+ * a GitHub-style activity line for each "My Leagues" tile.
+ */
+export async function getLeagueWeeklyWinRates(
+  userId: string,
+  leagueIds: number[]
+): Promise<Record<number, WeeklyWinRatePoint[]>> {
+  if (leagueIds.length === 0) return {};
+
+  const rows = await db
+    .select({
+      leagueId: parlays.leagueId,
+      result: parlayLegs.result,
+      weekId: weeks.id,
+      season: weeks.season,
+      weekNumber: weeks.weekNumber,
+      weekLabel: weeks.label,
+    })
+    .from(parlayLegs)
+    .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+    .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+    .where(
+      and(
+        inArray(parlays.leagueId, leagueIds),
+        eq(parlayLegs.userId, userId),
+        isNotNull(parlayLegs.result)
+      )
+    );
+
+  type WeekMeta = { season: number; weekNumber: number; label: string };
+  const weekMetaByLeague = new Map<number, Map<number, WeekMeta>>();
+  const tallyByLeague = new Map<number, Map<number, { win: number; loss: number }>>();
+
+  for (const row of rows) {
+    if (row.result !== "win" && row.result !== "loss") continue;
+
+    if (!weekMetaByLeague.has(row.leagueId)) weekMetaByLeague.set(row.leagueId, new Map());
+    const weekMeta = weekMetaByLeague.get(row.leagueId)!;
+    if (!weekMeta.has(row.weekId)) {
+      weekMeta.set(row.weekId, { season: row.season, weekNumber: row.weekNumber, label: row.weekLabel });
+    }
+
+    if (!tallyByLeague.has(row.leagueId)) tallyByLeague.set(row.leagueId, new Map());
+    const tally = tallyByLeague.get(row.leagueId)!;
+    const entry = tally.get(row.weekId) ?? { win: 0, loss: 0 };
+    if (row.result === "win") entry.win++;
+    else entry.loss++;
+    tally.set(row.weekId, entry);
+  }
+
+  const result: Record<number, WeeklyWinRatePoint[]> = {};
+  for (const leagueId of leagueIds) {
+    const weekMeta = weekMetaByLeague.get(leagueId);
+    const tally = tallyByLeague.get(leagueId);
+    if (!weekMeta || !tally) {
+      result[leagueId] = [];
+      continue;
+    }
+
+    const orderedWeekIds = Array.from(weekMeta.entries())
+      .sort(([, a], [, b]) => a.season - b.season || a.weekNumber - b.weekNumber)
+      .map(([weekId]) => weekId);
+
+    result[leagueId] = orderedWeekIds.map((weekId) => {
+      const { win, loss } = tally.get(weekId)!;
+      const total = win + loss;
+      return { weekLabel: weekMeta.get(weekId)!.label, winRate: (win / total) * 100 };
+    });
+  }
+
+  return result;
+}
