@@ -736,10 +736,13 @@ export class DatabaseStorage implements IStorage {
     const [week] = await db.select().from(weeks).where(eq(weeks.id, weekId));
 
     const parlayIds = leagueParlays.map(({ parlay }) => parlay.id);
+    // leftJoin (not innerJoin) — a leg must never disappear from the results just
+    // because its userId doesn't resolve to a row in `users` (e.g. legacy/import
+    // data with a stale owner reference). Missing `user` signals that to callers.
     const allLegs = await db.select({ leg: parlayLegs, game: games, legUser: users })
       .from(parlayLegs)
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
-      .innerJoin(users, eq(parlayLegs.userId, users.id))
+      .leftJoin(users, eq(parlayLegs.userId, users.id))
       .where(inArray(parlayLegs.parlayId, parlayIds));
 
     const legsByParlayId = new Map<number, ParlayWithLegs["legs"]>();
@@ -748,7 +751,7 @@ export class DatabaseStorage implements IStorage {
       existing.push({
         ...leg,
         game,
-        user: { firstName: legUser.firstName, email: legUser.email, profileImageUrl: legUser.profileImageUrl, isDemo: legUser.isDemo, settings: legUser.settings as any },
+        user: legUser ? { firstName: legUser.firstName, email: legUser.email, profileImageUrl: legUser.profileImageUrl, isDemo: legUser.isDemo, settings: legUser.settings as any } : undefined,
       });
       legsByParlayId.set(leg.parlayId, existing);
     }
@@ -897,10 +900,13 @@ export class DatabaseStorage implements IStorage {
     const weekIds = [...new Set(leagueParlays.map(({ parlay }) => parlay.weekId))];
 
     const [allLegs, allWeeks] = await Promise.all([
+      // leftJoin (not innerJoin) — a leg must never disappear from the results just
+      // because its userId doesn't resolve to a row in `users` (e.g. legacy/import
+      // data with a stale owner reference). Missing `user` signals that to callers.
       db.select({ leg: parlayLegs, game: games, legUser: users })
         .from(parlayLegs)
         .leftJoin(games, eq(parlayLegs.gameId, games.id))
-        .innerJoin(users, eq(parlayLegs.userId, users.id))
+        .leftJoin(users, eq(parlayLegs.userId, users.id))
         .where(inArray(parlayLegs.parlayId, parlayIds)),
       db.select().from(weeks).where(inArray(weeks.id, weekIds)),
     ]);
@@ -911,7 +917,7 @@ export class DatabaseStorage implements IStorage {
       existing.push({
         ...leg,
         game,
-        user: { firstName: legUser.firstName, email: legUser.email, profileImageUrl: legUser.profileImageUrl, isDemo: legUser.isDemo, settings: legUser.settings as any },
+        user: legUser ? { firstName: legUser.firstName, email: legUser.email, profileImageUrl: legUser.profileImageUrl, isDemo: legUser.isDemo, settings: legUser.settings as any } : undefined,
       });
       legsByParlayId.set(leg.parlayId, existing);
     }
