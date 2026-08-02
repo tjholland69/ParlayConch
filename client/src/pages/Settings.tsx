@@ -12,6 +12,7 @@ import { Switch } from "@/components/ui/switch";
 import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin, Moon, Sun, Monitor } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
+import { getDisplayName } from "@/lib/displayName";
 import type { UserNotificationPreferences } from "@shared/schema";
 
 const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
@@ -141,7 +142,7 @@ export default function Settings() {
                   />
                 ) : (
                   <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-2xl">
-                    {((user?.settings as any)?.displayName || user?.firstName)?.[0] || <User className="w-8 h-8" />}
+                    {getDisplayName(user, "")[0] || <User className="w-8 h-8" />}
                   </div>
                 )}
                 <div>

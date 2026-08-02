@@ -19,6 +19,8 @@ import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog"
 import { BetSlipPanel } from "@/components/BetSlipPanel";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
+import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
+import { getDisplayName } from "@/lib/displayName";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import type { Game, UserStat } from "@shared/schema";
@@ -109,6 +111,9 @@ export default function LeagueDetail() {
   const rejectParlay = useRejectParlay();
 
   const { data: lockStatus } = useWeekLockStatus(leagueId, activeWeekId || 0);
+  const openParticipationRate = lockStatus?.totalMembers
+    ? lockStatus.submittedCount / lockStatus.totalMembers
+    : 1;
   const lockParlay = useLockWeekParlay(leagueId, activeWeekId || 0);
   const unlockParlay = useUnlockWeekParlay(leagueId, activeWeekId || 0);
   const { data: popularPicks } = usePopularPicks(leagueId, activeWeekId || 0);
@@ -118,6 +123,10 @@ export default function LeagueDetail() {
   const [importInstructionsOpen, setImportInstructionsOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [showLockConfirm, setShowLockConfirm] = useState(false);
+  const [openCollapseSignal, setOpenCollapseSignal] = useState(0);
+  const [openExpandSignal, setOpenExpandSignal] = useState(0);
+  const [allCollapseSignal, setAllCollapseSignal] = useState(0);
+  const [allExpandSignal, setAllExpandSignal] = useState(0);
 
   // CSV export helper
   function downloadCsv(filename: string, headers: string[], rows: (string | number | null | undefined)[][]) {
@@ -592,6 +601,12 @@ export default function LeagueDetail() {
                 }
                 return (
                   <div className="space-y-4">
+                    <div className="flex justify-end">
+                      <ExpandCollapseControls
+                        onCollapseAll={() => setOpenCollapseSignal(s => s + 1)}
+                        onExpandAll={() => setOpenExpandSignal(s => s + 1)}
+                      />
+                    </div>
                     {openParlays.map(parlay => (
                       <div key={parlay.id} className="space-y-2">
                         {league.isAdmin && parlay.status === 'pending' && (
@@ -615,7 +630,14 @@ export default function LeagueDetail() {
                           </div>
                         )}
                         <CardErrorBoundary parlayId={parlay.id}>
-                          <ParlayRollupCard parlay={parlay} leagueId={leagueId} readOnly />
+                          <ParlayRollupCard
+                            parlay={parlay}
+                            leagueId={leagueId}
+                            readOnly
+                            collapseSignal={openCollapseSignal}
+                            expandSignal={openExpandSignal}
+                            participationRate={openParticipationRate}
+                          />
                         </CardErrorBoundary>
                       </div>
                     ))}
@@ -631,10 +653,10 @@ export default function LeagueDetail() {
                     <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-muted-foreground font-bold text-sm">
-                          {((m.user?.settings as any)?.displayName || m.user?.firstName || '?')[0]}
+                          {getDisplayName(m.user, "?")[0]}
                         </div>
                         <div>
-                          <p className="font-bold text-muted-foreground">{(m.user?.settings as any)?.displayName || m.user?.firstName || m.user?.email || 'Unknown'}</p>
+                          <p className="font-bold text-muted-foreground">{getDisplayName(m.user)}</p>
                           <p className="text-xs text-muted-foreground">No submission</p>
                         </div>
                       </div>
@@ -754,11 +776,31 @@ export default function LeagueDetail() {
                 </div>
               );
             }
+            // Participation rate per week: distinct submitters that week / current member count.
+            const submittersByWeek = new Map<number, Set<string>>();
+            for (const p of allParlays ?? []) {
+              if (!submittersByWeek.has(p.weekId)) submittersByWeek.set(p.weekId, new Set());
+              submittersByWeek.get(p.weekId)!.add(p.userId);
+            }
+            const memberCount = league.memberCount || 1;
             return (
               <div className="space-y-4">
+                <div className="flex justify-end">
+                  <ExpandCollapseControls
+                    onCollapseAll={() => setAllCollapseSignal(s => s + 1)}
+                    onExpandAll={() => setAllExpandSignal(s => s + 1)}
+                  />
+                </div>
                 {list.map(parlay => (
                   <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
-                    <ParlayRollupCard parlay={parlay} leagueId={leagueId} readOnly />
+                    <ParlayRollupCard
+                      parlay={parlay}
+                      leagueId={leagueId}
+                      readOnly
+                      collapseSignal={allCollapseSignal}
+                      expandSignal={allExpandSignal}
+                      participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
+                    />
                   </CardErrorBoundary>
                 ))}
               </div>
@@ -900,11 +942,11 @@ export default function LeagueDetail() {
                             <img src={m.user.profileImageUrl} alt="" className="w-9 h-9 rounded-full" />
                           ) : (
                             <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
-                              {((m.user.settings as any)?.displayName || m.user.firstName || m.user.email || '?')[0].toUpperCase()}
+                              {getDisplayName(m.user, "?")[0].toUpperCase()}
                             </div>
                           )}
                           <div>
-                            <p className="text-sm font-medium">{(m.user.settings as any)?.displayName || m.user.firstName || m.user.email}</p>
+                            <p className="text-sm font-medium">{getDisplayName(m.user)}</p>
                             <p className="text-xs text-muted-foreground">{m.user.email}</p>
                           </div>
                         </div>
@@ -1214,11 +1256,11 @@ export default function LeagueDetail() {
                     <img src={m.user.profileImageUrl} alt="" className="w-8 h-8 rounded-full shrink-0" />
                   ) : (
                     <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm shrink-0">
-                      {((m.user.settings as any)?.displayName || m.user.firstName || m.user.email || '?')[0].toUpperCase()}
+                      {getDisplayName(m.user, "?")[0].toUpperCase()}
                     </div>
                   )}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{(m.user.settings as any)?.displayName || m.user.firstName || m.user.email}</p>
+                    <p className="text-sm font-medium truncate">{getDisplayName(m.user)}</p>
                     {m.user.email && <p className="text-xs text-muted-foreground truncate">{m.user.email}</p>}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">

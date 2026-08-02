@@ -9,13 +9,15 @@ import { Label } from "@/components/ui/label";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, ChevronDown, ChevronUp, FilePlus, ArrowUpDown } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayWithLegs } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ParlayRollupCard, LegSheet, blankLeg, type LegFormState } from "@/components/ParlayRollupCard";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
+import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
+import { getDisplayName } from "@/lib/displayName";
 
 // ── Merge Dialog ──────────────────────────────────────────────────────────────
 
@@ -72,7 +74,7 @@ function MergeDialog({ open, onOpenChange, selected, leagueId, onDone }: MergeDi
           <p className="text-sm font-medium text-muted-foreground mb-3">Which parlay should be kept as the base?</p>
           <RadioGroup value={targetId} onValueChange={setTargetId} className="space-y-2 overflow-y-auto max-h-[40vh] pr-1">
             {selected.map(p => {
-              const name = p.user?.firstName || p.user?.email || `User #${p.userId.slice(0, 6)}`;
+              const name = getDisplayName(p.user, `User #${p.userId.slice(0, 6)}`);
               const week = p.week?.label ?? `Week ${p.weekId}`;
               return (
                 <label
@@ -174,7 +176,7 @@ function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }:
                 <SelectContent>
                   {members.map(m => (
                     <SelectItem key={m.userId} value={m.userId}>
-                      {m.user?.firstName || m.user?.email || m.userId.slice(0, 8)}
+                      {getDisplayName(m.user, m.userId.slice(0, 8))}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -367,8 +369,8 @@ export default function DemoDataEditor() {
       case "week-asc":
         return (a.week?.season ?? 0) - (b.week?.season ?? 0) || (a.week?.weekNumber ?? 0) - (b.week?.weekNumber ?? 0) || a.id - b.id;
       case "member-asc": {
-        const nameA = (a.user?.firstName || a.user?.email || "").toLowerCase();
-        const nameB = (b.user?.firstName || b.user?.email || "").toLowerCase();
+        const nameA = getDisplayName(a.user, "").toLowerCase();
+        const nameB = getDisplayName(b.user, "").toLowerCase();
         return nameA.localeCompare(nameB);
       }
       case "win-pct-desc": {
@@ -490,26 +492,11 @@ export default function DemoDataEditor() {
           >
             <RefreshCw className="w-4 h-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-9 px-2 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
-            title="Collapse all cards"
-            onClick={() => setCollapseSignal(s => s + 1)}
-          >
-            <ChevronUp className="w-3.5 h-3.5" />
-            Collapse All
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-9 px-2 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
-            title="Expand all cards"
-            onClick={() => setExpandSignal(s => s + 1)}
-          >
-            <ChevronDown className="w-3.5 h-3.5" />
-            Expand All
-          </Button>
+          <ExpandCollapseControls
+            className="flex items-center gap-2"
+            onCollapseAll={() => setCollapseSignal(s => s + 1)}
+            onExpandAll={() => setExpandSignal(s => s + 1)}
+          />
           {selectMode ? (
             <>
               <Button
@@ -575,6 +562,12 @@ export default function DemoDataEditor() {
                 [...ids].sort((a, b) => a - b).forEach((id, i) => versionMap.set(id, i + 1));
               }
             }
+            const submittersByWeek = new Map<number, Set<string>>();
+            for (const p of allParlays ?? []) {
+              if (!submittersByWeek.has(p.weekId)) submittersByWeek.set(p.weekId, new Set());
+              submittersByWeek.get(p.weekId)!.add(p.userId);
+            }
+            const memberCount = members?.length || 1;
             return sorted.map(parlay => (
               <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
                 <ParlayRollupCard
@@ -586,6 +579,7 @@ export default function DemoDataEditor() {
                   collapseSignal={collapseSignal}
                   expandSignal={expandSignal}
                   versionNumber={versionMap.get(parlay.id)}
+                  participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
                 />
               </CardErrorBoundary>
             ));
