@@ -23,6 +23,7 @@ import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
+import { getBuildingVerb } from "@/lib/parlaySlang";
 import type { Game, UserStat } from "@shared/schema";
 
 type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
@@ -454,7 +455,7 @@ export default function LeagueDetail() {
                       disabled={!canSubmit || createParlay.isPending}
                       data-testid="button-submit-parlay"
                     >
-                      {createParlay.isPending ? "Submitting..." : "Submit Parlay"}
+                      {createParlay.isPending ? `${getBuildingVerb(leagueId)}...` : "Submit Parlay"}
                     </Button>
                   </CardHeader>
                   <CardContent>

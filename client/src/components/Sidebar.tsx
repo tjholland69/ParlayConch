@@ -33,7 +33,7 @@ const isGroup = (item: NavItem): item is NavGroup => "children" in item;
 const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
   { label: "My Leagues", href: "/leagues", icon: Users },
-  { label: "Quick Pick", href: "/picks", icon: Trophy },
+  { label: "Quick Picks", href: "/picks", icon: Trophy },
   { label: "My History", href: "/history", icon: History },
   {
     label: "Index",
