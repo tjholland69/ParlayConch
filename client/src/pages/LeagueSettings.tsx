@@ -725,7 +725,7 @@ export default function LeagueSettings() {
                   Dummy Weekly Data
                 </CardTitle>
                 <CardDescription>
-                  When enabled, picks screens (like Quick Pick) will display a sample dataset from Week 14 of the 2024 season instead of live data
+                  When enabled, picks screens (like Quick Picks) will display a sample dataset from Week 14 of the 2024 season instead of live data
                 </CardDescription>
               </CardHeader>
               <CardContent>

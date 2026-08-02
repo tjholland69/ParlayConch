@@ -441,7 +441,7 @@ export class DatabaseStorage implements IStorage {
     if (!activeWeek) return {};
 
     const [parlayRows, lockRows, memberRows] = await Promise.all([
-      db.select({ leagueId: parlays.leagueId, userId: parlays.userId })
+      db.select({ leagueId: parlays.leagueId, userId: parlays.userId, status: parlays.status })
         .from(parlays)
         .where(and(eq(parlays.weekId, activeWeek.id), inArray(parlays.leagueId, leagueIds))),
       db.select({ leagueId: leagueWeekLocks.leagueId })
@@ -466,6 +466,9 @@ export class DatabaseStorage implements IStorage {
         allSubmitted: submittedCount >= totalMembers && totalMembers > 0,
         isLocked: lockedSet.has(leagueId),
         currentUserSubmitted: leagueParlays.some(p => p.userId === userId),
+        // Active week parlay status (for Quick Picks tile badges)
+        hasPendingParlay: leagueParlays.some(p => p.status === 'pending'),
+        hasApprovedParlay: leagueParlays.some(p => p.status === 'approved'),
       };
     }
     return result;

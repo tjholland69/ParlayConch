@@ -542,6 +542,8 @@ export type ActiveWeekStatus = {
   allSubmitted: boolean;
   isLocked: boolean;
   currentUserSubmitted: boolean;
+  hasPendingParlay: boolean;
+  hasApprovedParlay: boolean;
 };
 
 export type LeagueDataStats = {
