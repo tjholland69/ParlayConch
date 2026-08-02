@@ -180,6 +180,12 @@ describe("DatabaseStorage integration", () => {
     const userId = "test-user-rollup";
     await db.insert(users).values({ id: userId, email: "rolluptest@example.com" });
 
+    // A second user is needed for the second parlay below — parlays are unique
+    // on (user_id, league_id, week_id), so two parlays in the same league/week
+    // can't share a user.
+    const userId2 = "test-user-rollup-2";
+    await db.insert(users).values({ id: userId2, email: "rolluptest2@example.com" });
+
     const [week] = await db
       .insert(weeks)
       .values({ season: 2025, weekNumber: 3, label: "Week 3" })
@@ -191,6 +197,7 @@ describe("DatabaseStorage integration", () => {
       .returning();
 
     await db.insert(leagueMembers).values({ leagueId: league.id, userId, role: "admin" });
+    await db.insert(leagueMembers).values({ leagueId: league.id, userId: userId2, role: "member" });
 
     const [gameA] = await db
       .insert(games)
@@ -211,14 +218,15 @@ describe("DatabaseStorage integration", () => {
       { parlayId: winPushParlay.id, userId, gameId: gameB.id, betType: "spread", pick: "away", result: "push" },
     ]);
 
-    // Parlay 2: win + loss — should roll up to 'loss'.
+    // Parlay 2: win + loss — should roll up to 'loss'. Uses userId2 since a parlay
+    // is unique per (user_id, league_id, week_id).
     const [lossParlay] = await db
       .insert(parlays)
-      .values({ userId, leagueId: league.id, weekId: week.id, status: "approved" })
+      .values({ userId: userId2, leagueId: league.id, weekId: week.id, status: "approved" })
       .returning();
     await db.insert(parlayLegs).values([
-      { parlayId: lossParlay.id, userId, gameId: gameA.id, betType: "moneyline", pick: "home", result: "win" },
-      { parlayId: lossParlay.id, userId, gameId: gameB.id, betType: "moneyline", pick: "away", result: "loss" },
+      { parlayId: lossParlay.id, userId: userId2, gameId: gameA.id, betType: "moneyline", pick: "home", result: "win" },
+      { parlayId: lossParlay.id, userId: userId2, gameId: gameB.id, betType: "moneyline", pick: "away", result: "loss" },
     ]);
 
     const result = await storage.rollupLeagueParlayStatuses(league.id);
