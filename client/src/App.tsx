@@ -22,6 +22,8 @@ import LeagueSettings from "@/pages/LeagueSettings";
 import DemoDataEditor from "@/pages/DemoDataEditor";
 import ScreenshotImport from "@/pages/ScreenshotImport";
 import Settings from "@/pages/Settings";
+import IndexAdvanced from "@/pages/IndexAdvanced";
+import CustomIndexes from "@/pages/CustomIndexes";
 import NotFound from "@/pages/not-found";
 
 function useApplyPrimaryColor(primaryColor: string | undefined) {
@@ -116,6 +118,8 @@ function Router() {
             <Route path="/" component={Dashboard} />
             <Route path="/picks" component={Picks} />
             <Route path="/history" component={History} />
+            <Route path="/index/advanced" component={IndexAdvanced} />
+            <Route path="/index/custom" component={CustomIndexes} />
             <Route path="/leagues" component={Leagues} />
             <Route path="/leagues/:id/settings" component={LeagueSettings} />
             <Route path="/leagues/:id/demo-data" component={DemoDataEditor} />
