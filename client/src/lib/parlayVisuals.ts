@@ -64,3 +64,10 @@ export function getResultPercentileBucket(pct: number): string {
   const bucket = Math.min(90, Math.max(0, Math.floor(pct / 10) * 10));
   return `${bucket}-${bucket + 9}%`;
 }
+
+/** Same 10-point bucket, phrased as an ordinal ("60th percentile") for prose display. */
+export function getResultPercentileOrdinal(pct: number): string {
+  const bucket = Math.min(90, Math.max(0, Math.floor(pct / 10) * 10));
+  // All multiples of 10 from 0-90 take the "th" suffix (0th, 10th, …, 90th).
+  return `${bucket}th percentile`;
+}
