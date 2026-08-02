@@ -20,6 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getDisplayName } from "@/lib/displayName";
@@ -173,6 +174,7 @@ export default function LeagueSettings() {
   const [maxLegs, setMaxLegs] = useState(5);
   const [maxParlays, setMaxParlays] = useState(1);
   const [insightsEnabled, setInsightsEnabled] = useState(false);
+  const [loserLabel, setLoserLabel] = useState<string>("parlay_loser");
   const [perms, setPerms] = useState<LieutenantPermissions>(DEFAULT_LIEUTENANT_PERMISSIONS);
   const [notifSettings, setNotifSettings] = useState<LeagueNotificationSettings>(DEFAULT_LEAGUE_NOTIFICATION_SETTINGS);
   const [announceTitle, setAnnounceTitle] = useState("");
@@ -186,6 +188,7 @@ export default function LeagueSettings() {
       setMaxLegs(league.maxLegsPerParlay || 5);
       setMaxParlays(league.maxParlaysPerWeek || 1);
       setInsightsEnabled(league.insightsEnabled ?? false);
+      setLoserLabel(league.loserLabel ?? "parlay_loser");
       setPerms(
         (league.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS
       );
@@ -227,7 +230,7 @@ export default function LeagueSettings() {
   });
 
   const handleSaveGeneral = () => {
-    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled });
+    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled, loserLabel });
   };
 
   const handleSavePermissions = () => {
@@ -384,6 +387,18 @@ export default function LeagueSettings() {
               <p className="text-xs text-muted-foreground">
                 Members must include at least {minLegs} game picks per parlay. The default leg count is {maxLegs}, up to {maxParlays} parlay{maxParlays !== 1 ? "s" : ""} per week.
               </p>
+              <div className="space-y-2 pt-2 border-t border-white/5">
+                <Label htmlFor="loser-label">Whoever busts a loss first each week is called…</Label>
+                <Select value={loserLabel} onValueChange={setLoserLabel}>
+                  <SelectTrigger id="loser-label" className="w-56 bg-background border-white/10" data-testid="select-loser-label">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="parlay_loser">Parlay Loser</SelectItem>
+                    <SelectItem value="asshole">Asshole</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardContent>
           </Card>
 

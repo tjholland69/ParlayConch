@@ -29,6 +29,13 @@
       "when": 1785715200000,
       "tag": "0003_parlay_legs_user_id",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785801600000,
+      "tag": "0004_games_finished_at_league_loser_label",
+      "breakpoints": true
     }
   ]
 }

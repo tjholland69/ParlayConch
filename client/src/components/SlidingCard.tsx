@@ -10,7 +10,6 @@ export interface SlidingCardSlide {
 interface SlidingCardProps {
   slides: SlidingCardSlide[];
   headerExtra?: ReactNode;
-  icon?: ReactNode;
 }
 
 export function EmptyState({ icon: Icon, message }: { icon: React.ElementType; message: string }) {
@@ -22,7 +21,7 @@ export function EmptyState({ icon: Icon, message }: { icon: React.ElementType; m
   );
 }
 
-export function SlidingCard({ slides, headerExtra, icon }: SlidingCardProps) {
+export function SlidingCard({ slides, headerExtra }: SlidingCardProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
   const totalSlides = slides.length;
 
@@ -40,12 +39,6 @@ export function SlidingCard({ slides, headerExtra, icon }: SlidingCardProps) {
 
   return (
     <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-primary/20 via-background to-background border border-primary/20">
-      {icon && (
-        <div className="absolute top-0 right-0 p-12 opacity-10 pointer-events-none">
-          {icon}
-        </div>
-      )}
-
       <div className="relative z-10 flex items-center justify-between gap-3 px-6 pt-5 flex-wrap">
         <div className="flex gap-0.5 bg-white/5 rounded-full p-1 border border-white/10">
           {slides.map((slide, i) => (

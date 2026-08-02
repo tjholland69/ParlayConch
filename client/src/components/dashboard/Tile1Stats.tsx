@@ -123,7 +123,6 @@ function AnalyticsSlide() {
 export function Tile1Stats() {
   return (
     <SlidingCard
-      icon={<Trophy className="w-64 h-64 rotate-12" />}
       slides={[
         { label: "Summary", content: <SummarySlide /> },
         { label: "My Analytics", content: <AnalyticsSlide /> },

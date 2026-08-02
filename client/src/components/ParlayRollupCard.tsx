@@ -14,7 +14,8 @@ import { formatPickLabel } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { getDisplayName } from "@/lib/displayName";
-import { getParlayVisualStyle } from "@/lib/parlayVisuals";
+import { getParlayVisualStyle, getResultPercentileBucket } from "@/lib/parlayVisuals";
+import { getBustedLeg } from "@/lib/parlayLoser";
 
 const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
 const PICK_OPTIONS: Record<string, string[]> = {
@@ -203,6 +204,8 @@ export type ParlayCardProps = {
   readOnly?: boolean;
   /** 0-1 share of the league that submitted a parlay for this parlay's week — drives color boldness. */
   participationRate?: number;
+  /** League's chosen name for whoever busts a loss first — 'parlay_loser' (default) or 'asshole'. */
+  loserLabel?: string | null;
 };
 
 function logStatus(log: EnrichLog) {
@@ -263,7 +266,7 @@ export function ParlayRollupCard({
   parlay, leagueId,
   selectMode = false, isSelected = false, onToggleSelect = () => {},
   collapseSignal = 0, expandSignal = 0, versionNumber, readOnly = false,
-  participationRate = 1,
+  participationRate = 1, loserLabel = "parlay_loser",
 }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
   const deleteLeg = useDeleteParlayLeg(leagueId);
@@ -308,6 +311,8 @@ export function ParlayRollupCard({
   };
 
   const memberName = getDisplayName(parlay.user, `User #${parlay.userId.slice(0, 6)}`);
+  const bustedLeg = getBustedLeg(parlay);
+  const loserLabelText = loserLabel === "asshole" ? "Asshole" : "Parlay Loser";
 
   const sortedLegs = [...parlay.legs].sort((a, b) => {
     const aTime = a.game?.gameTime ? new Date(a.game.gameTime).getTime() : Infinity;
@@ -378,6 +383,16 @@ export function ParlayRollupCard({
                 {parlay.week?.label ?? `Week ${parlay.weekId}`}
               </span>
               <span className="text-xs text-muted-foreground/60 shrink-0">#{parlay.id}</span>
+              {parlay.status === "loss" && _resolved > 0 && (
+                <Badge variant="outline" className={cn("text-xs px-1.5 py-0 font-normal shrink-0", statusColor(parlay.status))}>
+                  Loss · {getResultPercentileBucket(_pct)} hit rate
+                </Badge>
+              )}
+              {bustedLeg && (
+                <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-destructive/40 text-destructive">
+                  {loserLabelText}: {memberName}
+                </Badge>
+              )}
               {versionNumber !== undefined && (
                 <span className="text-xs text-primary/70 shrink-0 font-medium">v{versionNumber}</span>
               )}
