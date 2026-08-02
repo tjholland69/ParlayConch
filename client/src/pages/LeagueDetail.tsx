@@ -20,7 +20,7 @@ import { BetSlipPanel } from "@/components/BetSlipPanel";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
-import { getDisplayName } from "@/lib/displayName";
+import { getDisplayName, shortId } from "@/lib/displayName";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import type { Game, UserStat } from "@shared/schema";
@@ -831,7 +831,7 @@ export default function LeagueDetail() {
                   <SelectItem value="all">All Members</SelectItem>
                   {members?.map(m => (
                     <SelectItem key={m.userId} value={m.userId}>
-                      {getDisplayName(m.user, m.userId.slice(0, 8))}
+                      {getDisplayName(m.user, shortId(m.userId, 8))}
                     </SelectItem>
                   ))}
                 </SelectContent>

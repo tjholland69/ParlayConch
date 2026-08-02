@@ -20,3 +20,10 @@ export function getDisplayInitial(user: NamedUser, fallback = "?"): string {
   const name = getDisplayName(user, "");
   return name ? name[0].toUpperCase() : fallback;
 }
+
+// Truncates a user id for display, tolerating null/undefined — legacy or
+// bulk-imported rows can have a missing owner id even where the schema
+// declares the column NOT NULL (e.g. pre-constraint data).
+export function shortId(id: string | null | undefined, len = 6): string {
+  return id ? id.slice(0, len) : "unknown";
+}
