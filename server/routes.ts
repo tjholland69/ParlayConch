@@ -645,11 +645,11 @@ export async function registerRoutes(
   app.get("/api/news", async (req, res) => {
     try {
       const feed = (req.query.feed as string) || "headlines";
-      const limit = Math.min(Number(req.query.limit) || 12, 30);
+      const limit = Math.min(Number(req.query.limit) || 12, 60);
 
       let news;
       if (feed === "injuries") {
-        news = await fetchNFLInjuries();
+        news = (await fetchNFLInjuries()).slice(0, limit);
       } else if (feed === "scores") {
         news = await fetchNFLScores();
       } else {
