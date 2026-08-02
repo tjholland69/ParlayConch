@@ -10,6 +10,7 @@ import {
   type Notification, type LeagueNotificationSettings,
   type LeagueWeekLock, type WeekLockStatus,
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
+  type ActiveWeekStatus, type LeagueDataStats, type PopularPick,
 } from "@shared/schema";
 import { eq, and, desc, inArray, sql, ilike, not } from "drizzle-orm";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
@@ -45,7 +46,7 @@ export interface IStorage {
   
   // Stats
   getStats(): Promise<UserStat[]>;
-  getLeagueStats(leagueId: number): Promise<UserStat[]>;
+  getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]>;
 
   // Leagues
   createLeague(userId: string, league: InsertLeague): Promise<League>;
@@ -112,7 +113,9 @@ export interface IStorage {
   updateLeagueNotificationSettings(leagueId: number, settings: LeagueNotificationSettings): Promise<League>;
 
   // Active week parlay status (for Quick Pick tile badges)
-  getActiveWeekParlayStatus(leagueIds: number[]): Promise<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>>;
+  getActiveWeekParlayStatus(leagueIds: number[], userId: string): Promise<Record<number, ActiveWeekStatus>>;
+  getLeagueDataStats(leagueId: number): Promise<LeagueDataStats>;
+  getPopularPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<PopularPick[]>;
 
   // Aggregate win/loss stats per league (for My Leagues tile)
   getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>>;
@@ -258,14 +261,18 @@ export class DatabaseStorage implements IStorage {
       .sort((a, b) => b.winRate - a.winRate);
   }
 
-  async getLeagueStats(leagueId: number): Promise<UserStat[]> {
+  async getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]> {
     const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
     const memberIds = members.map(m => m.userId);
-    
+
     if (memberIds.length === 0) return [];
 
     const memberUsers = await db.select().from(users).where(inArray(users.id, memberIds));
-    const leagueParlays = await db.select().from(parlays).where(eq(parlays.leagueId, leagueId));
+    const leagueParlays = await db.select().from(parlays).where(
+      weekIds && weekIds.length > 0
+        ? and(eq(parlays.leagueId, leagueId), inArray(parlays.weekId, weekIds))
+        : eq(parlays.leagueId, leagueId)
+    );
 
     return memberUsers.map(user => {
       const userParlays = leagueParlays.filter(p => p.userId === user.id && ['win', 'loss', 'push'].includes(p.status || ''));
@@ -286,6 +293,45 @@ export class DatabaseStorage implements IStorage {
         region: (user.settings as any)?.region || null,
       };
     }).sort((a, b) => b.winRate - a.winRate);
+  }
+
+  async getLeagueDataStats(leagueId: number): Promise<LeagueDataStats> {
+    const [members, leagueParlays, activeWeek] = await Promise.all([
+      db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId)),
+      db.select().from(parlays).where(eq(parlays.leagueId, leagueId)),
+      db.select().from(weeks).where(eq(weeks.isActive, true)).limit(1),
+    ]);
+
+    const countedParlays = leagueParlays.filter(p => p.status !== 'void');
+    const parlayIds = countedParlays.map(p => p.id);
+    const totalLegs = parlayIds.length === 0 ? 0 : (
+      await db.select().from(parlayLegs).where(inArray(parlayLegs.parlayId, parlayIds))
+    ).length;
+
+    const totalParlays = countedParlays.length;
+    const memberCount = members.length;
+    const avgLegsPerParlay = totalParlays > 0 ? totalLegs / totalParlays : 0;
+
+    const currentSeason = activeWeek[0]?.season;
+    let seasonWeekIds: number[] | undefined;
+    if (currentSeason !== undefined) {
+      const seasonWeeks = await db.select().from(weeks).where(eq(weeks.season, currentSeason));
+      seasonWeekIds = seasonWeeks.map(w => w.id);
+    }
+
+    const [allTimeStandings, currentSeasonStandings] = await Promise.all([
+      this.getLeagueStats(leagueId),
+      seasonWeekIds ? this.getLeagueStats(leagueId, seasonWeekIds) : Promise.resolve([]),
+    ]);
+
+    return {
+      totalParlays,
+      totalLegs,
+      memberCount,
+      avgLegsPerParlay,
+      allTimeStandings,
+      currentSeasonStandings,
+    };
   }
 
   // Leagues
@@ -352,31 +398,79 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getActiveWeekParlayStatus(leagueIds: number[]): Promise<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>> {
+  async getActiveWeekParlayStatus(leagueIds: number[], userId: string): Promise<Record<number, ActiveWeekStatus>> {
     if (leagueIds.length === 0) return {};
     const [activeWeek] = await db.select().from(weeks).where(eq(weeks.isActive, true)).limit(1);
     if (!activeWeek) return {};
 
-    const [parlayRows, lockRows] = await Promise.all([
-      db.select({ leagueId: parlays.leagueId })
+    const [parlayRows, lockRows, memberRows] = await Promise.all([
+      db.select({ leagueId: parlays.leagueId, userId: parlays.userId })
         .from(parlays)
         .where(and(eq(parlays.weekId, activeWeek.id), inArray(parlays.leagueId, leagueIds))),
       db.select({ leagueId: leagueWeekLocks.leagueId })
         .from(leagueWeekLocks)
         .where(and(eq(leagueWeekLocks.weekId, activeWeek.id), inArray(leagueWeekLocks.leagueId, leagueIds))),
+      db.select({ leagueId: leagueMembers.leagueId })
+        .from(leagueMembers)
+        .where(inArray(leagueMembers.leagueId, leagueIds)),
     ]);
 
     const lockedSet = new Set(lockRows.map(l => l.leagueId));
-    const result: Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }> = {};
+    const result: Record<number, ActiveWeekStatus> = {};
     for (const leagueId of leagueIds) {
+      const leagueParlays = parlayRows.filter(p => p.leagueId === leagueId);
+      const submittedCount = leagueParlays.length;
+      const totalMembers = memberRows.filter(m => m.leagueId === leagueId).length;
       result[leagueId] = {
         weekId: activeWeek.id,
         weekLabel: activeWeek.label,
-        submittedCount: parlayRows.filter(p => p.leagueId === leagueId).length,
+        submittedCount,
+        totalMembers,
+        allSubmitted: submittedCount >= totalMembers && totalMembers > 0,
         isLocked: lockedSet.has(leagueId),
+        currentUserSubmitted: leagueParlays.some(p => p.userId === userId),
       };
     }
     return result;
+  }
+
+  async getPopularPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<PopularPick[]> {
+    const rows = await db
+      .select({ leg: parlayLegs })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
+
+    const pickKey = (leg: typeof parlayLegs.$inferSelect) =>
+      leg.betType === 'player_prop'
+        ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
+        : `game:${leg.gameId}:${leg.betType}:${leg.pick}`;
+
+    const excludeKeys = new Set(
+      rows.filter(r => r.leg.userId === excludeUserId).map(r => pickKey(r.leg))
+    );
+
+    const counts = new Map<string, PopularPick>();
+    for (const { leg } of rows) {
+      if (leg.userId === excludeUserId) continue;
+      const key = pickKey(leg);
+      if (excludeKeys.has(key)) continue;
+      const existing = counts.get(key);
+      if (existing) {
+        existing.count++;
+      } else {
+        counts.set(key, {
+          gameId: leg.gameId,
+          betType: leg.betType,
+          pick: leg.pick,
+          playerName: leg.playerName,
+          propType: leg.propType,
+          count: 1,
+        });
+      }
+    }
+
+    return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 10);
   }
 
   async getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>> {

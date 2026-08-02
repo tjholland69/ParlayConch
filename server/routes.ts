@@ -246,7 +246,7 @@ export async function registerRoutes(
     const userId = (req.user as any).claims.sub;
     const userLeagues = await storage.getUserLeagues(userId);
     const leagueIds = userLeagues.map(l => l.id);
-    const status = await storage.getActiveWeekParlayStatus(leagueIds);
+    const status = await storage.getActiveWeekParlayStatus(leagueIds, userId);
     res.json(status);
   });
 
@@ -259,6 +259,38 @@ export async function registerRoutes(
   app.get("/api/leagues/:id/stats", isAuthenticated, async (req, res) => {
     const stats = await storage.getLeagueStats(Number(req.params.id));
     res.json(stats);
+  });
+
+  app.get("/api/leagues/:id/data-stats", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const stats = await storage.getLeagueDataStats(leagueId);
+    res.json(stats);
+  });
+
+  // Member-facing read-only view of all parlays across all weeks (no demo/admin gating)
+  app.get("/api/leagues/:id/parlays", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const allParlays = await storage.getAllLeagueParlays(leagueId);
+    res.json(allParlays);
+  });
+
+  app.get("/api/leagues/:leagueId/weeks/:weekId/popular-picks", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.leagueId);
+    const weekId = Number(req.params.weekId);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const picks = await storage.getPopularPicksForWeek(leagueId, weekId, userId);
+    res.json(picks);
   });
 
   // ===== PARLAYS =====
