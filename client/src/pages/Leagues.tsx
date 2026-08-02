@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { useLeagues, useCreateLeague, useJoinLeague, useLeaguesOverviewStats, useLeaguesActiveStatus } from "@/hooks/use-bets";
+import { useLeagues, useCreateLeague, useJoinLeague, useLeaguesOverviewStats, useLeaguesActiveStatus, useLeaguesWeeklyWinRates } from "@/hooks/use-bets";
+import { LeagueActivitySparkline } from "@/components/leagues/LeagueActivitySparkline";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,7 @@ export default function Leagues() {
   const { data: leagues, isLoading } = useLeagues();
   const { data: overviewStats } = useLeaguesOverviewStats();
   const { data: activeStatus } = useLeaguesActiveStatus();
+  const { data: weeklyWinRates } = useLeaguesWeeklyWinRates();
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
   const { toast } = useToast();
@@ -131,7 +133,7 @@ export default function Leagues() {
         </div>
       </div>
 
-      <div className="h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+      <div className="h-0.5 bg-gradient-to-r from-transparent via-white/30 to-transparent" />
 
       {!leagues?.length ? (
         <div className="text-center py-16 bg-card/20 rounded-2xl border border-dashed border-white/10">
@@ -214,17 +216,27 @@ export default function Leagues() {
                       stat.winRate >= 60 ? "text-green-400" :
                       stat.winRate >= 40 ? "text-yellow-400" :
                       "text-red-400";
+                    const sparklineColor =
+                      stat.winRate >= 60 ? "#4ade80" :
+                      stat.winRate >= 40 ? "#facc15" :
+                      "#f87171";
                     return (
-                      <div className="ml-auto flex flex-col items-end gap-0.5 shrink-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`font-bold text-sm ${color}`}>
-                            {stat.winRate.toFixed(1)}%
+                      <div className="ml-auto flex items-center gap-3 shrink-0">
+                        <LeagueActivitySparkline
+                          points={weeklyWinRates?.[league.id] ?? []}
+                          color={sparklineColor}
+                        />
+                        <div className="flex flex-col items-end gap-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`font-bold text-sm ${color}`}>
+                              {stat.winRate.toFixed(1)}%
+                            </span>
+                            <span className="text-xs text-muted-foreground/60">Overall Picks Won</span>
+                          </div>
+                          <span className="text-xs text-muted-foreground/60">
+                            {stat.wins} parlay{stat.wins !== 1 ? "s" : ""} won
                           </span>
-                          <span className="text-xs text-muted-foreground/60">Overall Picks Won</span>
                         </div>
-                        <span className="text-xs text-muted-foreground/60">
-                          {stat.wins} parlay{stat.wins !== 1 ? "s" : ""} won
-                        </span>
                       </div>
                     );
                   })()}

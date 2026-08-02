@@ -12,7 +12,7 @@ import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
-import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries } from "./services/dashboardAnalytics";
+import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries, getLeagueWeeklyWinRates } from "./services/dashboardAnalytics";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
@@ -430,6 +430,15 @@ export async function registerRoutes(
     const leagueIds = userLeagues.map(l => l.id);
     const stats = await storage.getLeagueOverviewStats(leagueIds);
     res.json(stats);
+  });
+
+  // Must be before /api/leagues/:id to avoid route conflict
+  app.get("/api/leagues/weekly-win-rates", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const userLeagues = await storage.getUserLeagues(userId);
+    const leagueIds = userLeagues.map(l => l.id);
+    const series = await getLeagueWeeklyWinRates(userId, leagueIds);
+    res.json(series);
   });
 
   app.get("/api/leagues/active-week-status", isAuthenticated, async (req, res) => {

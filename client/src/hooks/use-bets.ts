@@ -62,6 +62,18 @@ export function useLeaguesOverviewStats() {
   });
 }
 
+export function useLeaguesWeeklyWinRates() {
+  return useQuery<Record<number, { weekLabel: string; winRate: number }[]>>({
+    queryKey: ['/api/leagues/weekly-win-rates'],
+    queryFn: async () => {
+      const res = await fetch('/api/leagues/weekly-win-rates', { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch weekly win rates");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+}
+
 export function useLeaguesActiveStatus() {
   return useQuery<Record<number, ActiveWeekStatus>>({
     queryKey: ['/api/leagues/active-week-status'],
