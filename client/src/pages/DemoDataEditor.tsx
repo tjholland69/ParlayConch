@@ -1,20 +1,22 @@
 import { useState } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay } from "@/hooks/use-bets";
+import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs } from "@/hooks/use-bets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown } from "lucide-react";
-import { PLAYER_PROP_TYPES, type ParlayWithLegs } from "@shared/schema";
+import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine } from "lucide-react";
+import { PLAYER_PROP_TYPES, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ParlayRollupCard, LegSheet, blankLeg, type LegFormState } from "@/components/ParlayRollupCard";
+import { ParlayRollupCard, LegSheet, blankLeg, BET_TYPES, RESULTS, type LegFormState } from "@/components/ParlayRollupCard";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { getDisplayName } from "@/lib/displayName";
@@ -111,6 +113,129 @@ function MergeDialog({ open, onOpenChange, selected, leagueId, onDone }: MergeDi
           <Button onClick={handleConfirm} disabled={!targetId || merge.isPending}>
             {merge.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <GitMerge className="w-4 h-4 mr-2" />}
             Merge Parlays
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Bulk Edit Legs Dialog ───────────────────────────────────────────────────────
+
+const BULK_FIELD_OPTIONS: { value: string; label: string }[] = [
+  { value: "result", label: "Result" },
+  { value: "betType", label: "Bet Type" },
+  { value: "pick", label: "Pick" },
+  { value: "line", label: "Line" },
+  { value: "odds", label: "Odds" },
+  { value: "gameSegment", label: "Game Segment" },
+  { value: "playerName", label: "Player Name" },
+  { value: "propType", label: "Prop Type" },
+  { value: "notes", label: "Notes" },
+  { value: "userId", label: "Owner" },
+];
+
+type BulkEditLegsDialogProps = {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  leagueId: number;
+  legIds: number[];
+  members: LeagueMemberWithUser[];
+  onDone: () => void;
+};
+
+function BulkEditLegsDialog({ open, onOpenChange, leagueId, legIds, members, onDone }: BulkEditLegsDialogProps) {
+  const [field, setField] = useState("result");
+  const [value, setValue] = useState("");
+  const bulkUpdate = useBulkUpdateParlayLegs(leagueId);
+
+  const reset = () => { setField("result"); setValue(""); };
+
+  const handleApply = () => {
+    bulkUpdate.mutate(
+      { legIds, field, value: value || null },
+      { onSuccess: () => { reset(); onDone(); } }
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!bulkUpdate.isPending) { if (!v) reset(); onOpenChange(v); } }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <PencilLine className="w-5 h-5 text-primary" />
+            Bulk Edit {legIds.length} Leg{legIds.length !== 1 ? "s" : ""}
+          </DialogTitle>
+          <DialogDescription>
+            Choose a field and a value to apply to every selected leg. This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Field</Label>
+            <Select value={field} onValueChange={v => { setField(v); setValue(""); }}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {BULK_FIELD_OPTIONS.map(f => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">New Value</Label>
+            {field === "result" ? (
+              <Select value={value || "__none"} onValueChange={v => setValue(v === "__none" ? "" : v)}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none">— None —</SelectItem>
+                  {RESULTS.filter(Boolean).map(r => <SelectItem key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : field === "betType" ? (
+              <Select value={value} onValueChange={setValue}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Select bet type" /></SelectTrigger>
+                <SelectContent>
+                  {BET_TYPES.map(t => <SelectItem key={t} value={t}>{t === "player_prop" ? "Player Prop" : t.charAt(0).toUpperCase() + t.slice(1)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : field === "propType" ? (
+              <Select value={value} onValueChange={setValue}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Select prop type" /></SelectTrigger>
+                <SelectContent>
+                  {PLAYER_PROP_TYPES.map(p => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : field === "userId" ? (
+              <Select value={value} onValueChange={setValue}>
+                <SelectTrigger className="h-9"><SelectValue placeholder="Select member" /></SelectTrigger>
+                <SelectContent>
+                  {members.map(m => (
+                    <SelectItem key={m.userId} value={m.userId}>
+                      {getDisplayName(m.user, m.userId.slice(0, 8))}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : field === "notes" ? (
+              <Textarea className="min-h-[64px] text-sm" value={value} onChange={e => setValue(e.target.value)} placeholder="Optional notes…" />
+            ) : (
+              <Input className="h-9" value={value} onChange={e => setValue(e.target.value)} placeholder={`New ${BULK_FIELD_OPTIONS.find(f => f.value === field)?.label.toLowerCase()}`} />
+            )}
+          </div>
+
+          <p className="text-xs text-muted-foreground border border-white/10 rounded-lg p-3 bg-muted/20">
+            This will overwrite the "{BULK_FIELD_OPTIONS.find(f => f.value === field)?.label}" field on all {legIds.length} selected leg{legIds.length !== 1 ? "s" : ""}.
+          </p>
+        </div>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={bulkUpdate.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleApply} disabled={(field !== "notes" && field !== "result" && !value) || bulkUpdate.isPending}>
+            {bulkUpdate.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <PencilLine className="w-4 h-4 mr-2" />}
+            Apply
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -316,6 +441,9 @@ export default function DemoDataEditor() {
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [expandSignal, setExpandSignal] = useState(0);
   const [sortBy, setSortBy] = useState("week-desc");
+  const [legSelectMode, setLegSelectMode] = useState(false);
+  const [selectedLegIds, setSelectedLegIds] = useState<Set<number>>(new Set());
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
 
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
@@ -328,6 +456,19 @@ export default function DemoDataEditor() {
   const exitSelectMode = () => {
     setSelectMode(false);
     setSelectedIds(new Set());
+  };
+
+  const toggleLegSelect = (legId: number) => {
+    setSelectedLegIds(prev => {
+      const next = new Set(prev);
+      if (next.has(legId)) next.delete(legId); else next.add(legId);
+      return next;
+    });
+  };
+
+  const exitLegSelectMode = () => {
+    setLegSelectMode(false);
+    setSelectedLegIds(new Set());
   };
 
   if (!league) {
@@ -518,6 +659,10 @@ export default function DemoDataEditor() {
                 Cancel
               </Button>
             </>
+          ) : legSelectMode ? (
+            <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitLegSelectMode}>
+              Cancel
+            </Button>
           ) : (
             <>
               <Button
@@ -532,6 +677,10 @@ export default function DemoDataEditor() {
               <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setSelectMode(true)}>
                 <GitMerge className="w-4 h-4" />
                 Select &amp; Merge
+              </Button>
+              <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setLegSelectMode(true)}>
+                <ListChecks className="w-4 h-4" />
+                Select Legs
               </Button>
             </>
           )}
@@ -573,9 +722,13 @@ export default function DemoDataEditor() {
                 <ParlayRollupCard
                   parlay={parlay}
                   leagueId={leagueId}
+                  members={members}
                   selectMode={selectMode}
                   isSelected={selectedIds.has(parlay.id)}
                   onToggleSelect={toggleSelect}
+                  legSelectMode={legSelectMode}
+                  selectedLegIds={selectedLegIds}
+                  onToggleLegSelect={toggleLegSelect}
                   collapseSignal={collapseSignal}
                   expandSignal={expandSignal}
                   versionNumber={versionMap.get(parlay.id)}
@@ -606,6 +759,22 @@ export default function DemoDataEditor() {
         </div>
       )}
 
+      {/* Sticky bulk-edit action bar */}
+      {legSelectMode && selectedLegIds.size >= 1 && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 flex justify-center pb-6 pointer-events-none">
+          <div className="pointer-events-auto bg-card border border-primary/30 shadow-2xl rounded-xl px-6 py-4 flex items-center gap-4 max-w-sm w-full mx-4">
+            <div className="flex-1">
+              <p className="font-semibold text-sm">{selectedLegIds.size} leg{selectedLegIds.size !== 1 ? "s" : ""} selected</p>
+              <p className="text-xs text-muted-foreground">Across any visible parlay</p>
+            </div>
+            <Button className="gap-2 shrink-0" onClick={() => setBulkEditOpen(true)}>
+              <PencilLine className="w-4 h-4" />
+              Bulk Edit
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Merge dialog */}
       <MergeDialog
         open={mergeOpen}
@@ -615,6 +784,19 @@ export default function DemoDataEditor() {
         onDone={() => {
           setMergeOpen(false);
           exitSelectMode();
+        }}
+      />
+
+      {/* Bulk Edit Legs dialog */}
+      <BulkEditLegsDialog
+        open={bulkEditOpen}
+        onOpenChange={setBulkEditOpen}
+        leagueId={leagueId}
+        legIds={[...selectedLegIds]}
+        members={members ?? []}
+        onDone={() => {
+          setBulkEditOpen(false);
+          exitLegSelectMode();
         }}
       />
 

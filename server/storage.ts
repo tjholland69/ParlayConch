@@ -81,7 +81,8 @@ export interface IStorage {
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
   deleteParlayLeg(legId: number): Promise<void>;
-  updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg>;
+  updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg>;
+  bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]>;
   addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'> & { userId: string }): Promise<ParlayLeg>;
   mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
   splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay>;
@@ -735,15 +736,20 @@ export class DatabaseStorage implements IStorage {
     const [week] = await db.select().from(weeks).where(eq(weeks.id, weekId));
 
     const parlayIds = leagueParlays.map(({ parlay }) => parlay.id);
-    const allLegs = await db.select({ leg: parlayLegs, game: games })
+    const allLegs = await db.select({ leg: parlayLegs, game: games, legUser: users })
       .from(parlayLegs)
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .innerJoin(users, eq(parlayLegs.userId, users.id))
       .where(inArray(parlayLegs.parlayId, parlayIds));
 
-    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
-    for (const { leg, game } of allLegs) {
+    const legsByParlayId = new Map<number, ParlayWithLegs["legs"]>();
+    for (const { leg, game, legUser } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
-      existing.push({ ...leg, game });
+      existing.push({
+        ...leg,
+        game,
+        user: { firstName: legUser.firstName, email: legUser.email, profileImageUrl: legUser.profileImageUrl, isDemo: legUser.isDemo, settings: legUser.settings as any },
+      });
       legsByParlayId.set(leg.parlayId, existing);
     }
 
@@ -891,17 +897,22 @@ export class DatabaseStorage implements IStorage {
     const weekIds = [...new Set(leagueParlays.map(({ parlay }) => parlay.weekId))];
 
     const [allLegs, allWeeks] = await Promise.all([
-      db.select({ leg: parlayLegs, game: games })
+      db.select({ leg: parlayLegs, game: games, legUser: users })
         .from(parlayLegs)
         .leftJoin(games, eq(parlayLegs.gameId, games.id))
+        .innerJoin(users, eq(parlayLegs.userId, users.id))
         .where(inArray(parlayLegs.parlayId, parlayIds)),
       db.select().from(weeks).where(inArray(weeks.id, weekIds)),
     ]);
 
-    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
-    for (const { leg, game } of allLegs) {
+    const legsByParlayId = new Map<number, ParlayWithLegs["legs"]>();
+    for (const { leg, game, legUser } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
-      existing.push({ ...leg, game });
+      existing.push({
+        ...leg,
+        game,
+        user: { firstName: legUser.firstName, email: legUser.email, profileImageUrl: legUser.profileImageUrl, isDemo: legUser.isDemo, settings: legUser.settings as any },
+      });
       legsByParlayId.set(leg.parlayId, existing);
     }
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
@@ -927,9 +938,13 @@ export class DatabaseStorage implements IStorage {
     await db.delete(parlayLegs).where(eq(parlayLegs.id, legId));
   }
 
-  async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment'>>): Promise<ParlayLeg> {
+  async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg> {
     const [updated] = await db.update(parlayLegs).set(updates).where(eq(parlayLegs.id, legId)).returning();
     return updated;
+  }
+
+  async bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]> {
+    return db.update(parlayLegs).set({ [field]: value }).where(inArray(parlayLegs.id, legIds)).returning();
   }
 
   async addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'> & { userId: string }): Promise<ParlayLeg> {

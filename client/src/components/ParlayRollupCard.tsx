@@ -11,14 +11,15 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, Scissors } from "lucide-react";
 import { formatPickLabel } from "@/lib/formatPick";
-import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs } from "@shared/schema";
+import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 import { getDisplayName } from "@/lib/displayName";
 import { getParlayVisualStyle, getResultPercentileOrdinal, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 
-const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
+export const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
 const PICK_OPTIONS: Record<string, string[]> = {
   spread: ["home", "away"],
   moneyline: ["home", "away"],
@@ -26,7 +27,7 @@ const PICK_OPTIONS: Record<string, string[]> = {
   under: ["under"],
   player_prop: ["over", "under", "yes", "no"],
 };
-const RESULTS = ["", "win", "loss", "push"] as const;
+export const RESULTS = ["", "win", "loss", "push"] as const;
 const STATUSES = ["pending", "approved", "rejected", "win", "loss", "push", "void"] as const;
 
 function legLabel(leg: ParlayLeg & { game?: any }) {
@@ -195,9 +196,15 @@ export function LegSheet({ open, onOpenChange, title, initial, onSave, isSaving 
 export type ParlayCardProps = {
   parlay: ParlayWithLegs;
   leagueId: number;
+  /** League members, used to populate the editable "Bet Owner" dropdown. */
+  members?: LeagueMemberWithUser[];
   selectMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (id: number) => void;
+  /** Cross-parlay leg-level selection mode for bulk-editing legs (distinct from parlay-level selectMode). */
+  legSelectMode?: boolean;
+  selectedLegIds?: Set<number>;
+  onToggleLegSelect?: (legId: number) => void;
   collapseSignal?: number;
   expandSignal?: number;
   versionNumber?: number;
@@ -264,8 +271,9 @@ function LegLogPanel({ log, onClose }: { log: EnrichLog; onClose: () => void }) 
 }
 
 export function ParlayRollupCard({
-  parlay, leagueId,
+  parlay, leagueId, members,
   selectMode = false, isSelected = false, onToggleSelect = () => {},
+  legSelectMode = false, selectedLegIds, onToggleLegSelect = () => {},
   collapseSignal = 0, expandSignal = 0, versionNumber, readOnly = false,
   participationRate = 1, loserLabel = "parlay_loser",
 }: ParlayCardProps) {
@@ -275,6 +283,17 @@ export function ParlayRollupCard({
   const updateStatus = useUpdateParlayStatus(leagueId);
   const addLeg = useAddParlayLeg(leagueId);
   const enrichLeg = useEnrichParlayLeg(leagueId);
+  const { toast } = useToast();
+
+  const handleLegOwnerChange = (leg: ParlayLeg & { game?: any }, newUserId: string) => {
+    if (newUserId === leg.userId) return;
+    const conflict = parlay.legs.some(l => l.id !== leg.id && l.userId === newUserId);
+    if (conflict) {
+      toast({ title: "Cannot reassign", description: "This member already has a leg in this parlay.", variant: "destructive" });
+      return;
+    }
+    updateLeg.mutate({ legId: leg.id, updates: { userId: newUserId } });
+  };
 
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteLegId, setDeleteLegId] = useState<number | null>(null);
@@ -487,7 +506,7 @@ export function ParlayRollupCard({
                 )}
 
                 {/* Split mode toggle */}
-                {parlay.legs.length >= 2 && !splitMode && (
+                {parlay.legs.length >= 2 && !splitMode && !legSelectMode && (
                   <Button
                     variant="ghost"
                     size="sm"
@@ -536,7 +555,7 @@ export function ParlayRollupCard({
               <table className="w-full text-sm">
                 <thead>
                   <tr className="bg-muted/30 text-muted-foreground text-xs">
-                    {splitMode && <th className="px-3 py-2 w-8" />}
+                    {(splitMode || legSelectMode) && <th className="px-3 py-2 w-8" />}
                     <th className="text-left px-3 py-2 font-medium">Bet Owner</th>
                     <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
                     <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
@@ -545,7 +564,7 @@ export function ParlayRollupCard({
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>
                     <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Date</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
-                    {!readOnly && !selectMode && !splitMode && <th className="px-2 py-2" />}
+                    {!readOnly && !selectMode && !splitMode && !legSelectMode && <th className="px-2 py-2" />}
                   </tr>
                 </thead>
                 <tbody>
@@ -570,9 +589,11 @@ export function ParlayRollupCard({
                             "border-t border-white/5",
                             i % 2 === 1 && "bg-muted/10",
                             splitMode && "cursor-pointer hover:bg-primary/5",
-                            splitMode && splitSelected.has(leg.id) && "bg-primary/10"
+                            splitMode && splitSelected.has(leg.id) && "bg-primary/10",
+                            legSelectMode && "cursor-pointer hover:bg-primary/5",
+                            legSelectMode && selectedLegIds?.has(leg.id) && "bg-primary/10"
                           )}
-                          onClick={splitMode ? () => toggleSplitLeg(leg.id) : undefined}
+                          onClick={splitMode ? () => toggleSplitLeg(leg.id) : legSelectMode ? () => onToggleLegSelect(leg.id) : undefined}
                         >
                           {splitMode && (
                             <td className="px-3 py-2 w-8">
@@ -583,7 +604,33 @@ export function ParlayRollupCard({
                               </div>
                             </td>
                           )}
-                          <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">{memberName}</td>
+                          {legSelectMode && (
+                            <td className="px-3 py-2 w-8">
+                              <div className="text-primary">
+                                {selectedLegIds?.has(leg.id)
+                                  ? <CheckSquare className="w-4 h-4" />
+                                  : <Square className="w-4 h-4 text-muted-foreground" />}
+                              </div>
+                            </td>
+                          )}
+                          <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap" onClick={e => { if (!legSelectMode) e.stopPropagation(); }}>
+                            {!readOnly && !selectMode && !splitMode && !legSelectMode && members ? (
+                              <Select value={leg.userId} onValueChange={v => handleLegOwnerChange(leg, v)}>
+                                <SelectTrigger className="h-6 text-xs w-32 px-1.5 py-0 border-none bg-transparent hover:bg-white/5">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {members.map(m => (
+                                    <SelectItem key={m.userId} value={m.userId}>
+                                      {getDisplayName(m.user, m.userId.slice(0, 8))}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              getDisplayName(leg.user, `User #${leg.userId.slice(0, 6)}`)
+                            )}
+                          </td>
                           <td className="px-3 py-2 font-medium truncate max-w-[140px]">{legLabel(leg)}</td>
                           <td className="px-3 py-2 hidden sm:table-cell">
                             <Badge variant="outline" className="text-xs px-1.5 py-0">
@@ -599,7 +646,7 @@ export function ParlayRollupCard({
                           <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
                             {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
                           </td>
-                          {!readOnly && !selectMode && !splitMode && (
+                          {!readOnly && !selectMode && !splitMode && !legSelectMode && (
                             <td className="px-2 py-2">
                               <div className="flex gap-1 items-center">
                                 <Button
@@ -673,7 +720,7 @@ export function ParlayRollupCard({
             </div>
           )}
 
-          {!readOnly && !selectMode && !splitMode && (
+          {!readOnly && !selectMode && !splitMode && !legSelectMode && (
             <Button
               variant="outline"
               size="sm"
