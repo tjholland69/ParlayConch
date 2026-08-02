@@ -452,7 +452,15 @@ export function ParlayRollupCard({
               );
             })()}
 
-            <span className="text-xs text-muted-foreground/50 italic shrink-0 hidden sm:inline whitespace-nowrap">
+            <span className={cn(
+              "text-xs italic shrink-0 hidden sm:inline-flex items-center gap-1 whitespace-nowrap",
+              parlay.user ? "text-muted-foreground/50" : "text-amber-400"
+            )}>
+              {!parlay.user && (
+                <span title="Owner record missing — this parlay may need cleanup (often left over from an import)">
+                  <AlertTriangle className="w-3 h-3" aria-label="Owner record missing" />
+                </span>
+              )}
               (Started by {memberName})
             </span>
 
@@ -614,22 +622,34 @@ export function ParlayRollupCard({
                             </td>
                           )}
                           <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap" onClick={e => { if (!legSelectMode) e.stopPropagation(); }}>
-                            {!readOnly && !selectMode && !splitMode && !legSelectMode && members ? (
-                              <Select value={leg.userId} onValueChange={v => handleLegOwnerChange(leg, v)}>
-                                <SelectTrigger className="h-6 text-xs w-32 px-1.5 py-0 border-none bg-transparent hover:bg-white/5">
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {members.map(m => (
-                                    <SelectItem key={m.userId} value={m.userId}>
-                                      {getDisplayName(m.user, m.userId.slice(0, 8))}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              getDisplayName(leg.user, `User #${leg.userId.slice(0, 6)}`)
-                            )}
+                            <div className="flex items-center gap-1">
+                              {!leg.user && (
+                                <span
+                                  className="shrink-0"
+                                  title="Owner record missing — this leg may need cleanup (often left over from an import)"
+                                >
+                                  <AlertTriangle className="w-3 h-3 text-amber-400" aria-label="Owner record missing" />
+                                </span>
+                              )}
+                              {!readOnly && !selectMode && !splitMode && !legSelectMode && members ? (
+                                <Select value={leg.userId} onValueChange={v => handleLegOwnerChange(leg, v)}>
+                                  <SelectTrigger className={cn("h-6 text-xs w-32 px-1.5 py-0 border-none bg-transparent hover:bg-white/5", !leg.user && "text-amber-400")}>
+                                    <SelectValue placeholder="Unknown" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {members.map(m => (
+                                      <SelectItem key={m.userId} value={m.userId}>
+                                        {getDisplayName(m.user, m.userId.slice(0, 8))}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : (
+                                <span className={cn(!leg.user && "text-amber-400")}>
+                                  {leg.user ? getDisplayName(leg.user, `User #${leg.userId.slice(0, 6)}`) : "Unknown Owner"}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2 font-medium truncate max-w-[140px]">{legLabel(leg)}</td>
                           <td className="px-3 py-2 hidden sm:table-cell">
