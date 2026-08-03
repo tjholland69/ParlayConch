@@ -120,6 +120,23 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
         result.details.push(`Skipped fg_made for "${leg.playerName}" — no FG column in stats`);
         continue;
 
+      // ── All-purpose yards (rushing + receiving combined) ─────────────────
+      } else if (propType === "all_purpose_yards") {
+        if (isNaN(lineRaw)) {
+          result.skipped++;
+          result.details.push(`No numeric line for "${leg.playerName}" ${propType} — skipped`);
+          continue;
+        }
+        if (stat.rushingYards == null && stat.receivingYards == null) {
+          result.noStats++;
+          result.details.push(`Neither rushing nor receiving yards tracked for "${leg.playerName}" week ${weekRow.weekNumber}`);
+          continue;
+        }
+        const actual = (stat.rushingYards ?? 0) + (stat.receivingYards ?? 0);
+        if (actual > lineRaw)        legResult = pick === "over"  ? "win" : "loss";
+        else if (actual < lineRaw)   legResult = pick === "under" ? "win" : "loss";
+        else                         legResult = "push";
+
       // ── Numeric over/under props ──────────────────────────────────────────
       } else {
         const statKey = PROP_TYPE_TO_STAT[propType];
@@ -190,6 +207,7 @@ const PROP_TYPE_TO_ODDS_MARKET: Partial<Record<string, string>> = {
   kicking_pts:      "player_kicking_points",
   fg_made:          "player_field_goals",
   sacks:            "player_sacks",
+  all_purpose_yards: "player_rush_reception_yds",
 };
 
 export interface PropLineResult {

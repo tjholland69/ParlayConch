@@ -16,7 +16,8 @@
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx script/migrate.ts",
-    "db:seed": "tsx --env-file=.env.local scripts/seed-dev.ts"
+    "db:seed": "tsx --env-file=.env.local scripts/seed-dev.ts",
+    "db:seed-teams": "tsx --env-file=.env.local scripts/seed-teams.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

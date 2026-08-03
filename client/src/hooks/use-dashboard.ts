@@ -80,11 +80,22 @@ export function useDashboardAdvancedPerformance(filters: AdvancedPerformanceFilt
   });
 }
 
-export function useDashboardPerformance(leagueId?: number) {
+export interface DashboardDateRange {
+  startDate?: string; // ISO date (yyyy-mm-dd)
+  endDate?: string;
+}
+
+export function useDashboardPerformance(leagueId?: number, dateRange?: DashboardDateRange) {
+  const params = new URLSearchParams();
+  if (leagueId) params.set("leagueId", String(leagueId));
+  if (dateRange?.startDate) params.set("startDate", dateRange.startDate);
+  if (dateRange?.endDate) params.set("endDate", dateRange.endDate);
+  const qs = params.toString();
+
   return useQuery<{ points: WinRateTimeSeriesPoint[] }>({
-    queryKey: [api.dashboard.performance.path, leagueId ?? "all"],
+    queryKey: [api.dashboard.performance.path, leagueId ?? "all", dateRange?.startDate ?? "", dateRange?.endDate ?? ""],
     queryFn: async () => {
-      const url = leagueId ? `${api.dashboard.performance.path}?leagueId=${leagueId}` : api.dashboard.performance.path;
+      const url = qs ? `${api.dashboard.performance.path}?${qs}` : api.dashboard.performance.path;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch dashboard performance");
       return res.json();

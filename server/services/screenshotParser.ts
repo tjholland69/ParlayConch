@@ -46,7 +46,7 @@ Return ONLY valid JSON in this exact format (no markdown, no explanation):
       "line": "-3.5" or "47.5" or null,
       "odds": "-110" or "+130" or null,
       "playerName": "Patrick Mahomes" or null,
-      "propType": "passing yards" or "receiving yards" or "rushing yards" or "anytime td" or "first td" or "receptions" or "passing tds" or "rushing tds" or "sacks" or "kicking pts" or "fg made" or null,
+      "propType": "passing yards" or "receiving yards" or "rushing yards" or "all-purpose yards" or "anytime td" or "first td" or "receptions" or "passing tds" or "rushing tds" or "sacks" or "kicking pts" or "fg made" or null,
       "result": "win" or "loss" or "push" or null
     }
   ],
@@ -182,6 +182,12 @@ const PROP_TYPE_MAP: Record<string, string> = {
   "rushing yards": "rush_yards",
   "rushing yds": "rush_yards",
   "rush yards": "rush_yards",
+  "all-purpose yards": "all_purpose_yards",
+  "all purpose yards": "all_purpose_yards",
+  "all-purpose yds": "all_purpose_yards",
+  "all purpose yds": "all_purpose_yards",
+  "combined yards": "all_purpose_yards",
+  "rush + rec yards": "all_purpose_yards",
   "passing touchdowns": "pass_tds",
   "passing tds": "pass_tds",
   "pass tds": "pass_tds",

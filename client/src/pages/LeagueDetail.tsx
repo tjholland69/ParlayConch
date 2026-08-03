@@ -661,6 +661,7 @@ export default function LeagueDetail() {
                             expandSignal={openExpandSignal}
                             participationRate={openParticipationRate}
                             loserLabel={league.loserLabel}
+                            heroLabel={league.heroLabel}
                           />
                         </CardErrorBoundary>
                       </div>
@@ -890,6 +891,7 @@ export default function LeagueDetail() {
                       expandSignal={allExpandSignal}
                       participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
                       loserLabel={league.loserLabel}
+                      heroLabel={league.heroLabel}
                     />
                   </CardErrorBoundary>
                 ))}

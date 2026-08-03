@@ -332,15 +332,92 @@ export function useSetUserDemo() {
   });
 }
 
-export function useLeagueMembersWithUsers(leagueId: number) {
+export function useLeagueMembersWithUsers(leagueId: number, opts?: { includeInactive?: boolean }) {
+  const includeInactive = opts?.includeInactive ?? false;
   return useQuery({
-    queryKey: ['/api/leagues', leagueId, 'members'],
+    queryKey: ['/api/leagues', leagueId, 'members', { includeInactive }],
     queryFn: async () => {
-      const res = await fetch(`/api/leagues/${leagueId}/members`, { credentials: "include" });
+      const url = `/api/leagues/${leagueId}/members${includeInactive ? "?includeInactive=true" : ""}`;
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch members");
       return res.json() as Promise<import('@shared/schema').LeagueMemberWithUser[]>;
     },
     enabled: !!leagueId,
+  });
+}
+
+// Maestro-only: remove another member. Resolves with { orphanedLegs } on success
+// (empty array = removed clean) or throws a special OrphanConflictError when the
+// server responds 409 with unresolved orphaned legs, so callers can render the
+// resolution dialog instead of a generic error toast.
+export class OrphanConflictError extends Error {
+  orphanedLegs: import('@shared/schema').ParlayLeg[];
+  constructor(message: string, orphanedLegs: import('@shared/schema').ParlayLeg[]) {
+    super(message);
+    this.orphanedLegs = orphanedLegs;
+  }
+}
+
+export function useRemoveLeagueMember(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ userId, bypass }: { userId: string; bypass?: boolean }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/members/${userId}/remove`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bypass: bypass ?? false }),
+        credentials: "include",
+      });
+      const d = await res.json();
+      if (res.status === 409) throw new OrphanConflictError(d.message, d.orphanedLegs ?? []);
+      if (!res.ok) throw new Error(d.message);
+      return d as { message: string; orphanedLegs: import('@shared/schema').ParlayLeg[] };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'orphaned-legs'] });
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+    },
+    onError: (e: Error) => {
+      if (e instanceof OrphanConflictError) return; // caller renders the resolution dialog instead
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useOrphanedLegs(leagueId: number) {
+  return useQuery({
+    queryKey: ['/api/leagues', leagueId, 'orphaned-legs'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/orphaned-legs`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch orphaned legs");
+      return res.json() as Promise<import('@shared/schema').ParlayLeg[]>;
+    },
+    enabled: !!leagueId,
+  });
+}
+
+export function useResolveOrphanedLegs(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (resolutions: { legId: number; action: 'reassign' | 'delete'; newUserId?: string }[]) => {
+      const res = await fetch(`/api/leagues/${leagueId}/orphaned-legs/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolutions }),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'orphaned-legs'] });
+      toast({ title: "Resolved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 }
 
