@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs } from "@/hooks/use-bets";
@@ -19,7 +19,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ParlayRollupCard, LegSheet, blankLeg, BET_TYPES, RESULTS, type LegFormState } from "@/components/ParlayRollupCard";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
-import { getDisplayName, shortId } from "@/lib/displayName";
+import { getDisplayName, shortId, sortByFirstName } from "@/lib/displayName";
 
 // ── Merge Dialog ──────────────────────────────────────────────────────────────
 
@@ -429,7 +429,8 @@ export default function DemoDataEditor() {
 
   const { data: allParlays, isLoading } = useAllLeagueParlays(leagueId);
   const { data: weeks } = useWeeks();
-  const { data: members } = useLeagueMembersWithUsers(leagueId);
+  const { data: membersRaw } = useLeagueMembersWithUsers(leagueId);
+  const members = useMemo(() => membersRaw ? sortByFirstName(membersRaw) : membersRaw, [membersRaw]);
 
   const [yearFilter, setYearFilter] = useState<string>("all");
   const [weekFilter, setWeekFilter] = useState<string>("all");
