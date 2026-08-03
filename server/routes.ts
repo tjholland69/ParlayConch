@@ -13,6 +13,10 @@ import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries, getLeagueWeeklyWinRates } from "./services/dashboardAnalytics";
+import { getWeeklyAnalyticsReport } from "./services/storyStudio/analyticsEngine";
+import { discoverStories } from "./services/storyStudio/storyDiscovery";
+import { generateSection } from "./services/storyStudio/editorialGeneration";
+import { insertStoryReportSchema, updateStoryReportSchema, STORY_SECTION_KINDS, type StorySectionKind } from "@shared/schema";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
@@ -1799,6 +1803,166 @@ export async function registerRoutes(
       res.json({ message: "Admin rights transferred and you have left the league" });
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // ===== STORY STUDIO =====
+  const SECTION_ORDER: Record<StorySectionKind, number> = {
+    headline: 0,
+    opening: 1,
+    winnerSummary: 2,
+    closing: 3,
+  };
+
+  async function assertLeagueMember(leagueId: number, userId: string, res: any): Promise<boolean> {
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) res.status(403).json({ message: "Not a member of this league" });
+    return isMember;
+  }
+
+  app.get("/api/story-studio/analytics", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.query.leagueId);
+      const weekId = Number(req.query.weekId);
+      const userId = (req.user as any).claims.sub;
+      if (!(await assertLeagueMember(leagueId, userId, res))) return;
+
+      const report = await getWeeklyAnalyticsReport(leagueId, weekId);
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/story-studio/candidates", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.query.leagueId);
+      const weekId = Number(req.query.weekId);
+      const userId = (req.user as any).claims.sub;
+      if (!(await assertLeagueMember(leagueId, userId, res))) return;
+
+      const report = await getWeeklyAnalyticsReport(leagueId, weekId);
+      res.json(discoverStories(report));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/story-studio/reports", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const input = insertStoryReportSchema.parse(req.body);
+      if (!(await assertLeagueMember(input.leagueId, userId, res))) return;
+
+      const report = await storage.createStoryReport(userId, input);
+      res.json(report);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/story-studio/reports/:id", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/story-studio/reports/:id/sections/:kind/generate", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const kind = req.params.kind as StorySectionKind;
+      const userId = (req.user as any).claims.sub;
+      if (!STORY_SECTION_KINDS.includes(kind)) return res.status(400).json({ message: "Invalid section kind" });
+
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+
+      const analytics = await getWeeklyAnalyticsReport(report.leagueId, report.weekId);
+      const generated = await generateSection(kind, {
+        report: analytics,
+        candidate: report.selectedStory,
+        thesis: report.thesis,
+        tone: report.tone as any,
+      });
+
+      const section = await storage.upsertStorySection(reportId, kind, SECTION_ORDER[kind], {
+        content: generated.content,
+        generatedContent: generated.content,
+        promptVersion: generated.promptVersion,
+      });
+      res.json(section);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/story-studio/reports/:id/sections/:kind", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const kind = req.params.kind as StorySectionKind;
+      const userId = (req.user as any).claims.sub;
+      if (!STORY_SECTION_KINDS.includes(kind)) return res.status(400).json({ message: "Invalid section kind" });
+
+      const { content } = z.object({ content: z.string() }).parse(req.body);
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+
+      const section = await storage.upsertStorySection(reportId, kind, SECTION_ORDER[kind], { content });
+      res.json(section);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/story-studio/reports/:id", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const updates = updateStoryReportSchema.parse(req.body);
+
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+
+      const updated = await storage.updateStoryReport(reportId, updates);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/story-studio/reports/:id/export", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+
+      const byKind = new Map(report.sections.map(s => [s.kind, s.content ?? ""]));
+      const md = [
+        `# ${byKind.get("headline") ?? report.selectedStory.title}`,
+        "",
+        byKind.get("opening") ?? "",
+        "",
+        byKind.get("winnerSummary") ?? "",
+        "",
+        byKind.get("closing") ?? "",
+      ].join("\n").trim() + "\n";
+
+      res.json({ markdown: md });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 

@@ -1,8 +1,10 @@
 import { db } from "./db";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
-  players, playerWeekStats, customIndexes, customIndexShares,
+  players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections,
   type CustomIndex, type CustomIndexWithAccess, type InsertCustomIndex, type UpdateCustomIndex,
+  type StoryReport, type StoryReportWithSections, type InsertStoryReport, type UpdateStoryReport,
+  type StorySection, type StorySectionKind,
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
@@ -159,6 +161,12 @@ export interface IStorage {
   getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]>;
   getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null>;
   setLegEnrichmentLog(legId: number, log: string): Promise<void>;
+
+  // Story Studio
+  createStoryReport(userId: string, input: InsertStoryReport): Promise<StoryReport>;
+  getStoryReportWithSections(id: number): Promise<StoryReportWithSections | undefined>;
+  updateStoryReport(id: number, updates: UpdateStoryReport): Promise<StoryReport>;
+  upsertStorySection(reportId: number, kind: StorySectionKind, order: number, data: { content?: string; generatedContent?: string; promptVersion?: string }): Promise<StorySection>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1657,6 +1665,55 @@ export class DatabaseStorage implements IStorage {
       .from(customIndexShares)
       .where(eq(customIndexShares.customIndexId, customIndexId));
     return rows.map(r => r.userId);
+  }
+
+  // ─── Story Studio ──────────────────────────────────────────────────────
+
+  async createStoryReport(userId: string, input: InsertStoryReport): Promise<StoryReport> {
+    const [created] = await db.insert(storyReports)
+      .values({
+        leagueId: input.leagueId,
+        weekId: input.weekId,
+        userId,
+        selectedStory: input.selectedStory,
+        thesis: input.thesis,
+        tone: input.tone,
+      })
+      .returning();
+    return created;
+  }
+
+  async getStoryReportWithSections(id: number): Promise<StoryReportWithSections | undefined> {
+    const [report] = await db.select().from(storyReports).where(eq(storyReports.id, id));
+    if (!report) return undefined;
+    const sections = await db.select().from(storySections)
+      .where(eq(storySections.reportId, id))
+      .orderBy(storySections.order);
+    return { ...report, sections };
+  }
+
+  async updateStoryReport(id: number, updates: UpdateStoryReport): Promise<StoryReport> {
+    const [updated] = await db.update(storyReports)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(storyReports.id, id))
+      .returning();
+    return updated;
+  }
+
+  async upsertStorySection(
+    reportId: number,
+    kind: StorySectionKind,
+    order: number,
+    data: { content?: string; generatedContent?: string; promptVersion?: string },
+  ): Promise<StorySection> {
+    const [section] = await db.insert(storySections)
+      .values({ reportId, kind, order, ...data })
+      .onConflictDoUpdate({
+        target: [storySections.reportId, storySections.kind],
+        set: { ...data, updatedAt: new Date() },
+      })
+      .returning();
+    return section;
   }
 
   /** True when both users belong to at least one league in common. */

@@ -16,6 +16,7 @@ import Landing from "@/pages/Landing";
 import Dashboard from "@/pages/Dashboard";
 import Picks from "@/pages/Picks";
 import History from "@/pages/History";
+import StoryStudio from "@/pages/StoryStudio";
 import Leagues from "@/pages/Leagues";
 import LeagueDetail from "@/pages/LeagueDetail";
 import LeagueSettings from "@/pages/LeagueSettings";
@@ -118,6 +119,7 @@ function Router() {
             <Route path="/" component={Dashboard} />
             <Route path="/picks" component={Picks} />
             <Route path="/history" component={History} />
+            <Route path="/story-studio" component={StoryStudio} />
             <Route path="/index/advanced" component={IndexAdvanced} />
             <Route path="/index/custom" component={CustomIndexes} />
             <Route path="/leagues" component={Leagues} />
