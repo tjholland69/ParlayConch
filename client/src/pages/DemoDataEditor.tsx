@@ -141,15 +141,25 @@ type BulkEditLegsDialogProps = {
   leagueId: number;
   legIds: number[];
   members: LeagueMemberWithUser[];
+  allParlays: ParlayWithLegs[];
   onDone: () => void;
 };
 
-function BulkEditLegsDialog({ open, onOpenChange, leagueId, legIds, members, onDone }: BulkEditLegsDialogProps) {
+function BulkEditLegsDialog({ open, onOpenChange, leagueId, legIds, members, allParlays, onDone }: BulkEditLegsDialogProps) {
   const [field, setField] = useState("result");
   const [value, setValue] = useState("");
   const bulkUpdate = useBulkUpdateParlayLegs(leagueId);
 
   const reset = () => { setField("result"); setValue(""); };
+
+  // Members who already own a leg (outside the selection) in one of the
+  // affected parlays — reassigning to them would fail server-side, so hide
+  // them from the "Owner" picker rather than letting the bulk apply fail.
+  const legIdSet = new Set(legIds);
+  const affectedParlays = allParlays.filter(p => p.legs.some(l => legIdSet.has(l.id)));
+  const unavailableOwnerIds = new Set(
+    affectedParlays.flatMap(p => p.legs.filter(l => !legIdSet.has(l.id)).map(l => l.userId))
+  );
 
   const handleApply = () => {
     bulkUpdate.mutate(
@@ -210,7 +220,7 @@ function BulkEditLegsDialog({ open, onOpenChange, leagueId, legIds, members, onD
               <Select value={value} onValueChange={setValue}>
                 <SelectTrigger className="h-9"><SelectValue placeholder="Select member" /></SelectTrigger>
                 <SelectContent>
-                  {members.map(m => (
+                  {members.filter(m => !unavailableOwnerIds.has(m.userId)).map(m => (
                     <SelectItem key={m.userId} value={m.userId}>
                       {getDisplayName(m.user, shortId(m.userId, 8))}
                     </SelectItem>
@@ -493,13 +503,25 @@ export default function DemoDataEditor() {
 
   const seasons = [...new Set((weeks ?? []).map(w => w.season))].sort((a, b) => b - a);
 
+  // "All Years" shows one Week N per distinct week number rather than once per
+  // season — a league with 2 seasons of data would otherwise list "Week 1"
+  // twice, etc. The selected value still points at one concrete week row; when
+  // "All Years" is active, filtering below matches by weekNumber across every
+  // season instead of that single row's id.
   const visibleWeeks = yearFilter === "all"
-    ? (weeks ?? [])
+    ? Array.from(new Map((weeks ?? []).map(w => [w.weekNumber, w])).values()).sort((a, b) => a.weekNumber - b.weekNumber)
     : (weeks ?? []).filter(w => w.season === Number(yearFilter));
 
   const filtered = (allParlays ?? []).filter(p => {
     if (yearFilter !== "all" && p.week?.season !== Number(yearFilter)) return false;
-    if (weekFilter !== "all" && p.weekId !== Number(weekFilter)) return false;
+    if (weekFilter !== "all") {
+      if (yearFilter === "all") {
+        const selectedWeekNumber = (weeks ?? []).find(w => String(w.id) === weekFilter)?.weekNumber;
+        if (selectedWeekNumber !== undefined && p.week?.weekNumber !== selectedWeekNumber) return false;
+      } else if (p.weekId !== Number(weekFilter)) {
+        return false;
+      }
+    }
     if (memberFilter !== "all" && p.userId !== memberFilter) return false;
     return true;
   });
@@ -557,24 +579,19 @@ export default function DemoDataEditor() {
       {/* Filters + Select toggle */}
       <div className="flex flex-wrap gap-3 items-center">
         <div className="flex items-center gap-2">
-          <Label className="text-sm shrink-0 text-muted-foreground">Week:</Label>
-          <Select value={weekFilter} onValueChange={setWeekFilter}>
-            <SelectTrigger className="w-32 h-9 text-sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Weeks</SelectItem>
-              {visibleWeeks.map(w => (
-                <SelectItem key={w.id} value={String(w.id)}>Week {w.weekNumber}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="flex items-center gap-2">
           <Label className="text-sm shrink-0 text-muted-foreground">Year:</Label>
           <Select value={yearFilter} onValueChange={v => {
             setYearFilter(v);
-            if (v !== "all" && weekFilter !== "all") {
+            if (weekFilter === "all") return;
+            if (v === "all") {
+              // Re-point the selection at the deduped-by-weekNumber row so the
+              // Select's current value still matches one of the new options.
+              const currentWeekNumber = (weeks ?? []).find(w => String(w.id) === weekFilter)?.weekNumber;
+              const representative = currentWeekNumber !== undefined
+                ? (weeks ?? []).find(w => w.weekNumber === currentWeekNumber)
+                : undefined;
+              setWeekFilter(representative ? String(representative.id) : "all");
+            } else {
               const weekStillValid = (weeks ?? []).some(w => String(w.id) === weekFilter && w.season === Number(v));
               if (!weekStillValid) setWeekFilter("all");
             }
@@ -585,6 +602,20 @@ export default function DemoDataEditor() {
             <SelectContent>
               <SelectItem value="all">All Years</SelectItem>
               {seasons.map(s => <SelectItem key={s} value={String(s)}>{s}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center gap-2">
+          <Label className="text-sm shrink-0 text-muted-foreground">Week:</Label>
+          <Select value={weekFilter} onValueChange={setWeekFilter}>
+            <SelectTrigger className="w-32 h-9 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Weeks</SelectItem>
+              {visibleWeeks.map(w => (
+                <SelectItem key={w.id} value={String(w.id)}>Week {w.weekNumber}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -735,6 +766,7 @@ export default function DemoDataEditor() {
                   versionNumber={versionMap.get(parlay.id)}
                   participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
                   loserLabel={league.loserLabel}
+                  heroLabel={league.heroLabel}
                 />
               </CardErrorBoundary>
             ));
@@ -795,6 +827,7 @@ export default function DemoDataEditor() {
         leagueId={leagueId}
         legIds={[...selectedLegIds]}
         members={members ?? []}
+        allParlays={allParlays ?? []}
         onDone={() => {
           setBulkEditOpen(false);
           exitLegSelectMode();

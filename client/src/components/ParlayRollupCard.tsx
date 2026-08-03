@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { getParlayVisualStyle, getResultPercentileOrdinal, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
+import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 
 export const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
@@ -214,6 +215,8 @@ export type ParlayCardProps = {
   participationRate?: number;
   /** League's chosen name for whoever busts a loss first — 'parlay_loser' (default) or 'asshole'. */
   loserLabel?: string | null;
+  /** League's chosen name for whoever's winning leg is decided last — 'parlay_hero' (default) or 'mvp'. */
+  heroLabel?: string | null;
 };
 
 function logStatus(log: EnrichLog) {
@@ -275,7 +278,7 @@ export function ParlayRollupCard({
   selectMode = false, isSelected = false, onToggleSelect = () => {},
   legSelectMode = false, selectedLegIds, onToggleLegSelect = () => {},
   collapseSignal = 0, expandSignal = 0, versionNumber, readOnly = false,
-  participationRate = 1, loserLabel = "parlay_loser",
+  participationRate = 1, loserLabel = "parlay_loser", heroLabel = "parlay_hero",
 }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
   const deleteLeg = useDeleteParlayLeg(leagueId);
@@ -333,6 +336,11 @@ export function ParlayRollupCard({
   const memberName = getDisplayName(parlay.user, `User #${shortId(parlay.userId)}`);
   const bustedLeg = getBustedLeg(parlay);
   const loserLabelText = loserLabel === "asshole" ? "Asshole" : "Parlay Loser";
+  const heroLeg = getHeroLeg(parlay);
+  const heroLabelText = heroLabel === "mvp" ? "MVP" : "Parlay Hero";
+  const heroMemberName = heroLeg?.user
+    ? getDisplayName(heroLeg.user, `User #${shortId(heroLeg.userId)}`)
+    : memberName;
 
   const sortedLegs = [...parlay.legs].sort((a, b) => {
     const aTime = a.game?.gameTime ? new Date(a.game.gameTime).getTime() : Infinity;
@@ -412,7 +420,7 @@ export function ParlayRollupCard({
                   </Badge>
                 )}
               </div>
-              {(parlay.status === "loss" && _resolved > 0) || bustedLeg ? (
+              {(parlay.status === "loss" && _resolved > 0) || bustedLeg || heroLeg ? (
                 <div className="flex items-center gap-2 flex-wrap">
                   {parlay.status === "loss" && _resolved > 0 && (
                     <Badge variant="outline" className={cn("text-xs px-1.5 py-0 font-normal shrink-0", statusColor(parlay.status))}>
@@ -422,6 +430,11 @@ export function ParlayRollupCard({
                   {bustedLeg && (
                     <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-destructive/40 text-destructive">
                       {loserLabelText}: {memberName}
+                    </Badge>
+                  )}
+                  {heroLeg && (
+                    <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-emerald-500/40 text-emerald-400">
+                      {heroLabelText}: {heroMemberName}
                     </Badge>
                   )}
                 </div>
@@ -575,7 +588,7 @@ export function ParlayRollupCard({
                     <th className="text-left px-3 py-2 font-medium">Pick</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>
-                    <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Date</th>
+                    <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Kickoff</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
                     {!readOnly && !selectMode && !splitMode && !legSelectMode && <th className="px-2 py-2" />}
                   </tr>
@@ -642,11 +655,18 @@ export function ParlayRollupCard({
                                     <SelectValue placeholder="Unknown" />
                                   </SelectTrigger>
                                   <SelectContent>
-                                    {members.map(m => (
-                                      <SelectItem key={m.userId} value={m.userId}>
-                                        {getDisplayName(m.user, shortId(m.userId, 8))}
-                                      </SelectItem>
-                                    ))}
+                                    {members.map(m => {
+                                      // A member who already owns a different leg in this parlay
+                                      // can't take on a second one — hide instead of letting the
+                                      // save fail server-side.
+                                      const takenByAnother = m.userId !== leg.userId && parlay.legs.some(l => l.id !== leg.id && l.userId === m.userId);
+                                      if (takenByAnother) return null;
+                                      return (
+                                        <SelectItem key={m.userId} value={m.userId}>
+                                          {getDisplayName(m.user, shortId(m.userId, 8))}
+                                        </SelectItem>
+                                      );
+                                    })}
                                   </SelectContent>
                                 </Select>
                               ) : (
@@ -666,7 +686,9 @@ export function ParlayRollupCard({
                           <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.line || "—"}</td>
                           <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.odds || "—"}</td>
                           <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
-                            {leg.game?.gameTime ? new Date(leg.game.gameTime).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"}
+                            {leg.game?.gameTime
+                              ? new Date(leg.game.gameTime).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })
+                              : "—"}
                           </td>
                           <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
                             {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}

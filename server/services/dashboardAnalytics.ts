@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { parlayLegs, parlays, weeks, leagueMembers, games, players } from "@shared/schema";
-import { eq, and, or, inArray, sql, isNotNull, ilike, exists } from "drizzle-orm";
+import { eq, and, or, inArray, sql, isNotNull, ilike, exists, gte, lte } from "drizzle-orm";
 
 export interface UserSummary {
   leagueCount: number;
@@ -147,6 +147,9 @@ export interface WinRateSeriesOptions {
   playerName?: string;
   /** Team abbreviation/name — matched against the leg's game (home/away) or the prop player's team. */
   teamName?: string;
+  /** Inclusive date range on the leg's parlay.createdAt — the "Performance Over Time" date filter. */
+  startDate?: Date;
+  endDate?: Date;
 }
 
 /**
@@ -159,7 +162,7 @@ export async function computeWinRateSeries(
   userId: string,
   opts: WinRateSeriesOptions = {}
 ): Promise<{ points: WinRateTimeSeriesPoint[] }> {
-  const { leagueIds, memberUserIds, betTypes, propTypes, playerName, teamName } = opts;
+  const { leagueIds, memberUserIds, betTypes, propTypes, playerName, teamName, startDate, endDate } = opts;
 
   let scopeLeagueIds: number[];
 
@@ -185,6 +188,12 @@ export async function computeWinRateSeries(
   }
   if (playerName && playerName.trim()) {
     conditions.push(ilike(parlayLegs.playerName, `%${playerName.trim()}%`));
+  }
+  if (startDate) {
+    conditions.push(gte(parlays.createdAt, startDate));
+  }
+  if (endDate) {
+    conditions.push(lte(parlays.createdAt, endDate));
   }
 
   // Team filtering has no column on parlayLegs: a game-tied leg matches through
@@ -303,9 +312,14 @@ export async function computeWinRateSeries(
  */
 export async function getWinRateTimeSeries(
   userId: string,
-  leagueId?: number
+  leagueId?: number,
+  dateRange?: { startDate?: Date; endDate?: Date }
 ): Promise<{ points: WinRateTimeSeriesPoint[] }> {
-  return computeWinRateSeries(userId, { leagueIds: leagueId ? [leagueId] : undefined });
+  return computeWinRateSeries(userId, {
+    leagueIds: leagueId ? [leagueId] : undefined,
+    startDate: dateRange?.startDate,
+    endDate: dateRange?.endDate,
+  });
 }
 
 export interface WeeklyWinRatePoint {

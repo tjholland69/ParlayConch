@@ -59,15 +59,20 @@ export interface IStorage {
   getUserLeagues(userId: string): Promise<LeagueWithMembers[]>;
   joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null>;
   getLeagueMembers(leagueId: number): Promise<LeagueMember[]>;
-  getLeagueMembersWithUsers(leagueId: number): Promise<LeagueMemberWithUser[]>;
+  getLeagueMembersWithUsers(leagueId: number, opts?: { includeInactive?: boolean; asOfDate?: Date }): Promise<LeagueMemberWithUser[]>;
   isSuperUser(userId: string): Promise<boolean>;
   isLeagueAdmin(leagueId: number, userId: string): Promise<boolean>;
   isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean>;
-  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'insightsEnabled' | 'loserLabel'>>): Promise<League>;
+  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'insightsEnabled' | 'loserLabel' | 'heroLabel'>>): Promise<League>;
   updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League>;
   setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember>;
   getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]>;
   removeLeagueMember(leagueId: number, userId: string): Promise<void>;
+  leaveLeagueMember(leagueId: number, userId: string, asOfDate?: Date): Promise<LeagueMember>;
+  purgeLeagueMemberBypass(leagueId: number, userId: string): Promise<LeagueMember>;
+  getOrphanedLegsForMember(leagueId: number, userId: string): Promise<(ParlayLeg & { game: Game | null; parlay: { id: number; weekId: number } })[]>;
+  getOrphanedLegsForLeague(leagueId: number): Promise<(ParlayLeg & { game: Game | null; parlay: { id: number; weekId: number }; ownerEmail: string | null; ownerFirstName: string | null })[]>;
+  resolveOrphanedLeg(leagueId: number, legId: number, action: 'reassign' | 'delete', newUserId?: string): Promise<void>;
   transferLeagueAdmin(leagueId: number, fromUserId: string, toUserId: string): Promise<void>;
 
   // Parlays
@@ -548,20 +553,15 @@ export class DatabaseStorage implements IStorage {
   async joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null> {
     const [league] = await db.select().from(leagues).where(eq(leagues.inviteCode, inviteCode.toUpperCase()));
     if (!league) return null;
-
-    // Check if already member
-    const existing = await db.select().from(leagueMembers)
-      .where(and(eq(leagueMembers.leagueId, league.id), eq(leagueMembers.userId, userId)));
-    if (existing.length > 0) return existing[0];
-
-    const [member] = await db.insert(leagueMembers)
-      .values({ leagueId: league.id, userId, role: 'member' })
-      .returning();
-    return member;
+    return this.addMemberToLeague(league.id, userId);
   }
 
+  // Active members only — the "current roster" used for access checks, dropdowns,
+  // and eligibility. A member who left or was purged no longer counts here even
+  // though their historical parlays/legs remain intact.
   async getLeagueMembers(leagueId: number): Promise<LeagueMember[]> {
-    return await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
+    return await db.select().from(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.isActive, true)));
   }
 
   async isSuperUser(userId: string): Promise<boolean> {
@@ -572,25 +572,37 @@ export class DatabaseStorage implements IStorage {
   async isLeagueAdmin(leagueId: number, userId: string): Promise<boolean> {
     if (await this.isSuperUser(userId)) return true;
     const [member] = await db.select().from(leagueMembers)
-      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true)));
     return member?.role === 'admin';
   }
 
   async isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean> {
     if (await this.isSuperUser(userId)) return true;
     const [member] = await db.select().from(leagueMembers)
-      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true)));
     return member?.role === 'lieutenant';
   }
 
-  async getLeagueMembersWithUsers(leagueId: number): Promise<LeagueMemberWithUser[]> {
+  async getLeagueMembersWithUsers(leagueId: number, opts?: { includeInactive?: boolean; asOfDate?: Date }): Promise<LeagueMemberWithUser[]> {
+    const conditions = [eq(leagueMembers.leagueId, leagueId)];
+    if (opts?.asOfDate) {
+      // Membership window covers the requested date — used for historical
+      // queries (e.g. "who was active in this league during week N's games")
+      // rather than today's roster.
+      const asOf = opts.asOfDate;
+      conditions.push(sql`${leagueMembers.startDate} <= ${asOf}`);
+      conditions.push(sql`(${leagueMembers.endDate} IS NULL OR ${leagueMembers.endDate} > ${asOf})`);
+    } else if (!opts?.includeInactive) {
+      conditions.push(eq(leagueMembers.isActive, true));
+    }
+
     const result = await db.select({
       member: leagueMembers,
       user: users
     })
     .from(leagueMembers)
     .innerJoin(users, eq(leagueMembers.userId, users.id))
-    .where(eq(leagueMembers.leagueId, leagueId));
+    .where(and(...conditions));
 
     return result.map(r => ({
       ...r.member,
@@ -634,9 +646,88 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
+  // Hard-deletes the league_members row. Only safe to call once no orphaned
+  // parlay_legs remain for this user in this league — callers (routes.ts) are
+  // responsible for that check; this method itself does not enforce it.
   async removeLeagueMember(leagueId: number, userId: string): Promise<void> {
     await db.delete(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+  }
+
+  // Voluntary/normal departure — the member's row (and historical parlays/legs)
+  // stay intact, just marked inactive as of the given date. Distinct from a
+  // maestro purge, which can also remove the row entirely.
+  async leaveLeagueMember(leagueId: number, userId: string, asOfDate?: Date): Promise<LeagueMember> {
+    const [updated] = await db.update(leagueMembers)
+      .set({ isActive: false, endDate: asOfDate ?? new Date() })
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  // Maestro-initiated purge that bypasses orphan resolution — marks the member
+  // inactive + purged so their still-orphaned legs surface on the exceptions
+  // blotter (getOrphanedLegsForLeague) until resolved, at which point the row
+  // is hard-deleted (see resolveOrphanedLeg).
+  async purgeLeagueMemberBypass(leagueId: number, userId: string): Promise<LeagueMember> {
+    const [updated] = await db.update(leagueMembers)
+      .set({ isActive: false, endDate: new Date(), purgedAt: new Date() })
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async getOrphanedLegsForMember(leagueId: number, userId: string): Promise<(ParlayLeg & { game: Game | null; parlay: { id: number; weekId: number } })[]> {
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(and(eq(parlays.leagueId, leagueId), eq(parlayLegs.userId, userId)));
+    return rows.map(r => ({ ...r.leg, game: r.game, parlay: { id: r.parlay.id, weekId: r.parlay.weekId } }));
+  }
+
+  // Exceptions blotter data source — orphaned legs still owned by a purged
+  // (isActive=false, purgedAt set) member in this league.
+  async getOrphanedLegsForLeague(leagueId: number): Promise<(ParlayLeg & { game: Game | null; parlay: { id: number; weekId: number }; ownerEmail: string | null; ownerFirstName: string | null })[]> {
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .innerJoin(leagueMembers, and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, parlayLegs.userId)))
+      .innerJoin(users, eq(users.id, parlayLegs.userId))
+      .where(and(eq(parlays.leagueId, leagueId), sql`${leagueMembers.purgedAt} IS NOT NULL`));
+    return rows.map(r => ({
+      ...r.leg,
+      game: r.game,
+      parlay: { id: r.parlay.id, weekId: r.parlay.weekId },
+      ownerEmail: r.owner.email,
+      ownerFirstName: r.owner.firstName,
+    }));
+  }
+
+  // Applies a resolution to one orphaned leg (reassign to an active member, or
+  // delete it), then hard-deletes the purged member's row once they have zero
+  // orphaned legs left in this league.
+  async resolveOrphanedLeg(leagueId: number, legId: number, action: 'reassign' | 'delete', newUserId?: string): Promise<void> {
+    const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+    if (!leg) throw new Error("Leg not found");
+    const previousOwnerId = leg.userId;
+
+    if (action === 'reassign') {
+      if (!newUserId) throw new Error("newUserId is required to reassign a leg");
+      await db.update(parlayLegs).set({ userId: newUserId }).where(eq(parlayLegs.id, legId));
+    } else {
+      await db.delete(parlayLegs).where(eq(parlayLegs.id, legId));
+    }
+
+    const remaining = await this.getOrphanedLegsForMember(leagueId, previousOwnerId);
+    if (remaining.length === 0) {
+      const [member] = await db.select().from(leagueMembers)
+        .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, previousOwnerId)));
+      if (member?.purgedAt) {
+        await this.removeLeagueMember(leagueId, previousOwnerId);
+      }
+    }
   }
 
   async transferLeagueAdmin(leagueId: number, fromUserId: string, toUserId: string): Promise<void> {
@@ -645,8 +736,9 @@ export class DatabaseStorage implements IStorage {
       await tx.update(leagueMembers)
         .set({ role: 'admin' })
         .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, toUserId)));
-      // Remove the outgoing admin from the league
-      await tx.delete(leagueMembers)
+      // The outgoing admin leaves the league (soft — historical data stays intact)
+      await tx.update(leagueMembers)
+        .set({ isActive: false, endDate: new Date() })
         .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, fromUserId)));
     });
   }
@@ -1161,9 +1253,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async addMemberToLeague(leagueId: number, userId: string): Promise<LeagueMember> {
-    const existing = await db.select().from(leagueMembers)
+    const [existing] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
-    if (existing.length > 0) return existing[0];
+    if (existing) {
+      if (existing.isActive) return existing;
+      // Rejoin: reactivate rather than insert a second row for this (league, user) pair.
+      const [reactivated] = await db.update(leagueMembers)
+        .set({ isActive: true, startDate: new Date(), endDate: null, purgedAt: null })
+        .where(eq(leagueMembers.id, existing.id))
+        .returning();
+      return reactivated;
+    }
     const [member] = await db.insert(leagueMembers)
       .values({ leagueId, userId, role: 'member' })
       .returning();

@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { BarChart3, Check, ChevronDown, Loader2, Sparkles } from "lucide-react";
+import { BarChart3, Calendar as CalendarIcon, Check, ChevronDown, Loader2, Sparkles } from "lucide-react";
 import { SlidingCard, EmptyState } from "@/components/SlidingCard";
 import { useLeagues } from "@/hooks/use-bets";
-import { useDashboardPerformance } from "@/hooks/use-dashboard";
+import { useDashboardPerformance, type DashboardDateRange } from "@/hooks/use-dashboard";
 import { useCustomIndexes, useCustomIndexPerformances } from "@/hooks/use-custom-indexes";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import type { DateRange } from "react-day-picker";
 import {
   PerformanceLineChart,
   seriesColor,
@@ -16,6 +18,7 @@ import {
 
 const ALL_LEAGUES_VALUE = "all";
 const DEFAULT_INDEX_ID = "default";
+type DateRangeMode = "all" | "year" | "month" | "custom";
 
 function LeagueFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const { data: leagues } = useLeagues();
@@ -96,15 +99,95 @@ function CompareAgainstFilter({
   );
 }
 
+function toISODate(d: Date): string {
+  const tzOffsetMs = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 10);
+}
+
+/** All Time (default) / This Year / This Month / Custom — resolves to a concrete
+ * startDate/endDate for the server; "All Time" sends no range at all. */
+function DateRangeFilter({
+  value,
+  onChange,
+}: {
+  value: DashboardDateRange;
+  onChange: (mode: DateRangeMode, range: DashboardDateRange) => void;
+}) {
+  const [mode, setMode] = useState<DateRangeMode>("all");
+  const [customRange, setCustomRange] = useState<DateRange | undefined>(undefined);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+
+  const handleModeChange = (next: string) => {
+    const m = next as DateRangeMode;
+    setMode(m);
+    if (m === "all") {
+      onChange(m, {});
+    } else if (m === "year") {
+      const now = new Date();
+      onChange(m, { startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) });
+    } else if (m === "month") {
+      const now = new Date();
+      onChange(m, { startDate: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: toISODate(now) });
+    } else {
+      setPopoverOpen(true);
+      // Wait for explicit range selection before firing onChange.
+    }
+  };
+
+  const applyCustomRange = (range: DateRange | undefined) => {
+    setCustomRange(range);
+    if (range?.from && range?.to) {
+      onChange("custom", { startDate: toISODate(range.from), endDate: toISODate(range.to) });
+      setPopoverOpen(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Select value={mode} onValueChange={handleModeChange}>
+        <SelectTrigger className="w-36 bg-background border-white/10 h-8 text-xs" data-testid="select-performance-date-range">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Time</SelectItem>
+          <SelectItem value="year">This Year</SelectItem>
+          <SelectItem value="month">This Month</SelectItem>
+          <SelectItem value="custom">Custom</SelectItem>
+        </SelectContent>
+      </Select>
+      {mode === "custom" && (
+        <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 text-xs bg-background border-white/10 font-normal"
+              data-testid="button-custom-date-range"
+            >
+              <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
+              {value.startDate && value.endDate ? `${value.startDate} – ${value.endDate}` : "Pick dates"}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-auto p-0">
+            <Calendar mode="range" selected={customRange} onSelect={applyCustomRange} numberOfMonths={2} defaultMonth={customRange?.from} />
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  );
+}
+
 function PerformanceChartSlide({
   leagueFilter,
   activeIndexIds,
+  dateRange,
 }: {
   leagueFilter: string;
   activeIndexIds: string[];
+  dateRange: DashboardDateRange;
 }) {
   const leagueId = leagueFilter === ALL_LEAGUES_VALUE ? undefined : Number(leagueFilter);
-  const { data, isLoading, error } = useDashboardPerformance(leagueId);
+  const { data, isLoading, error } = useDashboardPerformance(leagueId, dateRange);
   const { data: indexes } = useCustomIndexes();
 
   const activeCustom = (indexes ?? []).filter((idx) => activeIndexIds.includes(String(idx.id)));
@@ -206,6 +289,7 @@ function PerformanceChartSlide({
 export function Tile2Performance() {
   const [leagueFilter, setLeagueFilter] = useState(ALL_LEAGUES_VALUE);
   const [activeIndexIds, setActiveIndexIds] = useState<string[]>([DEFAULT_INDEX_ID]);
+  const [dateRange, setDateRange] = useState<DashboardDateRange>({});
 
   const toggleIndex = (id: string) =>
     setActiveIndexIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -213,15 +297,16 @@ export function Tile2Performance() {
   return (
     <SlidingCard
       headerExtra={
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           <LeagueFilter value={leagueFilter} onChange={setLeagueFilter} />
           <CompareAgainstFilter active={activeIndexIds} onToggle={toggleIndex} />
+          <DateRangeFilter value={dateRange} onChange={(_mode, range) => setDateRange(range)} />
         </div>
       }
       slides={[
         {
           label: "Performance",
-          content: <PerformanceChartSlide leagueFilter={leagueFilter} activeIndexIds={activeIndexIds} />,
+          content: <PerformanceChartSlide leagueFilter={leagueFilter} activeIndexIds={activeIndexIds} dateRange={dateRange} />,
         },
         {
           label: "More Views",

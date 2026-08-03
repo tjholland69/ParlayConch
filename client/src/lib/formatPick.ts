@@ -13,6 +13,7 @@ type LegLike = {
   pick: string | null;
   line: string | null;
   propType: string | null;
+  gameSegment?: string | null;
   game?: {
     homeTeam?: string | null;
     awayTeam?: string | null;
@@ -31,6 +32,7 @@ const PROP_META: Record<string, PropMeta> = {
   rec_yards:        { kind: "stat", prefix: "Receiving", unit: "Yds" },
   rec_tds:          { kind: "stat", prefix: "Receiving", unit: "TDs" },
   receptions:       { kind: "stat",                      unit: "Receptions" },
+  all_purpose_yards: { kind: "stat", prefix: "All-Purpose", unit: "Yds" },
   pass_yards:       { kind: "stat", prefix: "Passing",   unit: "Yds" },
   pass_tds:         { kind: "stat", prefix: "Passing",   unit: "TDs" },
   pass_attempts:    { kind: "stat",                      unit: "Pass Att" },
@@ -45,49 +47,57 @@ const PROP_META: Record<string, PropMeta> = {
   tackles:          { kind: "stat",                      unit: "Tackles" },
 };
 
+function withSegment(label: string, gameSegment?: string | null): string {
+  if (!gameSegment) return label;
+  const trimmed = gameSegment.trim();
+  if (!trimmed || /^full game$/i.test(trimmed)) return label;
+  return `${label} (${trimmed})`;
+}
+
 export function formatPickLabel(leg: LegLike): string {
-  const { betType, pick, line, propType, game } = leg;
+  const { betType, pick, line, propType, gameSegment, game } = leg;
 
   if (betType === "player_prop") {
     if (!propType) {
       const dir = pick ? pick.charAt(0).toUpperCase() + pick.slice(1) : "";
-      return line ? `${dir} ${line}` : dir || "—";
+      return withSegment(line ? `${dir} ${line}` : dir || "—", gameSegment);
     }
     const meta = PROP_META[propType];
     if (!meta) {
       const dir = pick ? pick.charAt(0).toUpperCase() + pick.slice(1) : "";
-      return line ? `${dir} ${line}` : dir || "—";
+      return withSegment(line ? `${dir} ${line}` : dir || "—", gameSegment);
     }
     if (meta.kind === "label") {
-      return pick === "no" ? `No ${meta.label}` : meta.label;
+      return withSegment(pick === "no" ? `No ${meta.label}` : meta.label, gameSegment);
     }
     const dir = pick === "over" ? "Over" : pick === "under" ? "Under" : pick ?? "";
     const lineStr = line ? ` ${line}` : "";
     const unitStr = ` ${meta.unit}`;
-    return meta.prefix
+    const base = meta.prefix
       ? `${meta.prefix} ${dir}${lineStr}${unitStr}`
       : `${dir}${lineStr}${unitStr}`;
+    return withSegment(base, gameSegment);
   }
 
   if (betType === "over" || pick === "over") {
     const l = line ?? (game?.overUnder != null ? String(game.overUnder) : null);
-    return l ? `Over ${l}` : "Over";
+    return withSegment(l ? `Over ${l}` : "Over", gameSegment);
   }
   if (betType === "under" || pick === "under") {
     const l = line ?? (game?.overUnder != null ? String(game.overUnder) : null);
-    return l ? `Under ${l}` : "Under";
+    return withSegment(l ? `Under ${l}` : "Under", gameSegment);
   }
 
   if (pick === "home") {
     const team = game?.homeTeam;
-    if (betType === "spread" && line) return team ? `${team} ${line}` : `Home ${line}`;
-    return team ?? "Home";
+    const base = betType === "spread" && line ? (team ? `${team} ${line}` : `Home ${line}`) : team ?? "Home";
+    return withSegment(base, gameSegment);
   }
   if (pick === "away") {
     const team = game?.awayTeam;
-    if (betType === "spread" && line) return team ? `${team} ${line}` : `Away ${line}`;
-    return team ?? "Away";
+    const base = betType === "spread" && line ? (team ? `${team} ${line}` : `Away ${line}`) : team ?? "Away";
+    return withSegment(base, gameSegment);
   }
 
-  return pick ? pick.charAt(0).toUpperCase() + pick.slice(1) : "—";
+  return withSegment(pick ? pick.charAt(0).toUpperCase() + pick.slice(1) : "—", gameSegment);
 }

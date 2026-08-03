@@ -77,14 +77,26 @@ function calcPropResult(
     };
   }
 
-  const statKey = PROP_STAT_MAP[propType];
-  if (!statKey) {
-    return { result: null, actual: null, note: `Prop type "${propType}" is not tracked in nflverse data — manual entry required` };
-  }
+  let actual: number | null;
+  let statLabel: string;
 
-  const actual = stat[statKey] as number | null;
-  if (actual == null) {
-    return { result: null, actual: null, note: `Stat "${statKey}" is null for this player/week` };
+  if (propType === "all_purpose_yards") {
+    // No single nflverse field for this — sum rushing + receiving yards.
+    if (stat.rushingYards == null && stat.receivingYards == null) {
+      return { result: null, actual: null, note: `Neither rushing nor receiving yards are tracked for this player/week` };
+    }
+    actual = (stat.rushingYards ?? 0) + (stat.receivingYards ?? 0);
+    statLabel = "all_purpose_yards";
+  } else {
+    const statKey = PROP_STAT_MAP[propType];
+    if (!statKey) {
+      return { result: null, actual: null, note: `Prop type "${propType}" is not tracked in nflverse data — manual entry required` };
+    }
+    actual = stat[statKey] as number | null;
+    statLabel = statKey;
+    if (actual == null) {
+      return { result: null, actual: null, note: `Stat "${statKey}" is null for this player/week` };
+    }
   }
 
   if (!line) {
@@ -108,7 +120,7 @@ function calcPropResult(
   return {
     result: result === "push" ? null : result,
     actual,
-    note: `${pick} ${lineNum} — actual ${statKey}: ${actual} → ${result}`,
+    note: `${pick} ${lineNum} — actual ${statLabel}: ${actual} → ${result}`,
   };
 }
 

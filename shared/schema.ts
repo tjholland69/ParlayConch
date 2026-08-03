@@ -121,6 +121,8 @@ export const leagues = pgTable("leagues", {
   notificationSettings: jsonb("notification_settings").$type<LeagueNotificationSettings>(),
   // What to call the member whose bet busts first each losing week: 'parlay_loser' or 'asshole'.
   loserLabel: text("loser_label").default("parlay_loser"),
+  // What to call the member whose bet is the last to be decided in a winning parlay: 'parlay_hero' or 'mvp'.
+  heroLabel: text("hero_label").default("parlay_hero"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -135,10 +137,45 @@ export const leagueMembers = pgTable("league_members", {
     .references(() => users.id, { onDelete: "cascade" }),
   role: text("role").default("member"), // 'admin', 'member'
   joinedAt: timestamp("joined_at").defaultNow(),
+  // Active/inactive + membership window. A user is only "active" in this league
+  // between startDate and endDate (endDate null = still active / hasn't left).
+  // Leaving sets isActive=false + endDate; it never deletes the row. Only a full
+  // maestro-initiated purge removes the row, and only once no parlay_legs remain
+  // orphaned under this user in this league (see purgedAt below).
+  isActive: boolean("is_active").notNull().default(true),
+  startDate: timestamp("start_date").notNull().defaultNow(),
+  endDate: timestamp("end_date"),
+  // Set when a maestro purges this member while orphaned parlay_legs still exist
+  // (bypassing immediate resolution). Distinguishes "left normally" from "purged,
+  // pending exceptions-blotter cleanup" in the UI. The row is hard-deleted once
+  // getOrphanedLegsForMember returns empty for this user/league.
+  purgedAt: timestamp("purged_at"),
 }, (table) => [
   index("league_members_league_id_idx").on(table.leagueId),
   index("league_members_user_id_idx").on(table.userId),
+  index("league_members_league_active_idx").on(table.leagueId, table.isActive),
 ]);
+
+// NFL team metadata — centralized reference table; other tables (games, players,
+// custom index filters) currently store team names/abbreviations as free text and
+// are not FK'd to this table, but can be joined against it by abbreviation.
+export const teams = pgTable("teams", {
+  id: serial("id").primaryKey(),
+  abbreviation: text("abbreviation").notNull().unique(), // e.g. 'KC'
+  fullName: text("full_name").notNull(), // 'Kansas City Chiefs'
+  city: text("city").notNull(),
+  nickname: text("nickname").notNull(), // 'Chiefs'
+  conference: text("conference"), // 'AFC' | 'NFC'
+  division: text("division"), // 'North' | 'South' | 'East' | 'West'
+  stadiumName: text("stadium_name"),
+  stadiumType: text("stadium_type"), // 'outdoor' | 'dome' | 'retractable'
+  isTurf: boolean("is_turf"),
+  owner: text("owner"),
+  headCoach: text("head_coach"),
+  primaryColor: text("primary_color"),
+  secondaryColor: text("secondary_color"),
+  logoUrl: text("logo_url"),
+});
 
 // Import batches - tracks CSV imports
 export const importBatches = pgTable("import_batches", {
@@ -166,7 +203,15 @@ export const parlays = pgTable("parlays", {
   weekId: integer("week_id")
     .notNull()
     .references(() => weeks.id, { onDelete: "restrict" }),
-  status: text("status").default("pending"), // 'pending', 'approved', 'rejected', 'win', 'loss', 'push'
+  status: text("status").default("pending"), // 'pending', 'approved', 'rejected', 'win', 'loss', 'push', 'void'
+  // Derived, read-only grouping of `status` — Postgres GENERATED STORED column
+  // (see migrations), never written to by the app. Not surfaced in the GUI;
+  // exists purely so future features/logic can branch on group instead of
+  // enumerating individual statuses.
+  //   open:   'approved', 'pending'
+  //   closed: 'win', 'loss', 'rejected', 'push'
+  //   void:   'void'
+  statusGroup: text("status_group"),
   approvedBy: varchar("approved_by"),
   approvedAt: timestamp("approved_at"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -189,6 +234,8 @@ export const PLAYER_PROP_TYPES = [
   { value: "rec_yards",        label: "Receiving Yards" },
   { value: "rec_tds",          label: "Receiving TDs" },
   { value: "receptions",       label: "Receptions" },
+  // Combined
+  { value: "all_purpose_yards", label: "All-Purpose Yards" }, // rushing + receiving yards combined
   // Passing
   { value: "pass_yards",       label: "Passing Yards" },
   { value: "pass_tds",         label: "Passing TDs" },
@@ -433,7 +480,8 @@ export const insertGameSchema = createInsertSchema(games).omit({ id: true });
 export const insertBetSchema = createInsertSchema(bets).omit({ id: true, userId: true, status: true, createdAt: true });
 
 export const insertLeagueSchema = createInsertSchema(leagues).omit({ id: true, inviteCode: true, createdAt: true });
-export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({ id: true, joinedAt: true });
+export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({ id: true, joinedAt: true, isActive: true, startDate: true, endDate: true, purgedAt: true });
+export const insertTeamSchema = createInsertSchema(teams).omit({ id: true });
 export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true, source: true, importBatchId: true });
 export const insertParlayLegSchema = createInsertSchema(parlayLegs)
   .omit({ id: true, result: true })
@@ -504,6 +552,8 @@ export type LeagueMember = typeof leagueMembers.$inferSelect;
 export type Parlay = typeof parlays.$inferSelect;
 export type ParlayLeg = typeof parlayLegs.$inferSelect;
 export type ImportBatch = typeof importBatches.$inferSelect;
+export type Team = typeof teams.$inferSelect;
+export type InsertTeam = z.infer<typeof insertTeamSchema>;
 export type CustomIndex = typeof customIndexes.$inferSelect;
 export type CustomIndexShare = typeof customIndexShares.$inferSelect;
 

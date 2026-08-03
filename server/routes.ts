@@ -207,7 +207,9 @@ export async function registerRoutes(
   app.get("/api/dashboard/performance", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
-    const series = await getWinRateTimeSeries(userId, leagueId);
+    const startDate = typeof req.query.startDate === "string" && req.query.startDate ? new Date(req.query.startDate) : undefined;
+    const endDate = typeof req.query.endDate === "string" && req.query.endDate ? new Date(req.query.endDate) : undefined;
+    const series = await getWinRateTimeSeries(userId, leagueId, { startDate, endDate });
     res.json(series);
   });
 
@@ -228,12 +230,19 @@ export async function registerRoutes(
     const str = (v: unknown): string | undefined =>
       typeof v === "string" && v.trim() ? v.trim() : undefined;
 
+    const dateVal = (v: unknown): Date | undefined => {
+      const s = str(v);
+      return s ? new Date(s) : undefined;
+    };
+
     const series = await computeWinRateSeries(userId, {
       leagueIds: csvNumbers(req.query.leagueIds),
       betTypes: csvStrings(req.query.betTypes),
       propTypes: csvStrings(req.query.propTypes),
       playerName: str(req.query.playerName),
       teamName: str(req.query.teamName),
+      startDate: dateVal(req.query.startDate),
+      endDate: dateVal(req.query.endDate),
     });
     res.json(series);
   });
@@ -1133,7 +1142,11 @@ export async function registerRoutes(
       const superUser = await storage.isSuperUser(userId);
       const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
-      const members = await storage.getLeagueMembersWithUsers(leagueId);
+      // Only a maestro can see inactive/departed members (needed for the
+      // League Members subtab's active/inactive toggle and purge flow).
+      const isAdmin = superUser || (await storage.isLeagueAdmin(leagueId, userId));
+      const includeInactive = isAdmin && req.query.includeInactive === "true";
+      const members = await storage.getLeagueMembersWithUsers(leagueId, { includeInactive });
       res.json(members);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1234,6 +1247,7 @@ export async function registerRoutes(
         maxLegsPerParlay: z.number().int().min(1).optional(),
         insightsEnabled: z.boolean().optional(),
         loserLabel: z.enum(['parlay_loser', 'asshole']).optional(),
+        heroLabel: z.enum(['parlay_hero', 'mvp']).optional(),
       });
       const updates = schema.parse(req.body);
       const league = await storage.updateLeagueSettings(leagueId, updates);
@@ -1771,7 +1785,7 @@ export async function registerRoutes(
       const isMember = members.some(m => m.userId === userId);
       if (!isMember) return res.status(404).json({ message: "You are not a member of this league" });
 
-      await storage.removeLeagueMember(leagueId, userId);
+      await storage.leaveLeagueMember(leagueId, userId);
       res.json({ message: "You have left the league" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1801,6 +1815,95 @@ export async function registerRoutes(
 
       await storage.transferLeagueAdmin(leagueId, userId, newAdminUserId);
       res.json({ message: "Admin rights transferred and you have left the league" });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // Maestro removes another member. If they own parlay_legs in this league,
+  // the removal is blocked (409, with the list of orphaned legs) unless the
+  // caller passes bypass:true — in which case the member is soft-purged and
+  // their legs surface on the exceptions blotter for later cleanup.
+  app.post("/api/leagues/:id/members/:userId/remove", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const targetUserId = req.params.userId;
+      const adminId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, adminId);
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+      if (targetUserId === adminId) {
+        return res.status(400).json({ message: "Transfer admin rights before removing yourself — use transfer-and-leave" });
+      }
+
+      const { bypass } = z.object({ bypass: z.boolean().optional() }).parse(req.body ?? {});
+
+      const orphanedLegs = await storage.getOrphanedLegsForMember(leagueId, targetUserId);
+      if (orphanedLegs.length === 0) {
+        await storage.removeLeagueMember(leagueId, targetUserId);
+        return res.json({ message: "Member removed", orphanedLegs: [] });
+      }
+
+      if (!bypass) {
+        return res.status(409).json({
+          message: "This member has parlay legs in this league that must be reassigned or deleted first",
+          orphanedLegs,
+        });
+      }
+
+      await storage.purgeLeagueMemberBypass(leagueId, targetUserId);
+      res.json({
+        message: "Member purged; unresolved legs moved to the exceptions blotter",
+        orphanedLegs,
+      });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // Exceptions blotter — orphaned legs left behind by bypassed purges.
+  app.get("/api/leagues/:id/orphaned-legs", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+
+      const orphanedLegs = await storage.getOrphanedLegsForLeague(leagueId);
+      res.json(orphanedLegs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Resolve orphaned legs one at a time — reassign to an active member or delete.
+  app.post("/api/leagues/:id/orphaned-legs/resolve", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+
+      const { resolutions } = z.object({
+        resolutions: z.array(z.object({
+          legId: z.number().int(),
+          action: z.enum(['reassign', 'delete']),
+          newUserId: z.string().optional(),
+        })).min(1),
+      }).parse(req.body);
+
+      const activeMembers = await storage.getLeagueMembers(leagueId);
+      for (const r of resolutions) {
+        if (r.action === 'reassign') {
+          if (!r.newUserId) return res.status(400).json({ message: "newUserId is required to reassign a leg" });
+          if (!activeMembers.some(m => m.userId === r.newUserId)) {
+            return res.status(400).json({ message: "Reassignment target must be an active member of this league" });
+          }
+        }
+        await storage.resolveOrphanedLeg(leagueId, r.legId, r.action, r.newUserId);
+      }
+
+      res.json({ message: "Resolved" });
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
