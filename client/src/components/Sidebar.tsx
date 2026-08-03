@@ -13,7 +13,8 @@ import {
   Settings,
   Shell,
   TrendingUp,
-  ChevronDown
+  ChevronDown,
+  Newspaper
 } from "lucide-react";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -35,6 +36,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "My Leagues", href: "/leagues", icon: Users },
   { label: "Quick Picks", href: "/picks", icon: Trophy },
   { label: "My History", href: "/history", icon: History },
+  { label: "Story Studio", href: "/story-studio", icon: Newspaper },
   {
     label: "Index",
     icon: TrendingUp,

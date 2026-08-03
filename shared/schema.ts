@@ -311,6 +311,106 @@ export const customIndexShares = pgTable("custom_index_shares", {
   index("custom_index_shares_user_id_idx").on(table.sharedWithUserId),
 ]);
 
+// ─── Story Studio ──────────────────────────────────────────────────────────
+// One editorial session per (league, week): a user-authored weekly report
+// assembled from deterministic analytics + AI-drafted, user-edited sections.
+
+// Analytics / Story Discovery data contracts — deterministic only, no
+// generated prose. Computed on demand from bet data, never persisted on
+// their own, so they always reflect the latest results for a week.
+
+export type WeeklyMemberStanding = {
+  userId: string;
+  displayName: string;
+  wins: number;
+  losses: number;
+  pushes: number;
+  winRate: number | null;
+  currentStreak: { kind: "win" | "loss"; length: number } | null;
+};
+
+export type AnalyticsReport = {
+  leagueId: number;
+  leagueName: string;
+  weekId: number;
+  weekLabel: string;
+  totalLegsDecided: number;
+  leagueWinRate: number | null;
+  favoritePickRate: number | null; // share of decided legs that picked the favorite (negative spread/moneyline)
+  underdogPickRate: number | null;
+  trailingFavoritePickRate: number | null; // trailing 4-week league average, for outlier comparison
+  standings: WeeklyMemberStanding[]; // sorted best win rate first
+  bestPerformer: WeeklyMemberStanding | null;
+  worstPerformer: WeeklyMemberStanding | null;
+  pickDistribution: Record<string, number>; // betType -> count
+};
+
+export type StoryCandidate = {
+  id: string; // stable slug for this candidate kind, e.g. "underdog-surge"
+  title: string;
+  summary: string;
+  supportingEvidence: string[];
+  confidence: number; // 0-100, derived from a documented z-score-style formula — not fabricated
+};
+
+export const STORY_SECTION_KINDS = ["headline", "opening", "winnerSummary", "closing"] as const;
+export type StorySectionKind = typeof STORY_SECTION_KINDS[number];
+
+export const storyReports = pgTable("story_reports", {
+  id: serial("id").primaryKey(),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  weekId: integer("week_id")
+    .notNull()
+    .references(() => weeks.id, { onDelete: "cascade" }),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  // Full candidate snapshot at selection time (title/summary/evidence/confidence) —
+  // preserved even if the underlying analytics later change (e.g. more legs graded).
+  selectedStory: jsonb("selected_story").$type<StoryCandidate>().notNull(),
+  thesis: text("thesis").notNull(),
+  tone: text("tone").notNull(), // 'hype', 'analytical', 'snarky', 'straightforward'
+  status: text("status").notNull().default("draft"), // 'draft', 'published'
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  index("story_reports_league_week_idx").on(table.leagueId, table.weekId),
+  index("story_reports_user_id_idx").on(table.userId),
+]);
+
+export const storySections = pgTable("story_sections", {
+  id: serial("id").primaryKey(),
+  reportId: integer("report_id")
+    .notNull()
+    .references(() => storyReports.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), // one of STORY_SECTION_KINDS
+  order: integer("order").notNull(),
+  content: text("content"), // current (possibly user-edited) text shown to the user
+  generatedContent: text("generated_content"), // last raw AI output, for diff/revert
+  promptVersion: text("prompt_version"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("story_sections_report_kind_uidx").on(table.reportId, table.kind),
+]);
+
+export const insertStoryReportSchema = createInsertSchema(storyReports).omit({
+  id: true, userId: true, status: true, createdAt: true, updatedAt: true,
+});
+export const updateStoryReportSchema = z.object({
+  thesis: z.string().min(1).optional(),
+  tone: z.string().min(1).optional(),
+  status: z.enum(["draft", "published"]).optional(),
+});
+
+export type StoryReport = typeof storyReports.$inferSelect;
+export type InsertStoryReport = z.infer<typeof insertStoryReportSchema>;
+export type UpdateStoryReport = z.infer<typeof updateStoryReportSchema>;
+export type StorySection = typeof storySections.$inferSelect;
+export type StoryReportWithSections = StoryReport & { sections: StorySection[] };
+
 // Legacy bets table (keep for backward compatibility)
 export const bets = pgTable("bets", {
   id: serial("id").primaryKey(),
