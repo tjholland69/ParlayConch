@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "NODE_ENV=development tsx --env-file=.env.local server/index.ts",
     "build": "tsx script/build.ts",
-    "start": "NODE_ENV=production node dist/index.cjs",
+    "start": "NODE_ENV=production node dist/migrate.cjs && NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
