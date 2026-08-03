@@ -23,11 +23,12 @@ function schedulesUrl() {
   return "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv";
 }
 
-// nflverse per-season player stats files use the naming convention:
-//   player_stats_season_YYYY.csv   (e.g. player_stats_season_2024.csv)
-// NOT player_stats_YYYY.csv — confirmed against the GitHub release assets.
-// The combined all-seasons file (player_stats.csv) is also available but
-// may lag behind; we try per-season first and fall back to combined.
+// nflverse retired the "player_stats" release (frozen at season 2024) in
+// favor of "stats_player", which publishes one file per season and stays
+// current (confirmed to cover 1999-2025 as of 2026-08). We try that first
+// and fall back to the legacy release for any season it doesn't have.
+const STATS_PLAYER_WEEK_URL = (season: number) =>
+  `${BASE}/stats_player/stats_player_week_${season}.csv`;
 const PLAYER_STATS_PER_SEASON_URL = (season: number) =>
   `${BASE}/player_stats/player_stats_season_${season}.csv`;
 const PLAYER_STATS_ALL_SEASONS_URL =
@@ -109,6 +110,29 @@ async function fetchCsv(url: string): Promise<Record<string, string>[]> {
 async function fetchPlayerStatsCsv(season: number): Promise<Record<string, string>[]> {
   // GitHub releases redirect via 302 → S3. Node's fetch follows redirects by
   // default, so a 302 is fine — we only fall back on a true 404.
+  const statsPlayerUrl = STATS_PLAYER_WEEK_URL(season);
+  console.log(`[nflverse] Trying stats_player URL: ${statsPlayerUrl}`);
+  const statsPlayerRes = await fetch(statsPlayerUrl, {
+    headers: { "User-Agent": "parlayconch-app/1.0" },
+    redirect: "follow",
+  });
+
+  if (statsPlayerRes.ok) {
+    console.log(`[nflverse] stats_player file found for ${season} (${statsPlayerRes.status})`);
+    const text = await statsPlayerRes.text();
+    const parsed = Papa.parse<Record<string, string>>(text, {
+      header: true, skipEmptyLines: true,
+      transformHeader: (h) => h.trim().toLowerCase(),
+    });
+    return parsed.data;
+  }
+
+  // stats_player release doesn't have this season — fall back to the legacy
+  // "player_stats" release (per-season file, then combined all-seasons file).
+  console.warn(
+    `[nflverse] stats_player_week_${season}.csv not available (HTTP ${statsPlayerRes.status}). ` +
+    `Falling back to legacy player_stats release.`
+  );
   const perSeasonUrl = PLAYER_STATS_PER_SEASON_URL(season);
   console.log(`[nflverse] Trying per-season URL: ${perSeasonUrl}`);
   const res = await fetch(perSeasonUrl, {
@@ -258,6 +282,9 @@ interface NflversePlayerStatRow {
   player_name: string;
   player_display_name: string;
   position: string;
+  // "team" in the current stats_player release; "recent_team" in the legacy
+  // player_stats release. Both are read defensively in upsertPlayerStatsRows.
+  team: string;
   recent_team: string;
   season: string;
   week: string;
@@ -266,7 +293,11 @@ interface NflversePlayerStatRow {
   attempts: string;
   passing_yards: string;
   passing_tds: string;
+  // "passing_interceptions"/"sacks_suffered" in stats_player;
+  // "interceptions"/"sacks" in the legacy player_stats release.
+  passing_interceptions: string;
   interceptions: string;
+  sacks_suffered: string;
   sacks: string;
   passing_air_yards: string;
   passing_yards_after_catch: string;
@@ -324,7 +355,8 @@ async function upsertPlayerStatsRows(
   const relevant = rows.filter((r) => {
     if (parseInt(r.week) !== week) return false;
     if (parseInt(r.season) !== season) return false;
-    if (teamFilter && !teamFilter.has(r.recent_team?.toUpperCase())) return false;
+    const team = (r.team || r.recent_team)?.toUpperCase();
+    if (teamFilter && !teamFilter.has(team)) return false;
     return true;
   });
 
@@ -337,6 +369,7 @@ async function upsertPlayerStatsRows(
     if (!row.player_id || !row.player_name) continue;
 
     const p = num(row);
+    const team = row.team || row.recent_team || null;
 
     // Upsert player
     const player = await storage.upsertPlayer({
@@ -344,7 +377,7 @@ async function upsertPlayerStatsRows(
       name: row.player_name,
       displayName: row.player_display_name || row.player_name,
       position: row.position || null,
-      team: row.recent_team || null,
+      team,
       headshot: row.headshot_url || null,
     });
     playerCount++;
@@ -355,12 +388,14 @@ async function upsertPlayerStatsRows(
       season,
       week,
       seasonType: row.season_type || "REG",
-      team: row.recent_team || null,
+      team,
       completions: p(row.completions),
       attempts: p(row.attempts),
       passingYards: p(row.passing_yards),
       passingTds: p(row.passing_tds),
-      interceptions: p(row.interceptions),
+      interceptions: p(row.passing_interceptions ?? row.interceptions),
+      // passer_rating isn't published in the current stats_player release;
+      // stays null there and only populates from the legacy player_stats file.
       passerRating: pf(row.passer_rating),
       carries: p(row.carries),
       rushingYards: p(row.rushing_yards),
