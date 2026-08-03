@@ -16,6 +16,16 @@ export function getDisplayName(user: NamedUser, fallback = "Unknown"): string {
   return user?.email || fallback;
 }
 
+// Member pickers list people by first name (we never show last name in the UI),
+// so sort on that instead of last name.
+export function sortByFirstName<T extends { user?: NamedUser }>(members: T[]): T[] {
+  return [...members].sort((a, b) => {
+    const aName = a.user?.firstName || getDisplayName(a.user, "");
+    const bName = b.user?.firstName || getDisplayName(b.user, "");
+    return aName.localeCompare(bName, undefined, { sensitivity: "base" });
+  });
+}
+
 export function getDisplayInitial(user: NamedUser, fallback = "?"): string {
   const name = getDisplayName(user, "");
   return name ? name[0].toUpperCase() : fallback;

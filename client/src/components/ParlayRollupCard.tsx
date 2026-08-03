@@ -302,7 +302,7 @@ export function ParlayRollupCard({
   const [enrichResults, setEnrichResults] = useState<Record<number, EnrichLog>>({});
   const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
   const [fetchAllState, setFetchAllState] = useState<{ running: boolean; done: number; total: number; errors: number } | null>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
   React.useEffect(() => { if (collapseSignal > 0) setCollapsed(true); }, [collapseSignal]);
   React.useEffect(() => { if (expandSignal > 0) setCollapsed(false); }, [expandSignal]);
   const [splitMode, setSplitMode] = useState(false);
@@ -397,30 +397,35 @@ export function ParlayRollupCard({
               <ChevronRight className={cn("w-4 h-4 transition-transform duration-150", !collapsed && "rotate-90")} />
             </button>
 
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <span className="text-muted-foreground text-sm shrink-0 flex items-center gap-1">
-                <Calendar className="w-3.5 h-3.5" />
-                {parlay.week?.label ?? `Week ${parlay.weekId}`}
-              </span>
-              <span className="text-xs text-muted-foreground/60 shrink-0">#{parlay.id}</span>
-              {parlay.status === "loss" && _resolved > 0 && (
-                <Badge variant="outline" className={cn("text-xs px-1.5 py-0 font-normal shrink-0", statusColor(parlay.status))}>
-                  Loss, and parlay was in the {getResultPercentileOrdinal(_pct)}
-                </Badge>
-              )}
-              {bustedLeg && (
-                <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-destructive/40 text-destructive">
-                  {loserLabelText}: {memberName}
-                </Badge>
-              )}
-              {versionNumber !== undefined && (
-                <span className="text-xs text-primary/70 shrink-0 font-medium">v{versionNumber}</span>
-              )}
-              {collapsed && (
-                <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal text-muted-foreground border-white/15">
-                  {parlay.legs.length} leg{parlay.legs.length !== 1 ? "s" : ""}
-                </Badge>
-              )}
+            <div className="flex flex-col gap-1 flex-1 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-muted-foreground text-sm shrink-0 flex items-center gap-1">
+                  <Calendar className="w-3.5 h-3.5" />
+                  {parlay.week?.label ?? `Week ${parlay.weekId}`}
+                </span>
+                {versionNumber !== undefined && (
+                  <span className="text-xs text-primary/70 shrink-0 font-medium">v{versionNumber}</span>
+                )}
+                {collapsed && (
+                  <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal text-muted-foreground border-white/15">
+                    {parlay.legs.length} leg{parlay.legs.length !== 1 ? "s" : ""}
+                  </Badge>
+                )}
+              </div>
+              {(parlay.status === "loss" && _resolved > 0) || bustedLeg ? (
+                <div className="flex items-center gap-2 flex-wrap">
+                  {parlay.status === "loss" && _resolved > 0 && (
+                    <Badge variant="outline" className={cn("text-xs px-1.5 py-0 font-normal shrink-0", statusColor(parlay.status))}>
+                      Loss, and parlay was in the {getResultPercentileOrdinal(_pct)}
+                    </Badge>
+                  )}
+                  {bustedLeg && (
+                    <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-destructive/40 text-destructive">
+                      {loserLabelText}: {memberName}
+                    </Badge>
+                  )}
+                </div>
+              ) : null}
             </div>
 
             {/* ── Parlay leg stats summary ─────────────────────── */}
@@ -633,7 +638,7 @@ export function ParlayRollupCard({
                               )}
                               {!readOnly && !selectMode && !splitMode && !legSelectMode && members ? (
                                 <Select value={leg.userId ?? undefined} onValueChange={v => handleLegOwnerChange(leg, v)}>
-                                  <SelectTrigger className={cn("h-6 text-xs w-32 px-1.5 py-0 border-none bg-transparent hover:bg-white/5", !leg.user && "text-amber-400")}>
+                                  <SelectTrigger className={cn("h-6 text-xs w-auto max-w-[9rem] px-1.5 py-0 border-none bg-transparent hover:bg-white/5", !leg.user && "text-amber-400")}>
                                     <SelectValue placeholder="Unknown" />
                                   </SelectTrigger>
                                   <SelectContent>
@@ -651,7 +656,7 @@ export function ParlayRollupCard({
                               )}
                             </div>
                           </td>
-                          <td className="px-3 py-2 font-medium truncate max-w-[140px]">{legLabel(leg)}</td>
+                          <td className="px-3 py-2 font-medium truncate max-w-[160px] sm:max-w-[220px] lg:max-w-none">{legLabel(leg)}</td>
                           <td className="px-3 py-2 hidden sm:table-cell">
                             <Badge variant="outline" className="text-xs px-1.5 py-0">
                               {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
