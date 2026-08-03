@@ -119,9 +119,9 @@ export const leagues = pgTable("leagues", {
   insightsEnabled: boolean("insights_enabled").default(false),
   lieutenantPermissions: jsonb("lieutenant_permissions").$type<LieutenantPermissions>(),
   notificationSettings: jsonb("notification_settings").$type<LeagueNotificationSettings>(),
-  // What to call the member whose bet busts first each losing week: 'parlay_loser' or 'asshole'.
+  // What to call the member whose bet busts first each losing week: 'parlay_loser', 'asshole', 'jerry', 'dud', or 'doofus'.
   loserLabel: text("loser_label").default("parlay_loser"),
-  // What to call the member whose bet is the last to be decided in a winning parlay: 'parlay_hero' or 'mvp'.
+  // What to call the member whose bet is the last to be decided in a winning parlay: 'parlay_hero', 'mvp', 'legend', or 'big_time'.
   heroLabel: text("hero_label").default("parlay_hero"),
   createdAt: timestamp("created_at").defaultNow(),
 });

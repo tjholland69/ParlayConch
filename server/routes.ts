@@ -1246,8 +1246,8 @@ export async function registerRoutes(
         minLegsPerParlay: z.number().int().min(1).optional(),
         maxLegsPerParlay: z.number().int().min(1).optional(),
         insightsEnabled: z.boolean().optional(),
-        loserLabel: z.enum(['parlay_loser', 'asshole']).optional(),
-        heroLabel: z.enum(['parlay_hero', 'mvp']).optional(),
+        loserLabel: z.enum(['parlay_loser', 'asshole', 'jerry', 'dud', 'doofus']).optional(),
+        heroLabel: z.enum(['parlay_hero', 'mvp', 'legend', 'big_time']).optional(),
       });
       const updates = schema.parse(req.body);
       const league = await storage.updateLeagueSettings(leagueId, updates);
