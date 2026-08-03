@@ -213,10 +213,25 @@ export type ParlayCardProps = {
   readOnly?: boolean;
   /** 0-1 share of the league that submitted a parlay for this parlay's week — drives color boldness. */
   participationRate?: number;
-  /** League's chosen name for whoever busts a loss first — 'parlay_loser' (default) or 'asshole'. */
+  /** League's chosen name for whoever busts a loss first — one of LOSER_LABEL_TEXT's keys. */
   loserLabel?: string | null;
-  /** League's chosen name for whoever's winning leg is decided last — 'parlay_hero' (default) or 'mvp'. */
+  /** League's chosen name for whoever's winning leg is decided last — one of HERO_LABEL_TEXT's keys. */
   heroLabel?: string | null;
+};
+
+const LOSER_LABEL_TEXT: Record<string, string> = {
+  parlay_loser: "Parlay Loser",
+  asshole: "Asshole",
+  jerry: "Jerry",
+  dud: "Dud",
+  doofus: "Doofus",
+};
+
+const HERO_LABEL_TEXT: Record<string, string> = {
+  parlay_hero: "Parlay Hero",
+  mvp: "MVP",
+  legend: "Legend",
+  big_time: "Big Time",
 };
 
 function logStatus(log: EnrichLog) {
@@ -335,9 +350,9 @@ export function ParlayRollupCard({
 
   const memberName = getDisplayName(parlay.user, `User #${shortId(parlay.userId)}`);
   const bustedLeg = getBustedLeg(parlay);
-  const loserLabelText = loserLabel === "asshole" ? "Asshole" : "Parlay Loser";
+  const loserLabelText = LOSER_LABEL_TEXT[loserLabel ?? "parlay_loser"] ?? LOSER_LABEL_TEXT.parlay_loser;
   const heroLeg = getHeroLeg(parlay);
-  const heroLabelText = heroLabel === "mvp" ? "MVP" : "Parlay Hero";
+  const heroLabelText = HERO_LABEL_TEXT[heroLabel ?? "parlay_hero"] ?? HERO_LABEL_TEXT.parlay_hero;
   const heroMemberName = heroLeg?.user
     ? getDisplayName(heroLeg.user, `User #${shortId(heroLeg.userId)}`)
     : memberName;

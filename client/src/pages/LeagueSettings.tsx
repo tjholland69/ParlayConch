@@ -657,6 +657,9 @@ export default function LeagueSettings() {
                   <SelectContent>
                     <SelectItem value="parlay_loser">Parlay Loser</SelectItem>
                     <SelectItem value="asshole">Asshole</SelectItem>
+                    <SelectItem value="jerry">Jerry</SelectItem>
+                    <SelectItem value="dud">Dud</SelectItem>
+                    <SelectItem value="doofus">Doofus</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -669,6 +672,8 @@ export default function LeagueSettings() {
                   <SelectContent>
                     <SelectItem value="parlay_hero">Parlay Hero</SelectItem>
                     <SelectItem value="mvp">MVP</SelectItem>
+                    <SelectItem value="legend">Legend</SelectItem>
+                    <SelectItem value="big_time">Big Time</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
