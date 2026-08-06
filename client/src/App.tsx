@@ -25,6 +25,7 @@ import ScreenshotImport from "@/pages/ScreenshotImport";
 import Settings from "@/pages/Settings";
 import IndexAdvanced from "@/pages/IndexAdvanced";
 import CustomIndexes from "@/pages/CustomIndexes";
+import Exceptions from "@/pages/Exceptions";
 import NotFound from "@/pages/not-found";
 
 function useApplyPrimaryColor(primaryColor: string | undefined) {
@@ -128,6 +129,8 @@ function Router() {
             <Route path="/leagues/:id/screenshot-import" component={ScreenshotImport} />
             <Route path="/leagues/:id" component={LeagueDetail} />
             <Route path="/settings" component={Settings} />
+            {/* Unlisted — no nav link; support staff navigate here directly. */}
+            <Route path="/exceptions" component={Exceptions} />
             <Route component={NotFound} />
           </Switch>
         </main>

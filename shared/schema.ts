@@ -283,6 +283,33 @@ export const parlayLegs = pgTable("parlay_legs", {
   index("parlay_legs_user_id_idx").on(table.userId),
 ]);
 
+// A league member disputing a leg's outcome or entry. Reviewed by support in
+// the Exceptions Queue (superuser-only), kept separate from the parlay data
+// itself — filing a dispute never mutates the leg's result/line.
+export const parlayLegDisputes = pgTable("parlay_leg_disputes", {
+  id: serial("id").primaryKey(),
+  parlayLegId: integer("parlay_leg_id")
+    .notNull()
+    .references(() => parlayLegs.id, { onDelete: "cascade" }),
+  raisedByUserId: varchar("raised_by_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  reasonType: text("reason_type").notNull(), // 'result_wrong' | 'entered_incorrectly'
+  justification: text("justification").notNull(),
+  screenshotKey: text("screenshot_key"), // bucket object key — required for 'entered_incorrectly'
+  status: text("status").notNull().default("open"), // 'open' | 'resolved' | 'dismissed'
+  resolvedByUserId: varchar("resolved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  resolvedAt: timestamp("resolved_at"),
+  resolutionNotes: text("resolution_notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  index("parlay_leg_disputes_leg_id_idx").on(table.parlayLegId),
+  index("parlay_leg_disputes_status_idx").on(table.status),
+]);
+
+export type ParlayLegDispute = typeof parlayLegDisputes.$inferSelect;
+export type InsertParlayLegDispute = typeof parlayLegDisputes.$inferInsert;
+
 // Parlay week locks — tracks when a Parlay Maestro locks a week's submissions
 export const leagueWeekLocks = pgTable("league_week_locks", {
   id: serial("id").primaryKey(),

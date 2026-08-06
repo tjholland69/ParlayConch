@@ -20,6 +20,7 @@ import { generateSection } from "./services/storyStudio/editorialGeneration";
 import { insertStoryReportSchema, updateStoryReportSchema, STORY_SECTION_KINDS, type StorySectionKind } from "@shared/schema";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { auditLog } from "./services/audit";
+import { uploadDisputeScreenshot, getDisputeScreenshotUrl } from "./disputeStorage";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
@@ -1541,6 +1542,142 @@ export async function registerRoutes(
       res.status(500).json({ message: err.message });
     }
   });
+
+  // ===== LEG DISPUTES ("Dispute this bet" — member-facing) =====
+  const DISPUTE_REASON_TYPES = ["result_wrong", "entered_incorrectly"];
+
+  const disputeUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}. Only image files are accepted.`));
+      }
+    },
+  });
+
+  app.get("/api/parlay-legs/:legId/disputes", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const legId = Number(req.params.legId);
+      const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+      if (!leg) return res.status(404).json({ message: "Leg not found" });
+      if (leg.userId !== userId) {
+        return res.status(403).json({ message: "You can only view disputes on your own legs" });
+      }
+      const disputes = await storage.getDisputesForLeg(legId);
+      res.json(disputes);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post(
+    "/api/parlay-legs/:legId/disputes",
+    isAuthenticated,
+    disputeUpload.single("screenshot"),
+    auditLog("parlay_leg.dispute", { targetParam: "legId", targetType: "parlay_leg" }),
+    async (req, res) => {
+      try {
+        const userId = (req.user as any).claims.sub;
+        const legId = Number(req.params.legId);
+        const { reasonType, justification } = req.body;
+
+        if (!DISPUTE_REASON_TYPES.includes(reasonType)) {
+          return res.status(400).json({ message: "Invalid reason type" });
+        }
+        if (!justification || !justification.trim()) {
+          return res.status(400).json({ message: "Justification is required" });
+        }
+
+        const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+        if (!leg) return res.status(404).json({ message: "Leg not found" });
+        if (leg.userId !== userId) {
+          return res.status(403).json({ message: "You can only dispute your own legs" });
+        }
+
+        const existing = await storage.getOpenDisputeForLeg(legId);
+        if (existing) {
+          return res.status(409).json({ message: "This leg already has an open dispute" });
+        }
+
+        const file = req.file as Express.Multer.File | undefined;
+        if (reasonType === "entered_incorrectly" && !file) {
+          return res.status(400).json({ message: "A screenshot is required when disputing an incorrectly entered bet" });
+        }
+
+        const screenshotKey = file ? await uploadDisputeScreenshot(file.buffer, file.mimetype) : null;
+
+        const dispute = await storage.createDispute({
+          parlayLegId: legId,
+          raisedByUserId: userId,
+          reasonType,
+          justification: justification.trim(),
+          screenshotKey,
+        });
+        res.status(201).json(dispute);
+      } catch (err: any) {
+        logger.error({ err }, "[disputes] create error");
+        res.status(500).json({ message: err.message ?? "Failed to file dispute" });
+      }
+    }
+  );
+
+  // ===== EXCEPTIONS QUEUE (support-only — superuser gated, unlisted route) =====
+  app.get("/api/exceptions/disputes", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Support access required" });
+      }
+      const status = typeof req.query.status === "string" ? req.query.status : undefined;
+      const disputes = await storage.listDisputes(status);
+      res.json(disputes);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/exceptions/disputes/:id/screenshot", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Support access required" });
+      }
+      const dispute = await storage.getDispute(Number(req.params.id));
+      if (!dispute || !dispute.screenshotKey) {
+        return res.status(404).json({ message: "No screenshot for this dispute" });
+      }
+      const url = await getDisputeScreenshotUrl(dispute.screenshotKey);
+      res.json({ url });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post(
+    "/api/exceptions/disputes/:id/resolve",
+    isAuthenticated,
+    auditLog("dispute.resolve", { targetParam: "id", targetType: "parlay_leg_dispute" }),
+    async (req, res) => {
+      try {
+        const userId = (req.user as any).claims.sub;
+        if (!(await storage.isSuperUser(userId))) {
+          return res.status(403).json({ message: "Support access required" });
+        }
+        const { status, notes } = req.body as { status: string; notes?: string };
+        if (status !== "resolved" && status !== "dismissed") {
+          return res.status(400).json({ message: "status must be 'resolved' or 'dismissed'" });
+        }
+        const updated = await storage.resolveDispute(Number(req.params.id), userId, status, notes);
+        res.json(updated);
+      } catch (err: any) {
+        res.status(500).json({ message: err.message });
+      }
+    }
+  );
 
   app.patch("/api/parlay-legs/:legId", isAuthenticated, async (req, res) => {
     try {

@@ -2,7 +2,8 @@ import { db } from "./db";
 import { logger } from "./logger";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
-  players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections,
+  players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes,
+  type ParlayLegDispute, type InsertParlayLegDispute,
   type CustomIndex, type CustomIndexWithAccess, type InsertCustomIndex, type UpdateCustomIndex,
   type StoryReport, type StoryReportWithSections, type InsertStoryReport, type UpdateStoryReport,
   type StorySection, type StorySectionKind,
@@ -97,6 +98,20 @@ export interface IStorage {
   createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay>;
   cloneParlay(sourceParlayId: number, targetWeekId: number): Promise<Parlay>;
   getActiveWeek(): Promise<Week | null>;
+
+  // Leg disputes ("Exceptions Queue")
+  createDispute(input: { parlayLegId: number; raisedByUserId: string; reasonType: string; justification: string; screenshotKey?: string | null }): Promise<ParlayLegDispute>;
+  getOpenDisputeForLeg(parlayLegId: number): Promise<ParlayLegDispute | null>;
+  getDisputesForLeg(parlayLegId: number): Promise<ParlayLegDispute[]>;
+  getDispute(id: number): Promise<ParlayLegDispute | null>;
+  listDisputes(status?: string): Promise<Array<ParlayLegDispute & {
+    leg: ParlayLeg;
+    parlay: Parlay;
+    leagueName: string;
+    weekLabel: string;
+    raisedByName: string;
+  }>>;
+  resolveDispute(id: number, resolverUserId: string, status: "resolved" | "dismissed", notes?: string): Promise<ParlayLegDispute>;
 
   // Parlay status rollup
   rollupParlayStatus(parlayId: number): Promise<void>;
@@ -1183,6 +1198,78 @@ export class DatabaseStorage implements IStorage {
   async getActiveWeek(): Promise<Week | null> {
     const [week] = await db.select().from(weeks).where(eq(weeks.isActive, true)).limit(1);
     return week ?? null;
+  }
+
+  async createDispute(input: { parlayLegId: number; raisedByUserId: string; reasonType: string; justification: string; screenshotKey?: string | null }): Promise<ParlayLegDispute> {
+    const [created] = await db.insert(parlayLegDisputes).values({
+      parlayLegId: input.parlayLegId,
+      raisedByUserId: input.raisedByUserId,
+      reasonType: input.reasonType,
+      justification: input.justification,
+      screenshotKey: input.screenshotKey ?? null,
+    }).returning();
+    return created;
+  }
+
+  async getOpenDisputeForLeg(parlayLegId: number): Promise<ParlayLegDispute | null> {
+    const [dispute] = await db.select().from(parlayLegDisputes)
+      .where(and(eq(parlayLegDisputes.parlayLegId, parlayLegId), eq(parlayLegDisputes.status, "open")));
+    return dispute ?? null;
+  }
+
+  async getDisputesForLeg(parlayLegId: number): Promise<ParlayLegDispute[]> {
+    return db.select().from(parlayLegDisputes)
+      .where(eq(parlayLegDisputes.parlayLegId, parlayLegId))
+      .orderBy(desc(parlayLegDisputes.createdAt));
+  }
+
+  async getDispute(id: number): Promise<ParlayLegDispute | null> {
+    const [dispute] = await db.select().from(parlayLegDisputes).where(eq(parlayLegDisputes.id, id));
+    return dispute ?? null;
+  }
+
+  async listDisputes(status?: string): Promise<Array<ParlayLegDispute & {
+    leg: ParlayLeg;
+    parlay: Parlay;
+    leagueName: string;
+    weekLabel: string;
+    raisedByName: string;
+  }>> {
+    const rows = await db
+      .select({
+        dispute: parlayLegDisputes,
+        leg: parlayLegs,
+        parlay: parlays,
+        leagueName: leagues.name,
+        weekLabel: weeks.label,
+        raisedByFirstName: users.firstName,
+        raisedByEmail: users.email,
+      })
+      .from(parlayLegDisputes)
+      .innerJoin(parlayLegs, eq(parlayLegDisputes.parlayLegId, parlayLegs.id))
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(leagues, eq(parlays.leagueId, leagues.id))
+      .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+      .innerJoin(users, eq(parlayLegDisputes.raisedByUserId, users.id))
+      .where(status ? eq(parlayLegDisputes.status, status) : undefined)
+      .orderBy(desc(parlayLegDisputes.createdAt));
+
+    return rows.map(r => ({
+      ...r.dispute,
+      leg: r.leg,
+      parlay: r.parlay,
+      leagueName: r.leagueName,
+      weekLabel: r.weekLabel,
+      raisedByName: r.raisedByFirstName || r.raisedByEmail || "Unknown",
+    }));
+  }
+
+  async resolveDispute(id: number, resolverUserId: string, status: "resolved" | "dismissed", notes?: string): Promise<ParlayLegDispute> {
+    const [updated] = await db.update(parlayLegDisputes)
+      .set({ status, resolvedByUserId: resolverUserId, resolvedAt: new Date(), resolutionNotes: notes ?? null })
+      .where(eq(parlayLegDisputes.id, id))
+      .returning();
+    return updated;
   }
 
   // Imports
