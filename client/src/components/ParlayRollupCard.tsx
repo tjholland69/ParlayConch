@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useSplitParlayLegs, type EnrichLog } from "@/hooks/use-bets";
+import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useSplitParlayLegs, useCloneParlay, type EnrichLog } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,13 +9,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, Scissors } from "lucide-react";
+import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, Scissors, Info, Copy } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatPickLabel } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { getDisplayName, shortId } from "@/lib/displayName";
-import { getParlayVisualStyle, getResultPercentileOrdinal, getWinPctColor } from "@/lib/parlayVisuals";
+import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
@@ -30,6 +31,10 @@ const PICK_OPTIONS: Record<string, string[]> = {
 };
 export const RESULTS = ["", "win", "loss", "push"] as const;
 const STATUSES = ["pending", "approved", "rejected", "win", "loss", "push", "void"] as const;
+// A parlay must be decided (not "Open"/pending, not rejected or void) before it
+// can be cloned — cloning is meant to reuse a settled parlay's picks as a
+// starting point, not fork one that's still in progress.
+const CLONEABLE_STATUSES = ["approved", "win", "loss", "push"];
 
 function legLabel(leg: ParlayLeg & { game?: any }) {
   if (leg.betType === "player_prop") {
@@ -63,6 +68,7 @@ export type LegFormState = {
   pick: string;
   line: string;
   odds: string;
+  oddsSource: string;
   result: string;
   playerName: string;
   propType: string;
@@ -71,7 +77,7 @@ export type LegFormState = {
 };
 
 export const blankLeg = (): LegFormState => ({
-  betType: "spread", pick: "home", line: "", odds: "",
+  betType: "spread", pick: "home", line: "", odds: "", oddsSource: "",
   result: "", playerName: "", propType: "", gameSegment: "", notes: "",
 });
 
@@ -81,6 +87,7 @@ export function legToForm(leg: ParlayLeg): LegFormState {
     pick: leg.pick ?? "home",
     line: leg.line?.toString() ?? "",
     odds: leg.odds?.toString() ?? "",
+    oddsSource: leg.oddsSource ?? "",
     result: leg.result ?? "",
     playerName: leg.playerName ?? "",
     propType: leg.propType ?? "",
@@ -88,6 +95,8 @@ export function legToForm(leg: ParlayLeg): LegFormState {
     notes: leg.notes ?? "",
   };
 }
+
+const ODDS_SOURCES = ["DraftKings", "FanDuel", "BetMGM", "Caesars", "ESPN BET", "Fanatics", "Other"];
 
 type LegSheetProps = {
   open: boolean;
@@ -159,6 +168,20 @@ export function LegSheet({ open, onOpenChange, title, initial, onSave, isSaving 
               <Label className="text-xs text-muted-foreground">Odds</Label>
               <Input className="h-9" value={form.odds} onChange={e => set("odds")(e.target.value)} placeholder="e.g. -110" />
             </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Bookmaker</Label>
+            <Input
+              className="h-9"
+              list="odds-source-options"
+              value={form.oddsSource}
+              onChange={e => set("oddsSource")(e.target.value)}
+              placeholder="e.g. DraftKings"
+            />
+            <datalist id="odds-source-options">
+              {ODDS_SOURCES.map(s => <option key={s} value={s} />)}
+            </datalist>
           </div>
 
           <div className="space-y-1">
@@ -301,6 +324,7 @@ export function ParlayRollupCard({
   const updateStatus = useUpdateParlayStatus(leagueId);
   const addLeg = useAddParlayLeg(leagueId);
   const enrichLeg = useEnrichParlayLeg(leagueId);
+  const cloneParlay = useCloneParlay(leagueId);
   const { toast } = useToast();
 
   const handleLegOwnerChange = (leg: ParlayLeg & { game?: any }, newUserId: string) => {
@@ -435,13 +459,8 @@ export function ParlayRollupCard({
                   </Badge>
                 )}
               </div>
-              {(parlay.status === "loss" && _resolved > 0) || bustedLeg || heroLeg ? (
+              {bustedLeg || heroLeg ? (
                 <div className="flex items-center gap-2 flex-wrap">
-                  {parlay.status === "loss" && _resolved > 0 && (
-                    <Badge variant="outline" className={cn("text-xs px-1.5 py-0 font-normal shrink-0", statusColor(parlay.status))}>
-                      Loss, and parlay was in the {getResultPercentileOrdinal(_pct)}
-                    </Badge>
-                  )}
                   {bustedLeg && (
                     <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-destructive/40 text-destructive">
                       {loserLabelText}: {memberName}
@@ -570,6 +589,20 @@ export function ParlayRollupCard({
                   </Button>
                 )}
 
+                {CLONEABLE_STATUSES.includes(parlay.status ?? "") && !splitMode && !legSelectMode && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Clone into this week's parlay"
+                    className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-primary"
+                    disabled={cloneParlay.isPending}
+                    onClick={() => cloneParlay.mutate(parlay.id)}
+                  >
+                    {cloneParlay.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Copy className="w-3.5 h-3.5" />}
+                    Clone
+                  </Button>
+                )}
+
                 <Button
                   variant="ghost"
                   size="sm"
@@ -603,8 +636,10 @@ export function ParlayRollupCard({
                     <th className="text-left px-3 py-2 font-medium">Pick</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>
                     <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>
-                    <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Kickoff</th>
+                    <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Date</th>
+                    <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Kickoff (ET)</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
+                    <th className="px-2 py-2 w-8" />
                     {!readOnly && !selectMode && !splitMode && !legSelectMode && <th className="px-2 py-2" />}
                   </tr>
                 </thead>
@@ -699,14 +734,43 @@ export function ParlayRollupCard({
                           </td>
                           <td className="px-3 py-2 text-muted-foreground">{formatPickLabel(leg)}</td>
                           <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.line || "—"}</td>
-                          <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.odds || "—"}</td>
+                          <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">
+                            {leg.odds || "—"}
+                            {leg.oddsSource && <span className="block text-[10px] text-muted-foreground/60">{leg.oddsSource}</span>}
+                          </td>
                           <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
                             {leg.game?.gameTime
-                              ? new Date(leg.game.gameTime).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })
+                              ? new Date(leg.game.gameTime).toLocaleDateString(undefined, { timeZone: "America/New_York", weekday: "short", month: "numeric", day: "numeric" })
+                              : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
+                            {leg.game?.gameTime
+                              ? new Date(leg.game.gameTime).toLocaleTimeString(undefined, { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })
                               : "—"}
                           </td>
                           <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
                             {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
+                          </td>
+                          <td className="px-2 py-2">
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <button
+                                  type="button"
+                                  title="Debug info"
+                                  className="text-muted-foreground hover:text-foreground"
+                                  onClick={e => e.stopPropagation()}
+                                >
+                                  <Info className="w-3.5 h-3.5" />
+                                </button>
+                              </PopoverTrigger>
+                              <PopoverContent align="start" className="w-auto text-xs font-mono space-y-1 p-3">
+                                <div><span className="text-muted-foreground">parlay_id:</span> {parlay.id}</div>
+                                <div><span className="text-muted-foreground">parlay_leg_id:</span> {leg.id}</div>
+                                <div><span className="text-muted-foreground">game_id:</span> {leg.gameId ?? "—"}</div>
+                                <div><span className="text-muted-foreground">user_id:</span> {leg.userId ?? "—"}</div>
+                                <div><span className="text-muted-foreground">odds_source:</span> {leg.oddsSource ?? "—"}</div>
+                              </PopoverContent>
+                            </Popover>
                           </td>
                           {!readOnly && !selectMode && !splitMode && !legSelectMode && (
                             <td className="px-2 py-2">

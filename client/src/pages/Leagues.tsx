@@ -234,7 +234,7 @@ export default function Leagues() {
                             <span className="text-xs text-muted-foreground/60">Overall Picks Won</span>
                           </div>
                           <span className="text-xs text-muted-foreground/60">
-                            {stat.wins} parlay{stat.wins !== 1 ? "s" : ""} won
+                            {stat.wins} pick{stat.wins !== 1 ? "s" : ""} won
                           </span>
                         </div>
                       </div>

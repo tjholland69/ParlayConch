@@ -38,7 +38,7 @@ function SummarySlide() {
       </h2>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatCard icon={Users} label="Leagues" value={String(data.leagueCount)} />
-        <StatCard icon={ListChecks} label="Parlays Placed" value={String(data.parlaysPlaced)} />
+        <StatCard icon={ListChecks} label="Parlays Owned" value={String(data.parlaysPlaced)} />
         <StatCard icon={ListChecks} label="Legs Placed" value={String(data.legsPlaced)} />
         <StatCard icon={TrendingUp} label="Leg Win Rate" value={`${data.legWinRate.toFixed(1)}%`} />
         <StatCard icon={Trophy} label="Leg Wins" value={String(data.legWins)} />

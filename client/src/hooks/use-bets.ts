@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player } from "@shared/schema";
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -24,6 +24,17 @@ export function useGames(weekId: number) {
       return res.json();
     },
     enabled: !!weekId,
+  });
+}
+
+export function usePlayerSearch(query: string) {
+  return useQuery<Player[]>({
+    queryKey: ["/api/players", query],
+    queryFn: async () => {
+      const res = await fetch(`/api/players?q=${encodeURIComponent(query)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch players");
+      return res.json();
+    },
   });
 }
 
@@ -848,6 +859,23 @@ export function useDeleteParlay(leagueId: number) {
       toast({ title: "Parlay Deleted" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useCloneParlay(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (parlayId: number) => {
+      const res = await fetch(`/api/parlays/${parlayId}/clone`, { method: "POST", credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Parlay Cloned", description: "Copied into this week — review and submit when ready." });
+    },
+    onError: (e: Error) => toast({ title: "Clone failed", description: e.message, variant: "destructive" }),
   });
 }
 

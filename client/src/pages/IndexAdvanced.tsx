@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BarChart3, Loader2, RotateCcw, SlidersHorizontal, Save } from "lucide-react";
 import { PLAYER_PROP_TYPES } from "@shared/schema";
 import { useLeagues } from "@/hooks/use-bets";
 import { useDashboardAdvancedPerformance } from "@/hooks/use-dashboard";
 import { MultiSelect } from "@/components/MultiSelect";
+import { PlayerCombobox } from "@/components/PlayerCombobox";
 import { EmptyState } from "@/components/SlidingCard";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -48,6 +49,14 @@ export default function IndexAdvanced() {
     playerName,
     teamName,
   });
+
+  // Player props are the only bet type a "player" filter applies to — once the
+  // user narrows bet types to something that excludes player props, a player
+  // filter can no longer match anything, so disable and clear it.
+  const playerFilterEnabled = betTypes.length === 0 || betTypes.includes("player_prop");
+  useEffect(() => {
+    if (!playerFilterEnabled && playerName) setPlayerName("");
+  }, [playerFilterEnabled, playerName]);
 
   const hasFilters =
     leagueIds.length > 0 || betTypes.length > 0 || propTypes.length > 0 || !!playerName || !!teamName;
@@ -118,13 +127,12 @@ export default function IndexAdvanced() {
             <Label htmlFor="filter-player" className="text-xs uppercase tracking-wide text-muted-foreground">
               Player
             </Label>
-            <Input
-              id="filter-player"
-              data-testid="filter-player"
-              placeholder="Any player"
+            <PlayerCombobox
+              testId="filter-player"
               value={playerName}
-              onChange={(e) => setPlayerName(e.target.value)}
-              className="bg-background border-white/10"
+              onChange={setPlayerName}
+              disabled={!playerFilterEnabled}
+              placeholder={playerFilterEnabled ? "Any player" : "Select Player Prop to filter by player"}
             />
           </div>
 

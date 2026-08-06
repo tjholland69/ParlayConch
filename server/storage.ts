@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { logger } from "./logger";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
   players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections,
@@ -21,12 +22,12 @@ import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 
 function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
   void publishLeagueEvent(leagueId, kind, weekId).catch((e) =>
-    console.error("[realtime]", e),
+    logger.error({ e }, "[realtime]"),
   );
 }
 
 function emitUser(userId: string, kind: string) {
-  void publishUserEvent(userId, kind).catch((e) => console.error("[realtime]", e));
+  void publishUserEvent(userId, kind).catch((e) => logger.error({ e }, "[realtime]"));
 }
 
 function generateInviteCode(): string {
@@ -88,12 +89,14 @@ export interface IStorage {
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
   deleteParlayLeg(legId: number): Promise<void>;
-  updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg>;
-  bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]>;
+  updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg>;
+  bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]>;
   addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'> & { userId: string }): Promise<ParlayLeg>;
   mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
   splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay>;
   createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay>;
+  cloneParlay(sourceParlayId: number, targetWeekId: number): Promise<Parlay>;
+  getActiveWeek(): Promise<Week | null>;
 
   // Parlay status rollup
   rollupParlayStatus(parlayId: number): Promise<void>;
@@ -162,6 +165,7 @@ export interface IStorage {
   getWeekBySeasonAndNumber(season: number, weekNumber: number): Promise<Week | null>;
   getGamesForSeasonWeek(season: number, weekNumber: number): Promise<Game[]>;
   upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player>;
+  searchPlayers(query: string, limit?: number): Promise<Player[]>;
   upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
   getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]>;
   getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null>;
@@ -526,19 +530,24 @@ export class DatabaseStorage implements IStorage {
     return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 10);
   }
 
+  // Win rate here is computed from individual parlay_legs.result (per-pick outcomes),
+  // not parlays.status — a parlay with a mix of wins/losses is one loss at the
+  // parlay level, but the "Overall Picks Won" stat is about how often an individual
+  // pick was right, so it counts legs.
   async getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>> {
     if (leagueIds.length === 0) return {};
 
-    const parlayRows = await db
-      .select({ leagueId: parlays.leagueId, status: parlays.status })
-      .from(parlays)
-      .where(and(inArray(parlays.leagueId, leagueIds), inArray(parlays.status as any, ['win', 'loss'])));
+    const legRows = await db
+      .select({ leagueId: parlays.leagueId, result: parlayLegs.result })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(and(inArray(parlays.leagueId, leagueIds), inArray(parlayLegs.result as any, ['win', 'loss'])));
 
     const result: Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }> = {};
     for (const leagueId of leagueIds) {
-      const rows = parlayRows.filter(p => p.leagueId === leagueId);
-      const wins = rows.filter(p => p.status === 'win').length;
-      const losses = rows.filter(p => p.status === 'loss').length;
+      const rows = legRows.filter(l => l.leagueId === leagueId);
+      const wins = rows.filter(l => l.result === 'win').length;
+      const losses = rows.filter(l => l.result === 'loss').length;
       const totalDecided = wins + losses;
       result[leagueId] = {
         wins,
@@ -1056,12 +1065,12 @@ export class DatabaseStorage implements IStorage {
     await db.delete(parlayLegs).where(eq(parlayLegs.id, legId));
   }
 
-  async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg> {
+  async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg> {
     const [updated] = await db.update(parlayLegs).set(updates).where(eq(parlayLegs.id, legId)).returning();
     return updated;
   }
 
-  async bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]> {
+  async bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]> {
     return db.update(parlayLegs).set({ [field]: value }).where(inArray(parlayLegs.id, legIds)).returning();
   }
 
@@ -1127,6 +1136,53 @@ export class DatabaseStorage implements IStorage {
     });
     emitLeague(leagueId, weekId, "parlays_updated");
     return newParlay;
+  }
+
+  // Duplicates a decided parlay's picks into a fresh 'pending' parlay for
+  // targetWeekId, preserving each leg's original contributor (leg.userId) so a
+  // team parlay's structure carries over intact. gameId/result/oddsEnriched are
+  // NOT copied — the target week's games are a different matchup, so each
+  // game-tied leg (spread/moneyline/over/under) starts unlinked until re-picked;
+  // player-prop legs (no gameId dependency) come through fully usable.
+  async cloneParlay(sourceParlayId: number, targetWeekId: number): Promise<Parlay> {
+    const [source] = await db.select().from(parlays).where(eq(parlays.id, sourceParlayId));
+    if (!source) throw new Error("Source parlay not found");
+
+    const sourceLegs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, sourceParlayId));
+
+    const newParlay = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(parlays).values({
+        userId: source.userId,
+        leagueId: source.leagueId,
+        weekId: targetWeekId,
+        status: "pending",
+        source: "live",
+      }).returning();
+
+      if (sourceLegs.length > 0) {
+        await tx.insert(parlayLegs).values(sourceLegs.map(leg => ({
+          parlayId: created.id,
+          userId: leg.userId,
+          betType: leg.betType,
+          pick: leg.pick,
+          line: leg.line,
+          odds: leg.odds,
+          oddsSource: leg.oddsSource,
+          gameSegment: leg.gameSegment,
+          playerName: leg.playerName,
+          propType: leg.propType,
+          notes: leg.notes,
+        })));
+      }
+      return created;
+    });
+    emitLeague(source.leagueId, targetWeekId, "parlays_updated");
+    return newParlay;
+  }
+
+  async getActiveWeek(): Promise<Week | null> {
+    const [week] = await db.select().from(weeks).where(eq(weeks.isActive, true)).limit(1);
+    return week ?? null;
   }
 
   // Imports
@@ -1544,6 +1600,17 @@ export class DatabaseStorage implements IStorage {
       .values({ ...data, updatedAt: new Date() })
       .returning();
     return created;
+  }
+
+  async searchPlayers(query: string, limit = 20): Promise<Player[]> {
+    const trimmed = query.trim();
+    if (!trimmed) {
+      return db.select().from(players).orderBy(players.name).limit(limit);
+    }
+    return db.select().from(players)
+      .where(ilike(players.name, `%${trimmed}%`))
+      .orderBy(players.name)
+      .limit(limit);
   }
 
   async upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat> {

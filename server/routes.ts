@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import type { Server } from "http";
 import { storage } from "./storage";
+import { logger } from "./logger";
 import { db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
@@ -18,6 +19,7 @@ import { discoverStories } from "./services/storyStudio/storyDiscovery";
 import { generateSection } from "./services/storyStudio/editorialGeneration";
 import { insertStoryReportSchema, updateStoryReportSchema, STORY_SECTION_KINDS, type StorySectionKind } from "@shared/schema";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
+import { auditLog } from "./services/audit";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
@@ -152,7 +154,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/superuser/act-as", isAuthenticated, async (req, res) => {
+  app.delete("/api/superuser/act-as", isAuthenticated, auditLog("superuser.act_as.end"), async (req, res) => {
     try {
       const realUserId = (req.user as any).claims.sub;
       if (!(await storage.isSuperUser(realUserId))) {
@@ -337,7 +339,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/custom-indexes/:id", isAuthenticated, async (req, res) => {
+  app.delete("/api/custom-indexes/:id", isAuthenticated, auditLog("custom_index.delete", { targetParam: "id", targetType: "custom_index" }), async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const id = Number(req.params.id);
 
@@ -371,7 +373,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/custom-indexes/:id/share/:userId", isAuthenticated, async (req, res) => {
+  app.delete("/api/custom-indexes/:id/share/:userId", isAuthenticated, auditLog("custom_index.unshare", { targetParam: "id", targetType: "custom_index" }), async (req, res) => {
     const ownerId = (req.user as any).claims.sub;
     const id = Number(req.params.id);
 
@@ -584,7 +586,7 @@ export async function registerRoutes(
   });
 
   // Admin: Approve/Reject parlays
-  app.post("/api/parlays/:id/approve", isAuthenticated, async (req, res) => {
+  app.post("/api/parlays/:id/approve", isAuthenticated, auditLog("parlay.approve", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
     const parlayId = Number(req.params.id);
     const userId = (req.user as any).claims.sub;
 
@@ -604,7 +606,7 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  app.post("/api/parlays/:id/reject", isAuthenticated, async (req, res) => {
+  app.post("/api/parlays/:id/reject", isAuthenticated, auditLog("parlay.reject", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
     const parlayId = Number(req.params.id);
     const userId = (req.user as any).claims.sub;
 
@@ -710,7 +712,7 @@ export async function registerRoutes(
       const result = await getUserInsights(user.id, displayName, focus, leagueId);
       res.json(result);
     } catch (err: any) {
-      console.error("[insights] user error:", err);
+      logger.error({ err }, "[insights] user error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -729,7 +731,7 @@ export async function registerRoutes(
       const result = await getLeagueInsights(leagueId, league.name, focus);
       res.json(result);
     } catch (err: any) {
-      console.error("[insights] league error:", err);
+      logger.error({ err }, "[insights] league error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -851,16 +853,16 @@ export async function registerRoutes(
           );
           imported++;
         } catch (e) {
-          console.error("Import record error:", e);
+          logger.error({ e }, "Import record error:");
           skippedRows.push(`Error processing a record: ${(e as Error).message}`);
         }
       }
 
       // Trigger enrichment in the background (don't block the response)
       enrichLeagueParlayLegs(leagueId).then(result => {
-        console.log(`[Enrichment] league ${leagueId}: enriched=${result.enriched} resultsFilled=${result.resultsFilled} linesFilled=${result.linesFilled} skipped=${result.skipped}`);
+        logger.info(`[Enrichment] league ${leagueId}: enriched=${result.enriched} resultsFilled=${result.resultsFilled} linesFilled=${result.linesFilled} skipped=${result.skipped}`);
       }).catch(err => {
-        console.error("[Enrichment] background error:", err);
+        logger.error({ err }, "[Enrichment] background error:");
       });
 
       res.json({
@@ -917,7 +919,7 @@ export async function registerRoutes(
 
         res.json(tickets);
       } catch (err: any) {
-        console.error("[Screenshot Import] error:", err);
+        logger.error({ err }, "[Screenshot Import] error:");
         res.status(500).json({ message: err.message ?? "Screenshot parsing failed" });
       }
     }
@@ -979,7 +981,7 @@ export async function registerRoutes(
   // Body: { season, week?, mode: 'scores' | 'players' | 'all' }
   // Syncs game scores and/or player stats from nflverse open data for the given
   // season (and optionally a specific week). Only touches games already in our DB.
-  app.post("/api/admin/sync-nflverse", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/sync-nflverse", isAuthenticated, auditLog("admin.sync_nflverse"), async (req, res) => {
     try {
       // Require the user to be an admin in at least one league (rough guard)
       // A dedicated global-admin check can be added later
@@ -997,7 +999,7 @@ export async function registerRoutes(
       if (mode === "scores" || mode === "all") {
         const scoreSync = await syncGameScoresFromNflverse(seasonNum, weekNums);
         result.scores = scoreSync;
-        console.log(`[nflverse] scores sync:`, scoreSync);
+        logger.info({ scoreSync }, "[nflverse] scores sync");
 
         // Re-run enrichment after scores are updated
         result.enrichment = await enrichLeagueParlayLegs();
@@ -1009,12 +1011,12 @@ export async function registerRoutes(
         }
         const playerSync = await syncPlayerStatsForGames(seasonNum, Number(week));
         result.players = playerSync;
-        console.log(`[nflverse] player stats sync:`, playerSync);
+        logger.info({ playerSync }, "[nflverse] player stats sync");
       }
 
       res.json({ message: "nflverse sync complete", ...result });
     } catch (err: any) {
-      console.error("[nflverse] sync error:", err);
+      logger.error({ err }, "[nflverse] sync error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -1022,12 +1024,12 @@ export async function registerRoutes(
   // POST /api/admin/resolve-props
   // Resolves all pending player-prop legs using already-synced nflverse player stats.
   // No body required — scans every prop leg across all leagues.
-  app.post("/api/admin/resolve-props", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/resolve-props", isAuthenticated, auditLog("admin.resolve_props"), async (req, res) => {
     try {
       const result = await resolvePropsFromStats();
       res.json({ message: "Prop resolution complete", ...result });
     } catch (err: any) {
-      console.error("[prop-resolve] error:", err);
+      logger.error({ err }, "[prop-resolve] error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -1035,7 +1037,7 @@ export async function registerRoutes(
   // POST /api/admin/fetch-prop-lines
   // Fetches player prop lines/odds from The Odds API for a specific league+week.
   // Body: { leagueId: number, weekId: number }
-  app.post("/api/admin/fetch-prop-lines", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/fetch-prop-lines", isAuthenticated, auditLog("admin.fetch_prop_lines"), async (req, res) => {
     try {
       const { leagueId, weekId } = req.body;
       if (!leagueId || !weekId) {
@@ -1044,7 +1046,7 @@ export async function registerRoutes(
       const result = await fetchPropLinesFromOddsApi(Number(leagueId), Number(weekId));
       res.json({ message: "Prop lines fetch complete", ...result });
     } catch (err: any) {
-      console.error("[prop-lines] error:", err);
+      logger.error({ err }, "[prop-lines] error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -1052,7 +1054,7 @@ export async function registerRoutes(
   // GET /api/games/:gameId/player-stats
   // Returns player stats for all players on both teams in a given game
   // Backfill: promote all fully-resolved parlays from 'approved'/'pending' to win/loss/push
-  app.post("/api/admin/weeks/:id/activate", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/weeks/:id/activate", isAuthenticated, auditLog("admin.week_activate", { targetParam: "id", targetType: "week" }), async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
       if (!(await storage.isSuperUser(userId))) {
@@ -1065,7 +1067,18 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/rollup-parlay-statuses", isAuthenticated, async (req, res) => {
+  // GET /api/players?q=<search> — for player-picker dropdowns (e.g. Advanced Filters).
+  app.get("/api/players", isAuthenticated, async (req, res) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      const results = await storage.searchPlayers(q);
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/rollup-parlay-statuses", isAuthenticated, auditLog("admin.rollup_parlay_statuses"), async (req, res) => {
     try {
       const { leagueId, recomputeTerminal } = req.body;
       const result = await storage.rollupLeagueParlayStatuses(leagueId ? Number(leagueId) : undefined, !!recomputeTerminal);
@@ -1075,7 +1088,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/backfill-game-finished-at", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/backfill-game-finished-at", isAuthenticated, auditLog("admin.backfill_game_finished_at"), async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
       if (!(await storage.isSuperUser(userId))) {
@@ -1116,7 +1129,7 @@ export async function registerRoutes(
   });
 
   // ===== ROLLBACK IMPORT BATCH (Admin only) =====
-  app.delete("/api/leagues/:leagueId/imports/:batchId", isAuthenticated, async (req, res) => {
+  app.delete("/api/leagues/:leagueId/imports/:batchId", isAuthenticated, auditLog("import_batch.delete", { targetParam: "batchId", targetType: "import_batch" }), async (req, res) => {
     try {
       const leagueId = Number(req.params.leagueId);
       const batchId = Number(req.params.batchId);
@@ -1194,7 +1207,7 @@ export async function registerRoutes(
               });
               return { email, status: "invited" as const };
             } catch (emailErr) {
-              console.error(`Failed to send invite email to ${email}:`, emailErr);
+              logger.error({ emailErr }, `Failed to send invite email to ${email}:`);
               return { email, status: "invited" as const }; // still report invited even if email fails
             }
           }
@@ -1215,7 +1228,7 @@ export async function registerRoutes(
               leagueId,
             });
           } catch (emailErr) {
-            console.error(`Failed to send added email to ${email}:`, emailErr);
+            logger.error({ emailErr }, `Failed to send added email to ${email}:`);
           }
 
           return {
@@ -1257,7 +1270,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/leagues/:id/members/:userId/role", isAuthenticated, async (req, res) => {
+  app.patch("/api/leagues/:id/members/:userId/role", isAuthenticated, auditLog("league_member.role_change", { targetParam: "userId", targetType: "league_member" }), async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
       const targetUserId = req.params.userId;
@@ -1284,7 +1297,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/leagues/:id/lieutenant-permissions", isAuthenticated, async (req, res) => {
+  app.patch("/api/leagues/:id/lieutenant-permissions", isAuthenticated, auditLog("league.lieutenant_permissions_change", { targetParam: "id", targetType: "league" }), async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
       const userId = (req.user as any).claims.sub;
@@ -1474,7 +1487,32 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/parlays/:id", isAuthenticated, async (req, res) => {
+  const CLONEABLE_PARLAY_STATUSES = ["approved", "win", "loss", "push"];
+
+  app.post("/api/parlays/:id/clone", isAuthenticated, auditLog("parlay.clone", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlayId = Number(req.params.id);
+      const source = await storage.getParlay(parlayId);
+      if (!source) return res.status(404).json({ message: "Parlay not found" });
+      if (source.userId !== userId) {
+        return res.status(403).json({ message: "You can only clone your own parlays" });
+      }
+      if (!CLONEABLE_PARLAY_STATUSES.includes(source.status ?? "")) {
+        return res.status(400).json({ message: "Only approved, won, lost, or pushed parlays can be cloned" });
+      }
+      const activeWeek = await storage.getActiveWeek();
+      if (!activeWeek) {
+        return res.status(400).json({ message: "No active week to clone into right now" });
+      }
+      const cloned = await storage.cloneParlay(parlayId, activeWeek.id);
+      res.status(201).json(cloned);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/parlays/:id", isAuthenticated, auditLog("parlay.delete", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
     try {
       const parlayId = Number(req.params.id);
       const parlay = await storage.getParlay(parlayId);
@@ -1488,7 +1526,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/parlay-legs/:legId", isAuthenticated, async (req, res) => {
+  app.delete("/api/parlay-legs/:legId", isAuthenticated, auditLog("parlay_leg.delete", { targetParam: "legId", targetType: "parlay_leg" }), async (req, res) => {
     try {
       const legId = Number(req.params.legId);
       const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
@@ -1513,7 +1551,7 @@ export async function registerRoutes(
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
-      const { betType, pick, line, odds, result, playerName, propType, notes, gameSegment, userId } = req.body;
+      const { betType, pick, line, odds, oddsSource, result, playerName, propType, notes, gameSegment, userId } = req.body;
 
       if (userId !== undefined && userId !== leg.userId) {
         const members = await storage.getLeagueMembers(parlay.leagueId);
@@ -1531,6 +1569,7 @@ export async function registerRoutes(
       if (pick !== undefined) updates.pick = pick;
       if (line !== undefined) updates.line = line;
       if (odds !== undefined) updates.odds = odds;
+      if (oddsSource !== undefined) updates.oddsSource = oddsSource;
       if (result !== undefined) updates.result = result;
       if (playerName !== undefined) updates.playerName = playerName;
       if (propType !== undefined) updates.propType = propType;
@@ -1545,7 +1584,7 @@ export async function registerRoutes(
     }
   });
 
-  const BULK_EDITABLE_LEG_FIELDS = ['betType', 'pick', 'line', 'odds', 'result', 'playerName', 'propType', 'notes', 'gameSegment', 'userId'] as const;
+  const BULK_EDITABLE_LEG_FIELDS = ['betType', 'pick', 'line', 'odds', 'oddsSource', 'result', 'playerName', 'propType', 'notes', 'gameSegment', 'userId'] as const;
 
   app.post("/api/leagues/:leagueId/parlay-legs/bulk-update", isAuthenticated, async (req, res) => {
     try {
@@ -1618,9 +1657,9 @@ export async function registerRoutes(
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
-      const { betType, pick, line, odds, playerName, propType, notes, gameSegment } = req.body;
+      const { betType, pick, line, odds, oddsSource, playerName, propType, notes, gameSegment } = req.body;
       if (!betType || !pick) return res.status(400).json({ message: "betType and pick are required" });
-      const newLeg = await storage.addParlayLeg(parlayId, { userId: parlay.userId, betType, pick, line, odds, playerName, propType, notes, gameSegment });
+      const newLeg = await storage.addParlayLeg(parlayId, { userId: parlay.userId, betType, pick, line, odds, oddsSource, playerName, propType, notes, gameSegment });
       res.json(newLeg);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1824,7 +1863,7 @@ export async function registerRoutes(
   // the removal is blocked (409, with the list of orphaned legs) unless the
   // caller passes bypass:true — in which case the member is soft-purged and
   // their legs surface on the exceptions blotter for later cleanup.
-  app.post("/api/leagues/:id/members/:userId/remove", isAuthenticated, async (req, res) => {
+  app.post("/api/leagues/:id/members/:userId/remove", isAuthenticated, auditLog("league_member.remove", { targetParam: "userId", targetType: "league_member" }), async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
       const targetUserId = req.params.userId;

@@ -12,6 +12,7 @@
 import Papa from "papaparse";
 import { storage } from "../storage";
 import type { Game } from "@shared/schema";
+import { logger } from "../logger";
 
 // ─── nflverse data URLs ─────────────────────────────────────────────────────
 
@@ -97,7 +98,7 @@ async function fetchCsv(url: string): Promise<Record<string, string>[]> {
   });
   if (parsed.errors.length > 0) {
     const firstErr = parsed.errors[0];
-    console.warn(`[nflverse] CSV parse warning: ${firstErr.message} (row ${firstErr.row})`);
+    logger.warn(`[nflverse] CSV parse warning: ${firstErr.message} (row ${firstErr.row})`);
   }
   return parsed.data;
 }
@@ -111,14 +112,14 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
   // GitHub releases redirect via 302 → S3. Node's fetch follows redirects by
   // default, so a 302 is fine — we only fall back on a true 404.
   const statsPlayerUrl = STATS_PLAYER_WEEK_URL(season);
-  console.log(`[nflverse] Trying stats_player URL: ${statsPlayerUrl}`);
+  logger.info(`[nflverse] Trying stats_player URL: ${statsPlayerUrl}`);
   const statsPlayerRes = await fetch(statsPlayerUrl, {
     headers: { "User-Agent": "parlayconch-app/1.0" },
     redirect: "follow",
   });
 
   if (statsPlayerRes.ok) {
-    console.log(`[nflverse] stats_player file found for ${season} (${statsPlayerRes.status})`);
+    logger.info(`[nflverse] stats_player file found for ${season} (${statsPlayerRes.status})`);
     const text = await statsPlayerRes.text();
     const parsed = Papa.parse<Record<string, string>>(text, {
       header: true, skipEmptyLines: true,
@@ -129,19 +130,19 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
 
   // stats_player release doesn't have this season — fall back to the legacy
   // "player_stats" release (per-season file, then combined all-seasons file).
-  console.warn(
+  logger.warn(
     `[nflverse] stats_player_week_${season}.csv not available (HTTP ${statsPlayerRes.status}). ` +
     `Falling back to legacy player_stats release.`
   );
   const perSeasonUrl = PLAYER_STATS_PER_SEASON_URL(season);
-  console.log(`[nflverse] Trying per-season URL: ${perSeasonUrl}`);
+  logger.info(`[nflverse] Trying per-season URL: ${perSeasonUrl}`);
   const res = await fetch(perSeasonUrl, {
     headers: { "User-Agent": "parlayconch-app/1.0" },
     redirect: "follow",
   });
 
   if (res.ok) {
-    console.log(`[nflverse] Per-season file found for ${season} (${res.status})`);
+    logger.info(`[nflverse] Per-season file found for ${season} (${res.status})`);
     const text = await res.text();
     const parsed = Papa.parse<Record<string, string>>(text, {
       header: true, skipEmptyLines: true,
@@ -152,7 +153,7 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
 
   // 404 = file genuinely absent (season not yet published or naming changed).
   // Try the combined all-seasons file next.
-  console.warn(
+  logger.warn(
     `[nflverse] player_stats_season_${season}.csv not available (HTTP ${res.status}). ` +
     `Falling back to combined all-seasons file — this is a ~33 MB download and may be slow.`
   );
@@ -160,7 +161,7 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
   const seasonRows = allRows.filter(r => parseInt(r.season) === season);
 
   if (seasonRows.length > 0) {
-    console.log(`[nflverse] Found ${seasonRows.length} rows for season ${season} in combined file.`);
+    logger.info(`[nflverse] Found ${seasonRows.length} rows for season ${season} in combined file.`);
     return seasonRows;
   }
 
@@ -211,7 +212,7 @@ export async function syncGameScoresFromNflverse(
   season: number,
   weekNumbers?: number[]
 ): Promise<{ updated: number; noMatch: number; alreadyFinal: number }> {
-  console.log(`[nflverse] Fetching schedules for season ${season}…`);
+  logger.info(`[nflverse] Fetching schedules for season ${season}…`);
   const rows = (await fetchCsv(schedulesUrl())) as unknown as NflverseScheduleRow[];
 
   // Filter to the requested season (+ optional week filter)
@@ -223,7 +224,7 @@ export async function syncGameScoresFromNflverse(
     return true;
   });
 
-  console.log(`[nflverse] ${relevant.length} schedule rows for season ${season}`);
+  logger.info(`[nflverse] ${relevant.length} schedule rows for season ${season}`);
 
   let updated = 0;
   let noMatch = 0;
@@ -348,7 +349,7 @@ async function upsertPlayerStatsRows(
   const label = teamFilter
     ? `teams: ${Array.from(teamFilter).join(", ")}`
     : "all teams (no team filter)";
-  console.log(`[nflverse] Fetching player stats for season ${season}, week ${week}, ${label}…`);
+  logger.info(`[nflverse] Fetching player stats for season ${season}, week ${week}, ${label}…`);
 
   const rows = (await fetchPlayerStatsCsv(season)) as unknown as NflversePlayerStatRow[];
 
@@ -360,7 +361,7 @@ async function upsertPlayerStatsRows(
     return true;
   });
 
-  console.log(`[nflverse] ${relevant.length} player stat rows matched`);
+  logger.info(`[nflverse] ${relevant.length} player stat rows matched`);
 
   let playerCount = 0;
   let statCount = 0;
@@ -429,7 +430,7 @@ export async function syncPlayerStatsForGames(
   // Get all games in our DB for this season + week to know which teams to include
   const dbGames = await storage.getGamesForSeasonWeek(season, week);
   if (dbGames.length === 0) {
-    console.log(`[nflverse] No games found in DB for season ${season} week ${week}`);
+    logger.info(`[nflverse] No games found in DB for season ${season} week ${week}`);
     return { players: 0, stats: 0 };
   }
 
@@ -443,7 +444,7 @@ export async function syncPlayerStatsForGames(
   }
 
   if (teamAbbrevs.size === 0) {
-    console.log(`[nflverse] Could not map any teams to abbreviations for season ${season} week ${week}`);
+    logger.info(`[nflverse] Could not map any teams to abbreviations for season ${season} week ${week}`);
     return { players: 0, stats: 0 };
   }
 

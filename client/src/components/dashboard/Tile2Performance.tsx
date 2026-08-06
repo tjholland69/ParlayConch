@@ -246,6 +246,9 @@ function PerformanceChartSlide({
 
   scopes.forEach((scope, slot) => {
     const color = seriesColor(slot);
+    // Opposite side of the palette from "You" so the index line reads as a
+    // distinct color, not just the same line dashed.
+    const indexColor = seriesColor(slot + 4);
     const myKey = `my_${scope.id}`;
     const indexKey = `index_${scope.id}`;
 
@@ -264,7 +267,7 @@ function PerformanceChartSlide({
     series.push({
       key: indexKey,
       name: scope.name,
-      color,
+      color: indexColor,
       dashed: true,
     });
   });
