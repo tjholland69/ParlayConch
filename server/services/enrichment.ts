@@ -1,5 +1,6 @@
 import { storage } from "../storage";
 import type { Game, ParlayLeg } from "@shared/schema";
+import { logger } from "../logger";
 
 /**
  * Given a finished game and a parlay leg, calculate whether it was a win, loss, or push.
@@ -91,7 +92,7 @@ export async function enrichLeagueParlayLegs(leagueId?: number): Promise<{
         await storage.enrichParlayLeg(leg.id, updates);
         enriched++;
       } catch (err) {
-        console.error(`Failed to mark prop leg ${leg.id} enriched:`, err);
+        logger.error({ err }, `Failed to mark prop leg ${leg.id} enriched:`);
         skipped++;
       }
       continue;
@@ -119,7 +120,7 @@ export async function enrichLeagueParlayLegs(leagueId?: number): Promise<{
       await storage.enrichParlayLeg(leg.id, updates);
       enriched++;
     } catch (err) {
-      console.error(`Failed to enrich leg ${leg.id}:`, err);
+      logger.error({ err }, `Failed to enrich leg ${leg.id}:`);
       skipped++;
     }
   }
@@ -128,7 +129,7 @@ export async function enrichLeagueParlayLegs(leagueId?: number): Promise<{
   // leaderboard (which counts parlay.status = 'win'/'loss'/'push') reflects
   // the individual leg results.
   const rollupResult = await storage.rollupLeagueParlayStatuses(leagueId);
-  console.log(`[Enrichment] rollup: ${rollupResult.updated} parlay(s) promoted to win/loss/push, ${rollupResult.skipped} skipped`);
+  logger.info(`[Enrichment] rollup: ${rollupResult.updated} parlay(s) promoted to win/loss/push, ${rollupResult.skipped} skipped`);
 
   return { enriched, resultsFilled, linesFilled, skipped };
 }

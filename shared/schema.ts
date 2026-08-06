@@ -270,6 +270,7 @@ export const parlayLegs = pgTable("parlay_legs", {
   pick: text("pick").notNull(), // 'home', 'away', 'over', 'under', 'yes', 'no'
   line: text("line"), // Spread/total value at time of pick (e.g. -3.5 for spread, 47.5 for total; blank for moneyline)
   odds: text("odds"), // American-style odds at time of pick (e.g. -110, +130); stored separately from the line value
+  oddsSource: text("odds_source"), // Bookmaker the line/odds came from (e.g. 'DraftKings', 'FanDuel')
   gameSegment: text("game_segment"), // Optional game portion the bet applies to (e.g. 'First Half', 'Second Quarter')
   result: text("result"), // 'win', 'loss', 'push', null
   oddsEnriched: boolean("odds_enriched").default(false), // true once odds/result have been auto-resolved
@@ -471,6 +472,32 @@ export const bets = pgTable("bets", {
   status: text("status").default('pending'),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// Audit ledger — append-only record of auth events, admin/mutating actions, and
+// failures. Written by a single in-process worker draining a BullMQ queue so
+// concurrent request handlers never contend on this table directly (see
+// server/jobs/audit-queue.ts). Kept separate from application debug logs, which
+// are sampled/short-retained; every row here is intentional and complete.
+export const auditEvents = pgTable("audit_events", {
+  id: serial("id").primaryKey(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  actorUserId: varchar("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+  targetType: varchar("target_type", { length: 50 }),
+  targetId: varchar("target_id", { length: 100 }),
+  success: boolean("success").notNull().default(true),
+  statusCode: integer("status_code"),
+  ip: varchar("ip", { length: 64 }),
+  userAgent: text("user_agent"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  index("audit_events_event_type_idx").on(table.eventType),
+  index("audit_events_actor_user_id_idx").on(table.actorUserId),
+  index("audit_events_created_at_idx").on(table.createdAt),
+]);
+
+export type AuditEvent = typeof auditEvents.$inferSelect;
+export type InsertAuditEvent = typeof auditEvents.$inferInsert;
 
 // Schemas
 export const insertLeagueWeekLockSchema = createInsertSchema(leagueWeekLocks).omit({ id: true, lockedAt: true });

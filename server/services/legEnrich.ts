@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { eq } from "drizzle-orm";
+import { logger } from "../logger";
 import { parlayLegs, games, players, playerWeekStats } from "@shared/schema";
 import type { Game, ParlayLeg, PlayerWeekStat, Player } from "@shared/schema";
 import { storage } from "../storage";
@@ -128,7 +129,7 @@ async function saveLog(legId: number, log: EnrichLog): Promise<EnrichLog> {
   try {
     await storage.setLegEnrichmentLog(legId, JSON.stringify(log));
   } catch (err: any) {
-    console.error(`[legEnrich] Failed to save enrichment log for leg ${legId}:`, err.message);
+    logger.error({ err }, `[legEnrich] Failed to save enrichment log for leg ${legId}`);
   }
   return log;
 }

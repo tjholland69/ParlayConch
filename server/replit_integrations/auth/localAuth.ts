@@ -7,6 +7,8 @@ import { users, userPasswords } from "@shared/models/auth";
 import { eq } from "drizzle-orm";
 import type { Express, RequestHandler } from "express";
 import { z } from "zod";
+import { auditLog } from "../../services/audit";
+import { logger } from "../../logger";
 
 const SALT_ROUNDS = 12;
 
@@ -112,7 +114,7 @@ export function registerLocalAuthRoutes(app: Express) {
   setupLocalStrategy();
 
   // POST /api/auth/register
-  app.post("/api/auth/register", authRateLimiter, async (req, res) => {
+  app.post("/api/auth/register", authRateLimiter, auditLog("auth.register", { actorFromBodyField: "email" }), async (req, res) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       return res
@@ -183,13 +185,13 @@ export function registerLocalAuthRoutes(app: Express) {
         return res.status(201).json({ message: "Account created" });
       });
     } catch (err: any) {
-      console.error("[local auth] register error:", err);
+      logger.error({ err }, "[local auth] register error");
       return res.status(500).json({ message: "Registration failed" });
     }
   });
 
   // POST /api/auth/login-local
-  app.post("/api/auth/login-local", authRateLimiter, (req, res, next) => {
+  app.post("/api/auth/login-local", authRateLimiter, auditLog("auth.login", { actorFromBodyField: "email" }), (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res

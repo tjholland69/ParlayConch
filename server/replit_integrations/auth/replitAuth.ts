@@ -10,6 +10,7 @@ import { RedisStore } from "connect-redis";
 import { authStorage } from "./storage";
 import { getSessionRedis, redisKeyPrefix } from "../../redis-clients";
 import { pool } from "../../db";
+import { auditLog, recordAuditEvent } from "../../services/audit";
 
 const getOidcConfig = memoize(
   async () => {
@@ -82,6 +83,14 @@ export async function setupAuth(app: Express) {
 
   // Logout always works regardless of auth provider
   app.get("/api/logout", async (req, res) => {
+    const actorUserId = (req.user as any)?.claims?.sub ?? null;
+    void recordAuditEvent({
+      eventType: "auth.logout",
+      actorUserId,
+      ip: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    });
+
     if (process.env.REPL_ID) {
       const config = await getOidcConfig();
       req.logout(() => {
@@ -141,7 +150,7 @@ export async function setupAuth(app: Express) {
     })(req, res, next);
   });
 
-  app.get("/api/callback", (req, res, next) => {
+  app.get("/api/callback", auditLog("auth.login", { targetType: "oidc" }), (req, res, next) => {
     ensureStrategy(req.hostname);
     passport.authenticate(`replitauth:${req.hostname}`, {
       successReturnToOrRedirect: "/",

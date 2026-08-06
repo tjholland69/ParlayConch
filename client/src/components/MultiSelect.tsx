@@ -1,7 +1,6 @@
 import { Check, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 export type MultiSelectOption = { value: string; label: string };
@@ -53,7 +52,7 @@ export function MultiSelect({
         {options.length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">{emptyMessage}</p>
         ) : (
-          <ScrollArea className="max-h-64">
+          <div className="max-h-64 overflow-y-auto">
             {options.map((option) => (
               <button
                 key={option.value}
@@ -68,7 +67,7 @@ export function MultiSelect({
                 <span className="truncate">{option.label}</span>
               </button>
             ))}
-          </ScrollArea>
+          </div>
         )}
       </PopoverContent>
     </Popover>

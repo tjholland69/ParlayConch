@@ -1,5 +1,6 @@
 import { createClient, type RedisClientType } from "redis";
 import IORedis from "ioredis";
+import { logger } from "./logger";
 
 const keyPrefix = process.env.REDIS_KEY_PREFIX ?? "pc:";
 
@@ -22,7 +23,7 @@ export async function connectSessionRedis(): Promise<void> {
     url,
     socket: process.env.REDIS_TLS === "1" ? { tls: true } : undefined,
   });
-  sessionRedis.on("error", (err) => console.error("[redis session]", err));
+  sessionRedis.on("error", (err) => logger.error({ err }, "[redis session]"));
   await sessionRedis.connect();
 }
 
@@ -37,7 +38,7 @@ export function createBullMqConnection(): IORedis {
     maxRetriesPerRequest: null,
     tls: process.env.REDIS_TLS === "1" ? {} : undefined,
   });
-  conn.on("error", (err) => console.error("[ioredis bullmq]", err));
+  conn.on("error", (err) => logger.error({ err }, "[ioredis bullmq]"));
   return conn;
 }
 
@@ -49,7 +50,7 @@ export function getIORedisPublisher(): IORedis | null {
       maxRetriesPerRequest: null,
       tls: process.env.REDIS_TLS === "1" ? {} : undefined,
     });
-    ioredisPublisher.on("error", (err) => console.error("[ioredis pub]", err));
+    ioredisPublisher.on("error", (err) => logger.error({ err }, "[ioredis pub]"));
   }
   return ioredisPublisher;
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "parlay_legs" ADD COLUMN IF NOT EXISTS "odds_source" text;

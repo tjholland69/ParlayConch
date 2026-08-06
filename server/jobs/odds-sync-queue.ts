@@ -1,6 +1,7 @@
 import { Queue, QueueEvents, Worker, type Job } from "bullmq";
 import { createBullMqConnection, isRedisConfigured } from "../redis-clients";
 import { syncGamesFromOddsApi } from "../services/oddsApi";
+import { logger } from "../logger";
 
 const QUEUE_NAME = "odds-sync";
 
@@ -20,7 +21,7 @@ export function startOddsSyncWorker(): void {
     { connection: createBullMqConnection(), concurrency: 2 },
   );
   worker.on("failed", (job, err) => {
-    console.error("[odds-sync worker] job failed", job?.id, err);
+    logger.error({ err, jobId: job?.id }, "[odds-sync worker] job failed");
   });
 }
 

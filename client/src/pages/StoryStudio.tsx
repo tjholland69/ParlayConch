@@ -75,6 +75,7 @@ export default function StoryStudio() {
   const { data: weeks } = useWeeks();
 
   const [leagueId, setLeagueId] = useState<number | undefined>();
+  const [year, setYear] = useState<number | undefined>();
   const [weekId, setWeekId] = useState<number | undefined>();
   const [selectedCandidate, setSelectedCandidate] = useState<StoryCandidate | null>(null);
   const [thesis, setThesis] = useState("");
@@ -82,7 +83,10 @@ export default function StoryStudio() {
   const [reportId, setReportId] = useState<number | undefined>();
 
   const activeWeek = weeks?.find((w) => w.isActive);
-  const effectiveWeekId = weekId ?? activeWeek?.id;
+  const effectiveYear = year ?? activeWeek?.season;
+  const years = Array.from(new Set((weeks ?? []).map((w) => w.season))).sort((a, b) => b - a);
+  const weeksForYear = (weeks ?? []).filter((w) => w.season === effectiveYear);
+  const effectiveWeekId = weekId ?? (effectiveYear === activeWeek?.season ? activeWeek?.id : undefined);
 
   const { data: analytics, isLoading: analyticsLoading } = useStoryAnalytics(leagueId, effectiveWeekId);
   const { data: candidates, isLoading: candidatesLoading } = useStoryCandidates(leagueId, effectiveWeekId);
@@ -143,12 +147,26 @@ export default function StoryStudio() {
             </SelectContent>
           </Select>
 
+          <Select
+            value={effectiveYear?.toString()}
+            onValueChange={(v) => { setYear(Number(v)); setWeekId(undefined); setReportId(undefined); }}
+          >
+            <SelectTrigger className="w-32" data-testid="select-story-year">
+              <SelectValue placeholder="Year" />
+            </SelectTrigger>
+            <SelectContent>
+              {years.map((y) => (
+                <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
           <Select value={effectiveWeekId?.toString()} onValueChange={(v) => { setWeekId(Number(v)); setReportId(undefined); }}>
             <SelectTrigger className="w-56" data-testid="select-story-week">
               <SelectValue placeholder="Select a week" />
             </SelectTrigger>
             <SelectContent>
-              {weeks?.map((w) => (
+              {weeksForYear.map((w) => (
                 <SelectItem key={w.id} value={w.id.toString()}>{w.label}</SelectItem>
               ))}
             </SelectContent>
