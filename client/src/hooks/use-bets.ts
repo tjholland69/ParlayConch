@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player, ParlayLegDispute } from "@shared/schema";
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -859,6 +859,43 @@ export function useDeleteParlay(leagueId: number) {
       toast({ title: "Parlay Deleted" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useLegDisputes(legId: number) {
+  return useQuery<ParlayLegDispute[]>({
+    queryKey: ['/api/parlay-legs', legId, 'disputes'],
+    queryFn: async () => {
+      const res = await fetch(`/api/parlay-legs/${legId}/disputes`, { credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    enabled: !!legId,
+  });
+}
+
+export function useFileDispute(legId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (form: { reasonType: string; justification: string; screenshot?: File | null }) => {
+      const body = new FormData();
+      body.append("reasonType", form.reasonType);
+      body.append("justification", form.justification);
+      if (form.screenshot) body.append("screenshot", form.screenshot);
+      const res = await fetch(`/api/parlay-legs/${legId}/disputes`, {
+        method: "POST",
+        body,
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/parlay-legs', legId, 'disputes'] });
+      toast({ title: "Dispute filed", description: "Support will review this and follow up." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't file dispute", description: e.message, variant: "destructive" }),
   });
 }
 

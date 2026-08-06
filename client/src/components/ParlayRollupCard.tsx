@@ -18,6 +18,8 @@ import { useToast } from "@/hooks/use-toast";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
+import { useAuth } from "@/hooks/use-auth";
+import { DisputeLegDialog } from "@/components/DisputeLegDialog";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 
@@ -325,6 +327,7 @@ export function ParlayRollupCard({
   const addLeg = useAddParlayLeg(leagueId);
   const enrichLeg = useEnrichParlayLeg(leagueId);
   const cloneParlay = useCloneParlay(leagueId);
+  const { user } = useAuth();
   const { toast } = useToast();
 
   const handleLegOwnerChange = (leg: ParlayLeg & { game?: any }, newUserId: string) => {
@@ -640,6 +643,7 @@ export function ParlayRollupCard({
                     <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Kickoff (ET)</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
                     <th className="px-2 py-2 w-8" />
+                    <th className="px-2 py-2 w-8" />
                     {!readOnly && !selectMode && !splitMode && !legSelectMode && <th className="px-2 py-2" />}
                   </tr>
                 </thead>
@@ -771,6 +775,11 @@ export function ParlayRollupCard({
                                 <div><span className="text-muted-foreground">odds_source:</span> {leg.oddsSource ?? "—"}</div>
                               </PopoverContent>
                             </Popover>
+                          </td>
+                          <td className="px-2 py-2">
+                            {leg.userId === user?.id && !selectMode && !splitMode && !legSelectMode && (
+                              <DisputeLegDialog legId={leg.id} />
+                            )}
                           </td>
                           {!readOnly && !selectMode && !splitMode && !legSelectMode && (
                             <td className="px-2 py-2">
