@@ -24,11 +24,14 @@ type StatKey =
   | "rushingYards" | "rushingTds" | "carries"
   | "receivingYards" | "receivingTds" | "receptions"
   | "passingYards" | "passingTds" | "attempts" | "completions" | "interceptions"
+  | "defSacks"
   | "fantasyPoints";
 
 /**
  * For numeric over/under props: which stat column to read.
  * TD-scorer props (anytime_td etc.) use a separate yes/no path.
+ * "tackles" isn't here — it's solo + assist combined, resolved separately
+ * below rather than as a single-column lookup.
  */
 const PROP_TYPE_TO_STAT: Partial<Record<string, StatKey>> = {
   rush_yards:       "rushingYards",
@@ -40,6 +43,7 @@ const PROP_TYPE_TO_STAT: Partial<Record<string, StatKey>> = {
   pass_attempts:    "attempts",
   pass_completions: "completions",
   interceptions:    "interceptions",
+  sacks:            "defSacks",
   kicking_pts:      "fantasyPoints",   // best available proxy
 };
 
@@ -133,6 +137,23 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
           continue;
         }
         const actual = (stat.rushingYards ?? 0) + (stat.receivingYards ?? 0);
+        if (actual > lineRaw)        legResult = pick === "over"  ? "win" : "loss";
+        else if (actual < lineRaw)   legResult = pick === "under" ? "win" : "loss";
+        else                         legResult = "push";
+
+      // ── Tackles (solo + assist combined — the standard sportsbook line) ──
+      } else if (propType === "tackles") {
+        if (isNaN(lineRaw)) {
+          result.skipped++;
+          result.details.push(`No numeric line for "${leg.playerName}" ${propType} — skipped`);
+          continue;
+        }
+        if (stat.defTacklesSolo == null && stat.defTacklesWithAssist == null) {
+          result.noStats++;
+          result.details.push(`No defensive tackle stats tracked for "${leg.playerName}" week ${weekRow.weekNumber}`);
+          continue;
+        }
+        const actual = (stat.defTacklesSolo ?? 0) + (stat.defTacklesWithAssist ?? 0);
         if (actual > lineRaw)        legResult = pick === "over"  ? "win" : "loss";
         else if (actual < lineRaw)   legResult = pick === "under" ? "win" : "loss";
         else                         legResult = "push";
