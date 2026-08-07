@@ -132,6 +132,9 @@ export interface WinRateTimeSeriesPoint {
   weekLabel: string;
   myWinRate: number | null;
   indexWinRate: number | null;
+  /** That week's own (non-cumulative) win rate — powers the week-over-week view. */
+  myWeekWinRate: number | null;
+  indexWeekWinRate: number | null;
 }
 
 export interface WinRateSeriesOptions {
@@ -295,10 +298,15 @@ export async function computeWinRateSeries(
     const myTotal = myCumWin + myCumLoss;
     const otherTotal = otherCumWin + otherCumLoss;
 
+    const myWeekTotal = mine ? mine.win + mine.loss : 0;
+    const otherWeekTotal = others ? others.win + others.loss : 0;
+
     return {
       weekLabel: weekOrder.get(weekId)!.label,
       myWinRate: myTotal > 0 ? (myCumWin / myTotal) * 100 : null,
       indexWinRate: otherTotal > 0 ? (otherCumWin / otherTotal) * 100 : null,
+      myWeekWinRate: myWeekTotal > 0 ? (mine!.win / myWeekTotal) * 100 : null,
+      indexWeekWinRate: otherWeekTotal > 0 ? (others!.win / otherWeekTotal) * 100 : null,
     };
   });
 

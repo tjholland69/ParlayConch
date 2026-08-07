@@ -62,7 +62,7 @@ export function useLeagues() {
 }
 
 export function useLeaguesOverviewStats() {
-  return useQuery<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>>({
+  return useQuery<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number; parlaysWon: number }>>({
     queryKey: ['/api/leagues/overview-stats'],
     queryFn: async () => {
       const res = await fetch('/api/leagues/overview-stats', { credentials: "include" });

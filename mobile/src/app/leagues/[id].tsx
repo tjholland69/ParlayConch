@@ -6,9 +6,10 @@ import {
   ActivityIndicator,
   RefreshControl,
   Linking,
+  Alert,
   StyleSheet,
 } from "react-native";
-import { useLocalSearchParams, Stack } from "expo-router";
+import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
@@ -18,10 +19,13 @@ import {
   useLeagueMembersWithUsers,
   useWeekLockStatus,
 } from "@/hooks/use-leagues";
-import { useLeagueParlays } from "@/hooks/use-parlays";
+import { useLeagueParlays, useApproveParlay, useRejectParlay } from "@/hooks/use-parlays";
+import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
 import { useActiveWeek } from "@/hooks/use-weeks";
+import { useAuth } from "@/hooks/use-auth";
 import { Avatar } from "@/components/ui/Avatar";
 import { format } from "date-fns";
+import { SPORTSBOOK_PROVIDERS, pickDeepLinkGame, type SportsbookProvider } from "@shared/sportsbook-providers";
 
 type Tab = "parlays" | "members" | "stats";
 
@@ -37,7 +41,24 @@ const TAB_ICONS: Record<Tab, React.ComponentProps<typeof Ionicons>["name"]> = {
   stats: "bar-chart-outline",
 };
 
-function ParlayCard({ parlay }: { parlay: any }) {
+function ParlayCard({
+  parlay,
+  isAdmin,
+  leagueId,
+  weekId,
+  preferredSportsbook,
+}: {
+  parlay: any;
+  isAdmin: boolean;
+  leagueId: number;
+  weekId: number;
+  preferredSportsbook: SportsbookProvider | undefined;
+}) {
+  const router = useRouter();
+  const approveParlay = useApproveParlay(leagueId, weekId);
+  const rejectParlay = useRejectParlay(leagueId, weekId);
+  const markParlaySent = useMarkParlaySent(leagueId, weekId);
+
   const name =
     parlay.user?.settings?.displayName ??
     parlay.user?.firstName ??
@@ -49,6 +70,10 @@ function ParlayCard({ parlay }: { parlay: any }) {
       ? ("checkmark-circle" as const)
       : parlay.status === "rejected"
       ? ("close-circle" as const)
+      : parlay.status === "sent"
+      ? ("paper-plane-outline" as const)
+      : parlay.status === "placed"
+      ? ("checkmark-done-circle" as const)
       : ("time-outline" as const);
 
   const statusColor =
@@ -56,7 +81,57 @@ function ParlayCard({ parlay }: { parlay: any }) {
       ? "#22c55e"
       : parlay.status === "rejected"
       ? "#ef4444"
+      : parlay.status === "sent"
+      ? "#f59e0b"
+      : parlay.status === "placed"
+      ? "#22c55e"
       : "#f59e0b";
+
+  const statusLabel =
+    parlay.status === "sent"
+      ? "Sent — awaiting confirmation"
+      : parlay.status === "placed"
+      ? "Placed"
+      : parlay.status;
+
+  const canModerate = isAdmin && parlay.status === "pending";
+  const canSendToSportsbook = isAdmin && parlay.status === "approved";
+
+  async function handleSendToSportsbook() {
+    if (!preferredSportsbook) {
+      Alert.alert(
+        "Choose a Sportsbook",
+        "Set your preferred sportsbook in Settings first, then send this parlay.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Go to Settings", onPress: () => router.push("/(tabs)/settings") },
+        ],
+      );
+      return;
+    }
+
+    const provider = SPORTSBOOK_PROVIDERS[preferredSportsbook];
+    const game = pickDeepLinkGame(parlay.legs ?? []);
+    const deepLinkUrl = game ? provider.buildGameDeepLink(game) : `${provider.appScheme}://`;
+
+    try {
+      const canOpen = await Linking.canOpenURL(deepLinkUrl);
+      if (canOpen) {
+        await Linking.openURL(deepLinkUrl);
+        markParlaySent.mutate(parlay.id);
+        return;
+      }
+    } catch {
+      // fall through to web fallback below
+    }
+
+    // App not installed or the deep link failed — best-effort web rescue.
+    // Deliberately does NOT call markParlaySent: opening a plain website is
+    // not real evidence the maestro will actually place the bet in-app, and
+    // we don't want to trigger the "did you place this bet?" resume prompt
+    // for a handoff that probably didn't happen.
+    await Linking.openURL(provider.webFallbackUrl);
+  }
 
   return (
     <View style={styles.parlayCard}>
@@ -68,7 +143,7 @@ function ParlayCard({ parlay }: { parlay: any }) {
         />
         <View style={styles.parlayCardMeta}>
           <Text style={styles.parlayCardName} numberOfLines={1}>{name}</Text>
-          <Text style={styles.parlayCardStatus}>{parlay.status}</Text>
+          <Text style={styles.parlayCardStatus}>{statusLabel}</Text>
         </View>
         <Ionicons name={statusIcon} size={22} color={statusColor} />
       </View>
@@ -94,6 +169,44 @@ function ParlayCard({ parlay }: { parlay: any }) {
               </View>
             );
           })}
+        </View>
+      )}
+
+      {canModerate && (
+        <View style={styles.moderationRow}>
+          <Pressable
+            style={({ pressed }) => [styles.rejectButton, pressed && styles.moderationButtonPressed]}
+            onPress={() => rejectParlay.mutate(parlay.id)}
+            disabled={approveParlay.isPending || rejectParlay.isPending}
+          >
+            <Ionicons name="close" size={16} color="#ef4444" />
+            <Text style={styles.rejectButtonText}>Reject</Text>
+          </Pressable>
+          <Pressable
+            style={({ pressed }) => [styles.approveButton, pressed && styles.moderationButtonPressed]}
+            onPress={() => approveParlay.mutate(parlay.id)}
+            disabled={approveParlay.isPending || rejectParlay.isPending}
+          >
+            <Ionicons name="checkmark" size={16} color="#f1f5f9" />
+            <Text style={styles.approveButtonText}>Approve</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {canSendToSportsbook && (
+        <View style={styles.moderationRow}>
+          <Pressable
+            style={({ pressed }) => [styles.sendButton, pressed && styles.moderationButtonPressed]}
+            onPress={handleSendToSportsbook}
+            disabled={markParlaySent.isPending}
+          >
+            {markParlaySent.isPending ? (
+              <ActivityIndicator size="small" color="#f1f5f9" />
+            ) : (
+              <Ionicons name="send-outline" size={16} color="#f1f5f9" />
+            )}
+            <Text style={styles.sendButtonText}>Send to Sportsbook</Text>
+          </Pressable>
         </View>
       )}
     </View>
@@ -178,6 +291,7 @@ export default function LeagueDetailScreen() {
   const leagueId = parseInt(id, 10);
   const [activeTab, setActiveTab] = useState<Tab>("parlays");
   const activeWeek = useActiveWeek();
+  const { user } = useAuth();
 
   const { data: league, isLoading: leagueLoading } = useQuery({
     queryKey: ["/api/leagues", leagueId],
@@ -186,6 +300,8 @@ export default function LeagueDetailScreen() {
   });
 
   const { data: members, isLoading: membersLoading, refetch: refetchMembers } = useLeagueMembersWithUsers(leagueId);
+  const isAdmin = !!members?.some((m: any) => m.userId === user?.id && m.role === "admin");
+  const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as SportsbookProvider | undefined;
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useLeagueStats(leagueId);
 
   const weekId = activeWeek?.id ?? 0;
@@ -317,7 +433,14 @@ export default function LeagueDetailScreen() {
                 </View>
               ) : (
                 parlays.map((parlay: any) => (
-                  <ParlayCard key={parlay.id} parlay={parlay} />
+                  <ParlayCard
+                    key={parlay.id}
+                    parlay={parlay}
+                    isAdmin={isAdmin}
+                    leagueId={leagueId}
+                    weekId={weekId}
+                    preferredSportsbook={preferredSportsbook}
+                  />
                 ))
               )}
             </>
@@ -500,6 +623,48 @@ const styles = StyleSheet.create({
   legDot: { width: 7, height: 7, borderRadius: 4 },
   legText: { flex: 1, fontSize: 12, color: "#94a3b8" },
   legLine: { fontSize: 12, color: "#475569", fontWeight: "600" },
+  moderationRow: {
+    flexDirection: "row",
+    borderTopWidth: 1,
+    borderTopColor: "#2a3447",
+    padding: 10,
+    gap: 8,
+  },
+  rejectButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#ef4444",
+  },
+  rejectButtonText: { fontSize: 13, fontWeight: "700", color: "#ef4444" },
+  approveButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: "#22c55e",
+  },
+  approveButtonText: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
+  sendButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: "#2563eb",
+  },
+  sendButtonText: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
+  moderationButtonPressed: { opacity: 0.7 },
 
   /* Member card */
   memberCard: {

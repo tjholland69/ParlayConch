@@ -29,7 +29,11 @@ describe("DatabaseStorage integration", () => {
       if (!process.env.DATABASE_URL) {
         throw new Error("CI requires DATABASE_URL for integration tests");
       }
-      const { db } = await import("../server/db");
+      const { db, pool } = await import("../server/db");
+      // CI reuses the same DATABASE_URL across runs, so previous runs'
+      // tables are still there — reset the schema before migrating so
+      // `migrate()` doesn't hit "relation already exists" (42P07).
+      await pool.query(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`);
       await migrate(db, { migrationsFolder });
       dbReady = true;
       return;

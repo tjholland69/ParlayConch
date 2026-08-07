@@ -2,6 +2,7 @@ import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb, rea
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { users } from "./models/auth";
+import type { SportsbookProvider } from "./sportsbook-providers";
 
 // Export users and sessions from auth model
 export * from "./models/auth";
@@ -52,6 +53,7 @@ export type UserSettings = {
   primaryColor?: string;
   region?: UserRegion | null;
   theme?: "dark" | "light" | "system";
+  preferredSportsbook?: SportsbookProvider | null;
 };
 
 export type LeagueNotificationSettings = {
@@ -203,12 +205,12 @@ export const parlays = pgTable("parlays", {
   weekId: integer("week_id")
     .notNull()
     .references(() => weeks.id, { onDelete: "restrict" }),
-  status: text("status").default("pending"), // 'pending', 'approved', 'rejected', 'win', 'loss', 'push', 'void'
+  status: text("status").default("pending"), // 'pending', 'approved', 'sent', 'placed', 'rejected', 'win', 'loss', 'push', 'void'
   // Derived, read-only grouping of `status` — Postgres GENERATED STORED column
   // (see migrations), never written to by the app. Not surfaced in the GUI;
   // exists purely so future features/logic can branch on group instead of
   // enumerating individual statuses.
-  //   open:   'approved', 'pending'
+  //   open:   'approved', 'pending', 'sent', 'placed'
   //   closed: 'win', 'loss', 'rejected', 'push'
   //   void:   'void'
   statusGroup: text("status_group"),
@@ -278,6 +280,18 @@ export const parlayLegs = pgTable("parlay_legs", {
   propType: text("prop_type"),     // for player_prop bets: the prop category (e.g. 'rush_yards')
   notes: text("notes"),            // free-text note, display only
   enrichmentLog: text("enrichment_log"), // JSON: { at, changes, warnings, errors } — last data-fetch attempt
+  // The moment this leg's outcome became fixed — may be well before the
+  // game ends (e.g. an over hitting in the 3rd quarter). Defaults to null/
+  // 'final' until a resolution pass populates it; 'final' legs fall back to
+  // games.finishedAt for display. See decidedConfidence for how it was derived.
+  decidedAt: timestamp("decided_at"),
+  decidedPlayDesc: text("decided_play_desc"), // play-by-play description of the deciding play, for display
+  decidedQuarter: text("decided_quarter"),    // e.g. 'Q3', 'OT'
+  decidedClock: text("decided_clock"),        // game clock at the deciding play, e.g. '9:14'
+  // 'final' = decided at game end (default/fallback, no early detection run yet)
+  // 'exact' = deterministic mid-game detection (totals-over, player props)
+  // 'heuristic' = probabilistic garbage-time elimination (spread/moneyline/under)
+  decidedConfidence: text("decided_confidence").default("final"),
 }, (table) => [
   index("parlay_legs_parlay_id_idx").on(table.parlayId),
   index("parlay_legs_user_id_idx").on(table.userId),
@@ -538,7 +552,7 @@ export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({
 export const insertTeamSchema = createInsertSchema(teams).omit({ id: true });
 export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true, source: true, importBatchId: true });
 export const insertParlayLegSchema = createInsertSchema(parlayLegs)
-  .omit({ id: true, result: true })
+  .omit({ id: true, result: true, decidedAt: true, decidedPlayDesc: true, decidedQuarter: true, decidedClock: true, decidedConfidence: true })
   .extend({ userId: z.string().optional() }); // server attaches userId before insert; clients need not supply it
 export const insertImportBatchSchema = createInsertSchema(importBatches).omit({ id: true, uploadedAt: true });
 

@@ -25,6 +25,8 @@ export interface WinRateTimeSeriesPoint {
   weekLabel: string;
   myWinRate: number | null;
   indexWinRate: number | null;
+  myWeekWinRate: number | null;
+  indexWeekWinRate: number | null;
 }
 
 export function useDashboardSummary() {

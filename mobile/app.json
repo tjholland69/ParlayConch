@@ -16,7 +16,8 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.parlayclub.app",
       "infoPlist": {
-        "NSCameraUsageDescription": "Used for profile photo upload"
+        "NSCameraUsageDescription": "Used for profile photo upload",
+        "LSApplicationQueriesSchemes": ["fanduel", "draftkings"]
       }
     },
     "android": {
@@ -33,7 +34,8 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/withSportsbookQueries.js"
     ],
     "experiments": {
       "typedRoutes": true

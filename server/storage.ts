@@ -85,6 +85,10 @@ export interface IStorage {
   getAllLeagueParlays(leagueId: number): Promise<ParlayWithLegs[]>;
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
+  markParlaySent(parlayId: number, userId: string): Promise<Parlay>;
+  markParlayPlaced(parlayId: number, userId: string): Promise<Parlay>;
+  revertParlayToApproved(parlayId: number, userId: string): Promise<Parlay>;
+  getSentParlaysForUser(userId: string): Promise<ParlayWithLegs[]>;
   getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]>;
   getUserLegHistory(userId: string, leagueId?: number): Promise<ParlayLegWithParlayContext[]>;
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
@@ -148,7 +152,7 @@ export interface IStorage {
   getPopularPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<PopularPick[]>;
 
   // Aggregate win/loss stats per league (for My Leagues tile)
-  getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>>;
+  getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number; parlaysWon: number }>>;
 
   // Custom indexes
   createCustomIndex(ownerId: string, input: InsertCustomIndex): Promise<CustomIndex>;
@@ -172,7 +176,12 @@ export interface IStorage {
   getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game | null })[]>;
   enrichParlayLeg(legId: number, updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
   updateGameScores(gameId: number, homeScore: number, awayScore: number, isFinished: boolean, winner?: string): Promise<void>;
+  setGameFinishedAt(gameId: number, finishedAt: Date): Promise<void>;
   backfillGameFinishedAt(): Promise<{ updated: number }>;
+  getDistinctSeasons(): Promise<number[]>;
+  getWonGameLegsPendingDecision(betTypes: string[], leagueId?: number): Promise<(ParlayLeg & { game: Game; season: number; weekNumber: number })[]>;
+  getWonPropLegsPendingDecision(leagueId?: number): Promise<(ParlayLeg & { season: number; weekNumber: number })[]>;
+  setLegDecision(legId: number, info: { decidedAt: Date; decidedPlayDesc: string; decidedQuarter: string; decidedClock: string; decidedConfidence: string }): Promise<void>;
   patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
   getUser(userId: string): Promise<typeof users.$inferSelect | null>;
 
@@ -548,8 +557,9 @@ export class DatabaseStorage implements IStorage {
   // Win rate here is computed from individual parlay_legs.result (per-pick outcomes),
   // not parlays.status — a parlay with a mix of wins/losses is one loss at the
   // parlay level, but the "Overall Picks Won" stat is about how often an individual
-  // pick was right, so it counts legs.
-  async getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>> {
+  // pick was right, so it counts legs. parlaysWon is the separate whole-parlay
+  // count (parlays.status === 'win') used for the "total parlays won" tile.
+  async getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number; parlaysWon: number }>> {
     if (leagueIds.length === 0) return {};
 
     const legRows = await db
@@ -558,17 +568,24 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
       .where(and(inArray(parlays.leagueId, leagueIds), inArray(parlayLegs.result as any, ['win', 'loss'])));
 
-    const result: Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }> = {};
+    const parlayRows = await db
+      .select({ leagueId: parlays.leagueId, status: parlays.status })
+      .from(parlays)
+      .where(inArray(parlays.leagueId, leagueIds));
+
+    const result: Record<number, { wins: number; losses: number; winRate: number; totalDecided: number; parlaysWon: number }> = {};
     for (const leagueId of leagueIds) {
       const rows = legRows.filter(l => l.leagueId === leagueId);
       const wins = rows.filter(l => l.result === 'win').length;
       const losses = rows.filter(l => l.result === 'loss').length;
       const totalDecided = wins + losses;
+      const parlaysWon = parlayRows.filter(p => p.leagueId === leagueId && p.status === 'win').length;
       result[leagueId] = {
         wins,
         losses,
         winRate: totalDecided > 0 ? (wins / totalDecided) * 100 : 0,
         totalDecided,
+        parlaysWon,
       };
     }
     return result;
@@ -910,6 +927,71 @@ export class DatabaseStorage implements IStorage {
       .returning();
     emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
     return updated;
+  }
+
+  // Fires once the mobile app successfully hands off to the sportsbook app's
+  // deep link. Idempotent from 'sent' so a retry/double-tap doesn't error.
+  // 'sent'/'placed' are intentionally left out of rollupParlayStatus's
+  // terminalStatuses — they fall through to auto win/loss resolution exactly
+  // like 'approved' does, since a parlay can resolve without the maestro ever
+  // confirming placement.
+  async markParlaySent(parlayId: number, userId: string): Promise<Parlay> {
+    const [updated] = await db.update(parlays)
+      .set({ status: 'sent' })
+      .where(and(eq(parlays.id, parlayId), inArray(parlays.status, ['approved', 'sent'])))
+      .returning();
+    if (!updated) throw new Error("Parlay is not in a state that can be sent to a sportsbook");
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
+    return updated;
+  }
+
+  // Maestro self-confirms they actually placed the bet with the sportsbook.
+  async markParlayPlaced(parlayId: number, userId: string): Promise<Parlay> {
+    const [updated] = await db.update(parlays)
+      .set({ status: 'placed' })
+      .where(and(eq(parlays.id, parlayId), eq(parlays.status, 'sent')))
+      .returning();
+    if (!updated) throw new Error("Parlay is not pending placement confirmation");
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
+    return updated;
+  }
+
+  // "No, I didn't place it" — reverts to 'approved' so it can be re-sent.
+  async revertParlayToApproved(parlayId: number, userId: string): Promise<Parlay> {
+    const [updated] = await db.update(parlays)
+      .set({ status: 'approved' })
+      .where(and(eq(parlays.id, parlayId), eq(parlays.status, 'sent')))
+      .returning();
+    if (!updated) throw new Error("Parlay is not pending placement confirmation");
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
+    return updated;
+  }
+
+  // Parlays a maestro approved that are stuck in 'sent', used to prompt for
+  // placement confirmation when the app resumes to the foreground.
+  async getSentParlaysForUser(userId: string): Promise<ParlayWithLegs[]> {
+    const sentParlays = await db.select().from(parlays)
+      .where(and(eq(parlays.status, 'sent'), eq(parlays.approvedBy, userId)));
+
+    if (sentParlays.length === 0) return [];
+
+    const parlayIds = sentParlays.map(p => p.id);
+    const legs = await db.select().from(parlayLegs).where(inArray(parlayLegs.parlayId, parlayIds));
+    const gameIds = [...new Set(legs.map(l => l.gameId).filter((id): id is number => id != null))];
+    const gameRows = gameIds.length ? await db.select().from(games).where(inArray(games.id, gameIds)) : [];
+    const gamesById = new Map(gameRows.map(g => [g.id, g]));
+
+    const legsByParlayId = new Map<number, any[]>();
+    for (const leg of legs) {
+      const existing = legsByParlayId.get(leg.parlayId) ?? [];
+      existing.push({ ...leg, game: leg.gameId != null ? gamesById.get(leg.gameId) : undefined });
+      legsByParlayId.set(leg.parlayId, existing);
+    }
+
+    return sentParlays.map(parlay => ({
+      ...parlay,
+      legs: legsByParlayId.get(parlay.id) ?? [],
+    })) as ParlayWithLegs[];
   }
 
   async getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]> {
@@ -1327,6 +1409,10 @@ export class DatabaseStorage implements IStorage {
     const [parlay] = await db.select().from(parlays).where(eq(parlays.id, parlayId));
     if (!parlay) return;
 
+    // 'sent'/'placed' (sportsbook handoff states) are intentionally absent
+    // here — they fall through to the same auto win/loss resolution as
+    // 'approved', since a bet resolves whether or not the maestro ever
+    // confirms placement.
     const terminalStatuses = ['win', 'loss', 'push', 'rejected', 'void'];
     if (terminalStatuses.includes(parlay.status ?? '')) return;
 
@@ -1351,6 +1437,7 @@ export class DatabaseStorage implements IStorage {
    * updated vs skipped parlays.
    */
   async rollupLeagueParlayStatuses(leagueId?: number, recomputeTerminal = false): Promise<{ updated: number; skipped: number }> {
+    // Same 'sent'/'placed' fall-through as rollupParlayStatus above.
     const terminalStatuses = ['win', 'loss', 'push', 'rejected', 'void'];
     const excludedStatuses = recomputeTerminal ? ['rejected', 'void'] : terminalStatuses;
 
@@ -1627,6 +1714,14 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
+   * Overwrites finishedAt with a more precise value (e.g. derived from the
+   * real-world timestamp of a game's last play), independent of score/winner.
+   */
+  async setGameFinishedAt(gameId: number, finishedAt: Date): Promise<void> {
+    await db.update(games).set({ finishedAt }).where(eq(games.id, gameId));
+  }
+
+  /**
    * One-time backfill for games that were finished before `finishedAt` existed.
    * Estimates finish time as kickoff + ~3.5 hours (typical NFL game length) —
    * an approximation, not a recorded fact, so "Parlay Loser" also works for
@@ -1642,6 +1737,56 @@ export class DatabaseStorage implements IStorage {
       updated++;
     }
     return { updated };
+  }
+
+  async getDistinctSeasons(): Promise<number[]> {
+    const rows = await db.selectDistinct({ season: weeks.season }).from(weeks);
+    return rows.map(r => r.season).sort((a, b) => a - b);
+  }
+
+  // ─── Decision-moment detection (Phase 3) ───────────────────────────────────
+  // Legs whose leg-level result is already a confirmed win (via score/stat
+  // comparison) but whose decidedAt is still unset — candidates for exact
+  // mid-game "when did this actually become a win" detection from
+  // play-by-play data. Only 'win' legs qualify: an over/prop total only ever
+  // crosses its line in one direction (upward), so a loss never has a
+  // deterministic early-decision point — it can only be confirmed at the
+  // final whistle.
+
+  async getWonGameLegsPendingDecision(betTypes: string[], leagueId?: number): Promise<(ParlayLeg & { game: Game; season: number; weekNumber: number })[]> {
+    const rows = await db
+      .select({ leg: parlayLegs, game: games, season: weeks.season, weekNumber: weeks.weekNumber })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(
+        leagueId !== undefined
+          ? and(inArray(parlayLegs.betType, betTypes), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt), eq(parlays.leagueId, leagueId))
+          : and(inArray(parlayLegs.betType, betTypes), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt))
+      );
+    return rows.map(r => ({ ...r.leg, game: r.game, season: r.season, weekNumber: r.weekNumber }));
+  }
+
+  async getWonPropLegsPendingDecision(leagueId?: number): Promise<(ParlayLeg & { season: number; weekNumber: number })[]> {
+    const rows = await db
+      .select({ leg: parlayLegs, season: weeks.season, weekNumber: weeks.weekNumber })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+      .where(
+        leagueId !== undefined
+          ? and(eq(parlayLegs.betType, "player_prop"), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt), eq(parlays.leagueId, leagueId))
+          : and(eq(parlayLegs.betType, "player_prop"), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt))
+      );
+    return rows.map(r => ({ ...r.leg, season: r.season, weekNumber: r.weekNumber }));
+  }
+
+  async setLegDecision(
+    legId: number,
+    info: { decidedAt: Date; decidedPlayDesc: string; decidedQuarter: string; decidedClock: string; decidedConfidence: string }
+  ): Promise<void> {
+    await db.update(parlayLegs).set(info).where(eq(parlayLegs.id, legId));
   }
 
   async patchGameOdds(

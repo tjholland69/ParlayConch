@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BarChart3, Calendar as CalendarIcon, Check, ChevronDown, Loader2, Sparkles } from "lucide-react";
+import { BarChart3, Calendar as CalendarIcon, Check, ChevronDown, Loader2 } from "lucide-react";
 import { SlidingCard, EmptyState } from "@/components/SlidingCard";
 import { useLeagues } from "@/hooks/use-bets";
 import { useDashboardPerformance, type DashboardDateRange } from "@/hooks/use-dashboard";
@@ -15,6 +15,7 @@ import {
   type PerformancePoint,
   type PerformanceSeries,
 } from "@/components/dashboard/PerformanceLineChart";
+import { PerformanceBarChart } from "@/components/dashboard/PerformanceBarChart";
 
 const ALL_LEAGUES_VALUE = "all";
 const DEFAULT_INDEX_ID = "default";
@@ -177,14 +178,19 @@ function DateRangeFilter({
   );
 }
 
+/** "cumulative" is the running win-rate line; "weekly" is that week's own win rate as bars. */
+type PerformanceViewMode = "cumulative" | "weekly";
+
 function PerformanceChartSlide({
   leagueFilter,
   activeIndexIds,
   dateRange,
+  mode,
 }: {
   leagueFilter: string;
   activeIndexIds: string[];
   dateRange: DashboardDateRange;
+  mode: PerformanceViewMode;
 }) {
   const leagueId = leagueFilter === ALL_LEAGUES_VALUE ? undefined : Number(leagueFilter);
   const { data, isLoading, error } = useDashboardPerformance(leagueId, dateRange);
@@ -214,7 +220,17 @@ function PerformanceChartSlide({
   // Build the ordered list of active comparison scopes. Slot order is stable —
   // the default index always holds slot 0, and each custom index keeps its slot
   // as others are toggled, so colors never repaint on a filter change.
-  type Scope = { id: string; name: string; points: { weekLabel: string; myWinRate: number | null; indexWinRate: number | null }[] };
+  type Scope = {
+    id: string;
+    name: string;
+    points: {
+      weekLabel: string;
+      myWinRate: number | null;
+      indexWinRate: number | null;
+      myWeekWinRate: number | null;
+      indexWeekWinRate: number | null;
+    }[];
+  };
   const scopes: Scope[] = [];
   if (defaultActive) {
     scopes.push({ id: DEFAULT_INDEX_ID, name: "Index", points: data.points });
@@ -254,8 +270,8 @@ function PerformanceChartSlide({
 
     for (const point of scope.points) {
       const row = ensureRow(point.weekLabel);
-      row[myKey] = point.myWinRate;
-      row[indexKey] = point.indexWinRate;
+      row[myKey] = mode === "weekly" ? point.myWeekWinRate : point.myWinRate;
+      row[indexKey] = mode === "weekly" ? point.indexWeekWinRate : point.indexWinRate;
     }
 
     // With a single scope the labels stay exactly as they read today.
@@ -274,14 +290,18 @@ function PerformanceChartSlide({
 
   const points = weekOrder.map((label) => rowsByWeek.get(label)!);
 
+  const title = mode === "weekly" ? "Week-over-Week Performance" : "Performance Over Time";
+
   return (
     <div>
       <h2 className="text-xl font-bold flex items-center gap-2 mb-5">
         <BarChart3 className="w-5 h-5 text-accent" />
-        Performance Over Time
+        {title}
       </h2>
       {series.length === 0 ? (
         <EmptyState icon={BarChart3} message="Pick at least one index to compare against." />
+      ) : mode === "weekly" ? (
+        <PerformanceBarChart points={points} series={series} />
       ) : (
         <PerformanceLineChart points={points} series={series} />
       )}
@@ -309,11 +329,25 @@ export function Tile2Performance() {
       slides={[
         {
           label: "Performance",
-          content: <PerformanceChartSlide leagueFilter={leagueFilter} activeIndexIds={activeIndexIds} dateRange={dateRange} />,
+          content: (
+            <PerformanceChartSlide
+              leagueFilter={leagueFilter}
+              activeIndexIds={activeIndexIds}
+              dateRange={dateRange}
+              mode="cumulative"
+            />
+          ),
         },
         {
-          label: "More Views",
-          content: <EmptyState icon={Sparkles} message="More visual breakdowns are coming soon." />,
+          label: "Week-over-Week",
+          content: (
+            <PerformanceChartSlide
+              leagueFilter={leagueFilter}
+              activeIndexIds={activeIndexIds}
+              dateRange={dateRange}
+              mode="weekly"
+            />
+          ),
         },
       ]}
     />
