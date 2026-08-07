@@ -744,7 +744,7 @@ export function ParlayRollupCard({
                           </td>
                           <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
                             {leg.game?.gameTime
-                              ? new Date(leg.game.gameTime).toLocaleDateString(undefined, { timeZone: "America/New_York", weekday: "short", month: "numeric", day: "numeric" })
+                              ? new Date(leg.game.gameTime).toLocaleDateString("en-GB", { timeZone: "America/New_York", weekday: "short", month: "2-digit", day: "2-digit" })
                               : "—"}
                           </td>
                           <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">

@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player, ParlayLegDispute } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player, ParlayLegDispute, LeagueMemberWithUser } from "@shared/schema";
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -1056,6 +1056,41 @@ export function useSplitParlayLegs(leagueId: number) {
       toast({ title: "Legs Split", description: data.message });
     },
     onError: (e: Error) => toast({ title: "Split failed", description: e.message, variant: "destructive" }),
+  });
+}
+
+// League members who were on the roster as of `weekId` but have no parlay for
+// that week yet — powers the Data Editor's "Backfill Missing" button.
+export function useMissingParlayMembers(leagueId: number, weekId: number | null) {
+  return useQuery<LeagueMemberWithUser[]>({
+    queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'missing-parlay-members'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/missing-parlay-members`, { credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    enabled: !!leagueId && !!weekId,
+  });
+}
+
+export function useBackfillMissingParlays(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (weekId: number) => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/backfill-missing-parlays`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json() as Promise<{ message: string; parlays: unknown[] }>;
+    },
+    onSuccess: (data, weekId) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'missing-parlay-members'] });
+      toast({ title: "Backfilled", description: data.message });
+    },
+    onError: (e: Error) => toast({ title: "Backfill failed", description: e.message, variant: "destructive" }),
   });
 }
 

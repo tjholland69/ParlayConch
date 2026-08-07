@@ -18,7 +18,7 @@ import {
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
   type ActiveWeekStatus, type LeagueDataStats, type PopularPick,
 } from "@shared/schema";
-import { eq, and, desc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
+import { eq, and, desc, asc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 
 function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
@@ -101,6 +101,8 @@ export interface IStorage {
   splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay>;
   createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay>;
   cloneParlay(sourceParlayId: number, targetWeekId: number): Promise<Parlay>;
+  getMissingParlayMembers(leagueId: number, weekId: number): Promise<LeagueMemberWithUser[]>;
+  backfillMissingParlays(leagueId: number, weekId: number): Promise<Parlay[]>;
   getActiveWeek(): Promise<Week | null>;
 
   // Leg disputes ("Exceptions Queue")
@@ -1280,6 +1282,44 @@ export class DatabaseStorage implements IStorage {
   async getActiveWeek(): Promise<Week | null> {
     const [week] = await db.select().from(weeks).where(eq(weeks.isActive, true)).limit(1);
     return week ?? null;
+  }
+
+  // Members counted "as of" a week are the ones on the roster when that week's
+  // games kicked off — not today's roster — so a member who joined/left the
+  // league later doesn't wrongly count as missing/present for a past week.
+  // Falls back to the current roster when the week has no scheduled games yet
+  // (e.g. an upcoming week with odds not loaded).
+  private async getWeekAsOfDate(weekId: number): Promise<Date | undefined> {
+    const [earliestGame] = await db.select({ gameTime: games.gameTime })
+      .from(games)
+      .where(and(eq(games.weekId, weekId), sql`${games.gameTime} IS NOT NULL`))
+      .orderBy(asc(games.gameTime))
+      .limit(1);
+    return earliestGame?.gameTime ?? undefined;
+  }
+
+  async getMissingParlayMembers(leagueId: number, weekId: number): Promise<LeagueMemberWithUser[]> {
+    const asOfDate = await this.getWeekAsOfDate(weekId);
+    const members = await this.getLeagueMembersWithUsers(leagueId, asOfDate ? { asOfDate } : {});
+
+    const submitted = await db.select({ userId: parlays.userId }).from(parlays)
+      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
+    const submittedIds = new Set(submitted.map(s => s.userId));
+
+    return members.filter(m => !submittedIds.has(m.userId));
+  }
+
+  async backfillMissingParlays(leagueId: number, weekId: number): Promise<Parlay[]> {
+    const missing = await this.getMissingParlayMembers(leagueId, weekId);
+    if (missing.length === 0) return [];
+
+    const created = await db.insert(parlays)
+      .values(missing.map(m => ({ userId: m.userId, leagueId, weekId, status: "void", source: "imported" })))
+      .onConflictDoNothing()
+      .returning();
+
+    if (created.length > 0) emitLeague(leagueId, weekId, "parlays_updated");
+    return created;
   }
 
   async createDispute(input: { parlayLegId: number; raisedByUserId: string; reasonType: string; justification: string; screenshotKey?: string | null }): Promise<ParlayLegDispute> {

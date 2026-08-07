@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs } from "@/hooks/use-bets";
+import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs, useMissingParlayMembers, useBackfillMissingParlays } from "@/hooks/use-bets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine, UserX } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
@@ -456,6 +456,13 @@ export default function DemoDataEditor() {
   const [selectedLegIds, setSelectedLegIds] = useState<Set<number>>(new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
 
+  // Backfill only targets one concrete week — in "All Years" mode the week
+  // filter can represent the same weekNumber across multiple season rows, so
+  // require both Year and Week to be pinned down before it's actionable.
+  const specificWeekId = yearFilter !== "all" && weekFilter !== "all" ? Number(weekFilter) : null;
+  const { data: missingMembers } = useMissingParlayMembers(leagueId, specificWeekId);
+  const backfillMissing = useBackfillMissingParlays(leagueId);
+
   const toggleSelect = (id: number) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -803,6 +810,30 @@ export default function DemoDataEditor() {
             <Button className="gap-2 shrink-0" onClick={() => setBulkEditOpen(true)}>
               <PencilLine className="w-4 h-4" />
               Bulk Edit
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Sticky backfill-missing action bar — only when a single concrete week
+          is selected and some league members (as of that week) have no parlay */}
+      {!selectMode && !legSelectMode && specificWeekId && !!missingMembers?.length && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 flex justify-center pb-6 pointer-events-none">
+          <div className="pointer-events-auto bg-card border border-amber-500/30 shadow-2xl rounded-xl px-6 py-4 flex items-center gap-4 max-w-md w-full mx-4">
+            <div className="flex-1">
+              <p className="font-semibold text-sm">{missingMembers.length} member{missingMembers.length !== 1 ? "s" : ""} missing a parlay</p>
+              <p className="text-xs text-muted-foreground truncate">
+                {missingMembers.map(m => getDisplayName(m.user, shortId(m.userId, 8))).join(", ")}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              className="gap-2 shrink-0 border-amber-500/40 text-amber-400 hover:text-amber-300"
+              disabled={backfillMissing.isPending}
+              onClick={() => backfillMissing.mutate(specificWeekId)}
+            >
+              {backfillMissing.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserX className="w-4 h-4" />}
+              Backfill as Void
             </Button>
           </div>
         </div>
