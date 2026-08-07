@@ -26,6 +26,7 @@ import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
 import { syncGameFinishTimesFromPlayByPlay } from "./services/playByPlay";
+import { detectExactDecisionMoments, detectHeuristicDecisionMoments } from "./services/decisionDetection";
 import { parseTicketImages } from "./services/screenshotParser";
 import multer from "multer";
 
@@ -1103,6 +1104,30 @@ export async function registerRoutes(
 
         // Re-run enrichment after scores are updated
         result.enrichment = await enrichLeagueParlayLegs();
+
+        // Best-effort: for legs that just resolved to a win, try to pin down
+        // the exact play that decided it (rather than just the final
+        // whistle). Player-prop legs need player_week_stats synced first —
+        // those simply no-op here and get picked up by resolve-props below.
+        try {
+          const decisionSync = await detectExactDecisionMoments();
+          result.decisionMoments = decisionSync;
+          logger.info({ decisionSync }, "[decision-detection] sync");
+        } catch (err) {
+          logger.warn({ err }, "[decision-detection] sync failed; legs stay at 'final' confidence");
+        }
+
+        // Best-effort: same idea for spread/moneyline/under legs, via the
+        // "mathematically eliminated" heuristic (see decisionDetection.ts).
+        // Lower-confidence than the exact pass above — flagged as such on
+        // the leg via decidedConfidence: 'heuristic'.
+        try {
+          const heuristicSync = await detectHeuristicDecisionMoments();
+          result.heuristicDecisionMoments = heuristicSync;
+          logger.info({ heuristicSync }, "[decision-detection] heuristic sync");
+        } catch (err) {
+          logger.warn({ err }, "[decision-detection] heuristic sync failed; legs stay at 'final' confidence");
+        }
       }
 
       if (mode === "players" || mode === "all") {
@@ -1126,7 +1151,14 @@ export async function registerRoutes(
   // No body required — scans every prop leg across all leagues.
   app.post("/api/admin/resolve-props", isAuthenticated, auditLog("admin.resolve_props"), async (req, res) => {
     try {
-      const result = await resolvePropsFromStats();
+      const result: Record<string, unknown> = { ...(await resolvePropsFromStats()) };
+
+      try {
+        result.decisionMoments = await detectExactDecisionMoments();
+      } catch (err) {
+        logger.warn({ err }, "[decision-detection] prop sync failed; legs stay at 'final' confidence");
+      }
+
       res.json({ message: "Prop resolution complete", ...result });
     } catch (err: any) {
       logger.error({ err }, "[prop-resolve] error:");

@@ -179,6 +179,9 @@ export interface IStorage {
   setGameFinishedAt(gameId: number, finishedAt: Date): Promise<void>;
   backfillGameFinishedAt(): Promise<{ updated: number }>;
   getDistinctSeasons(): Promise<number[]>;
+  getWonGameLegsPendingDecision(betTypes: string[], leagueId?: number): Promise<(ParlayLeg & { game: Game; season: number; weekNumber: number })[]>;
+  getWonPropLegsPendingDecision(leagueId?: number): Promise<(ParlayLeg & { season: number; weekNumber: number })[]>;
+  setLegDecision(legId: number, info: { decidedAt: Date; decidedPlayDesc: string; decidedQuarter: string; decidedClock: string; decidedConfidence: string }): Promise<void>;
   patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
   getUser(userId: string): Promise<typeof users.$inferSelect | null>;
 
@@ -1739,6 +1742,51 @@ export class DatabaseStorage implements IStorage {
   async getDistinctSeasons(): Promise<number[]> {
     const rows = await db.selectDistinct({ season: weeks.season }).from(weeks);
     return rows.map(r => r.season).sort((a, b) => a - b);
+  }
+
+  // ─── Decision-moment detection (Phase 3) ───────────────────────────────────
+  // Legs whose leg-level result is already a confirmed win (via score/stat
+  // comparison) but whose decidedAt is still unset — candidates for exact
+  // mid-game "when did this actually become a win" detection from
+  // play-by-play data. Only 'win' legs qualify: an over/prop total only ever
+  // crosses its line in one direction (upward), so a loss never has a
+  // deterministic early-decision point — it can only be confirmed at the
+  // final whistle.
+
+  async getWonGameLegsPendingDecision(betTypes: string[], leagueId?: number): Promise<(ParlayLeg & { game: Game; season: number; weekNumber: number })[]> {
+    const rows = await db
+      .select({ leg: parlayLegs, game: games, season: weeks.season, weekNumber: weeks.weekNumber })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(
+        leagueId !== undefined
+          ? and(inArray(parlayLegs.betType, betTypes), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt), eq(parlays.leagueId, leagueId))
+          : and(inArray(parlayLegs.betType, betTypes), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt))
+      );
+    return rows.map(r => ({ ...r.leg, game: r.game, season: r.season, weekNumber: r.weekNumber }));
+  }
+
+  async getWonPropLegsPendingDecision(leagueId?: number): Promise<(ParlayLeg & { season: number; weekNumber: number })[]> {
+    const rows = await db
+      .select({ leg: parlayLegs, season: weeks.season, weekNumber: weeks.weekNumber })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+      .where(
+        leagueId !== undefined
+          ? and(eq(parlayLegs.betType, "player_prop"), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt), eq(parlays.leagueId, leagueId))
+          : and(eq(parlayLegs.betType, "player_prop"), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt))
+      );
+    return rows.map(r => ({ ...r.leg, season: r.season, weekNumber: r.weekNumber }));
+  }
+
+  async setLegDecision(
+    legId: number,
+    info: { decidedAt: Date; decidedPlayDesc: string; decidedQuarter: string; decidedClock: string; decidedConfidence: string }
+  ): Promise<void> {
+    await db.update(parlayLegs).set(info).where(eq(parlayLegs.id, legId));
   }
 
   async patchGameOdds(
