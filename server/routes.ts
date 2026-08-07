@@ -25,6 +25,7 @@ import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
 import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
+import { syncGameFinishTimesFromPlayByPlay } from "./services/playByPlay";
 import { parseTicketImages } from "./services/screenshotParser";
 import multer from "multer";
 
@@ -62,6 +63,11 @@ export async function registerRoutes(
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
   // The override is only applied when a super user has set an active act-as session.
+  //
+  // IMPORTANT: req.user is the same object reference as req.session.passport.user
+  // (passport's deserializeUser passes it through unchanged). Mutating it in place
+  // would permanently rewrite the real super user's identity in the persisted
+  // session — replace req.user with a shallow copy instead of mutating it.
   app.use((req, _res, next) => {
     const session = req.session as any;
     if (
@@ -70,7 +76,11 @@ export async function registerRoutes(
       !req.path.startsWith("/api/superuser") &&
       req.path !== "/api/auth/user"
     ) {
-      (req.user as any).claims.sub = session.actingAsUserId;
+      const realUser = req.user as any;
+      req.user = {
+        ...realUser,
+        claims: { ...realUser.claims, sub: session.actingAsUserId },
+      } as Express.User;
     }
     next();
   });
@@ -87,7 +97,7 @@ export async function registerRoutes(
       const actingAsUserId = (req.session as any).actingAsUserId as string | undefined;
       if (!actingAsUserId) return res.json({ actingAs: null });
       const [actingAsUser] = await db
-        .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName })
+        .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName, settings: users.settings })
         .from(users)
         .where(eq(users.id, actingAsUserId));
       res.json({ actingAs: actingAsUser || null });
@@ -627,6 +637,83 @@ export async function registerRoutes(
     res.json(updated);
   });
 
+  // Maestro confirms the deep link successfully launched their sportsbook app.
+  app.post("/api/parlays/:id/mark-sent", isAuthenticated, auditLog("parlay.mark_sent", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    const parlayId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+
+    const parlay = await storage.getParlay(parlayId);
+    if (!parlay) {
+      return res.status(404).json({ message: "Parlay not found" });
+    }
+
+    const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
+    if (!isAdmin) {
+      return res.status(403).json({ message: "Only the Parlay Maestro can send parlays to a sportsbook" });
+    }
+
+    try {
+      const updated = await storage.markParlaySent(parlayId, userId);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(409).json({ message: err.message });
+    }
+  });
+
+  // Maestro self-confirms they actually placed the bet with the sportsbook.
+  app.post("/api/parlays/:id/mark-placed", isAuthenticated, auditLog("parlay.mark_placed", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    const parlayId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+
+    const parlay = await storage.getParlay(parlayId);
+    if (!parlay) {
+      return res.status(404).json({ message: "Parlay not found" });
+    }
+
+    const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
+    if (!isAdmin) {
+      return res.status(403).json({ message: "Only the Parlay Maestro can confirm a placed bet" });
+    }
+
+    try {
+      const updated = await storage.markParlayPlaced(parlayId, userId);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(409).json({ message: err.message });
+    }
+  });
+
+  // "No, I didn't place it" — reverts a sent parlay back to approved so it can be re-sent.
+  app.post("/api/parlays/:id/revert-to-approved", isAuthenticated, auditLog("parlay.revert_to_approved", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    const parlayId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+
+    const parlay = await storage.getParlay(parlayId);
+    if (!parlay) {
+      return res.status(404).json({ message: "Parlay not found" });
+    }
+
+    const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
+    if (!isAdmin) {
+      return res.status(403).json({ message: "Only the Parlay Maestro can update a sent parlay" });
+    }
+
+    try {
+      const updated = await storage.revertParlayToApproved(parlayId, userId);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(409).json({ message: err.message });
+    }
+  });
+
+  // Parlays this user approved that are awaiting placement confirmation —
+  // used to prompt "did you place this bet?" when the app resumes.
+  app.get("/api/users/me/sent-parlays", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const sentParlays = await storage.getSentParlaysForUser(userId);
+    res.json(sentParlays);
+  });
+
   // ===== ODDS API INTEGRATION =====
   app.get("/api/odds/upcoming", isAuthenticated, async (req, res) => {
     try {
@@ -1002,6 +1089,18 @@ export async function registerRoutes(
         result.scores = scoreSync;
         logger.info({ scoreSync }, "[nflverse] scores sync");
 
+        // Best-effort precision pass: replace the cron-noticed finishedAt
+        // stamp with the real last-play timestamp from play-by-play data.
+        // Never blocks the response — a missing/late pbp file just means we
+        // keep the coarser timestamp from updateGameScores.
+        try {
+          const finishTimeSync = await syncGameFinishTimesFromPlayByPlay(seasonNum, weekNums);
+          result.finishTimes = finishTimeSync;
+          logger.info({ finishTimeSync }, "[play-by-play] finish-time sync");
+        } catch (err) {
+          logger.warn({ err }, "[play-by-play] finish-time sync failed; keeping existing finishedAt");
+        }
+
         // Re-run enrichment after scores are updated
         result.enrichment = await enrichLeagueParlayLegs();
       }
@@ -1095,8 +1194,28 @@ export async function registerRoutes(
       if (!(await storage.isSuperUser(userId))) {
         return res.status(403).json({ message: "Super user access required" });
       }
+
+      // Precision pass first: for every season we have games in, try to
+      // replace finishedAt with the real last-play timestamp from
+      // play-by-play data. Best-effort per season — a season nflverse
+      // doesn't have pbp for (very old, or not yet published) is skipped.
+      const seasons = await storage.getDistinctSeasons();
+      const finishTimeSync = { updated: 0, noMatch: 0, notYetFinished: 0 };
+      for (const season of seasons) {
+        try {
+          const r = await syncGameFinishTimesFromPlayByPlay(season);
+          finishTimeSync.updated += r.updated;
+          finishTimeSync.noMatch += r.noMatch;
+          finishTimeSync.notYetFinished += r.notYetFinished;
+        } catch (err) {
+          logger.warn({ err, season }, "[play-by-play] backfill pass failed for season; continuing");
+        }
+      }
+
+      // Fallback estimate (kickoff + 3.5h) for anything still missing
+      // finishedAt entirely — games pbp coverage didn't reach.
       const result = await storage.backfillGameFinishedAt();
-      res.json({ message: "Backfill complete", ...result });
+      res.json({ message: "Backfill complete", finishTimeSync, ...result });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

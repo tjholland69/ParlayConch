@@ -14,6 +14,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
 import { Avatar } from "@/components/ui/Avatar";
+import { SPORTSBOOK_PROVIDERS, type SportsbookProvider } from "@shared/sportsbook-providers";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -85,6 +86,33 @@ export default function SettingsScreen() {
     onError: () =>
       Alert.alert("Error", "Could not update demo mode. Please try again."),
   });
+
+  const updateSportsbookMutation = useMutation({
+    mutationFn: (preferredSportsbook: SportsbookProvider) =>
+      apiRequest("PATCH", "/api/users/me/settings", { preferredSportsbook }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] }),
+    onError: () =>
+      Alert.alert("Error", "Could not update your sportsbook. Please try again."),
+  });
+
+  const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as
+    | SportsbookProvider
+    | undefined;
+
+  function choosePreferredSportsbook() {
+    Alert.alert(
+      "Preferred Sportsbook",
+      "Used to send approved parlays straight to the right game in your sportsbook app.",
+      [
+        ...Object.values(SPORTSBOOK_PROVIDERS).map((provider) => ({
+          text: provider.label,
+          onPress: () => updateSportsbookMutation.mutate(provider.id),
+        })),
+        { text: "Cancel", style: "cancel" as const },
+      ],
+    );
+  }
 
   const displayName = user?.firstName
     ? `${user.firstName}${user.lastName ? " " + user.lastName : ""}`
@@ -163,6 +191,20 @@ export default function SettingsScreen() {
               />
             )
           }
+        />
+        <Divider />
+        <Row
+          icon="football-outline"
+          iconColor="#2563eb"
+          label="Preferred Sportsbook"
+          value={
+            updateSportsbookMutation.isPending
+              ? "Updating…"
+              : preferredSportsbook
+              ? SPORTSBOOK_PROVIDERS[preferredSportsbook].label
+              : "Not set"
+          }
+          onPress={choosePreferredSportsbook}
         />
       </View>
 

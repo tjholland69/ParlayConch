@@ -77,13 +77,13 @@ const NFLVERSE_ABBREV_TO_SHORT: Record<string, string> = {
   WSH: "Commanders",
 };
 
-function abbrevToShort(abbrev: string): string {
+export function abbrevToShort(abbrev: string): string {
   return NFLVERSE_ABBREV_TO_SHORT[abbrev?.toUpperCase()] ?? abbrev;
 }
 
 // ─── CSV fetch helper ────────────────────────────────────────────────────────
 
-async function fetchCsv(url: string): Promise<Record<string, string>[]> {
+export async function fetchCsv(url: string): Promise<Record<string, string>[]> {
   const res = await fetch(url, {
     headers: { "User-Agent": "parlayconch-app/1.0" },
   });
@@ -485,7 +485,7 @@ function pf(v: string): number | null {
 }
 
 /** Find a game in our DB by matching season → weekId, then by team names */
-async function findGameInDb(
+export async function findGameInDb(
   season: number,
   nflWeek: number,
   homeShort: string,

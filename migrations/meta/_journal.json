@@ -71,6 +71,27 @@
       "when": 1786002000000,
       "tag": "0009_parlay_leg_disputes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1786003000000,
+      "tag": "0010_parlay_sent_placed_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1786064020355,
+      "tag": "0011_pending_schema_drift",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1786064058195,
+      "tag": "0012_parlay_legs_decided_at",
+      "breakpoints": true
     }
   ]
 }

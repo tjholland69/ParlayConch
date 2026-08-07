@@ -1,11 +1,13 @@
 import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlays } from "@/hooks/use-bets";
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown, Search, HelpCircle } from "lucide-react";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -13,6 +15,7 @@ import { formatPickLabel } from "@/lib/formatPick";
 import { format } from "date-fns";
 import { getDisplayName } from "@/lib/displayName";
 import type { ParlayWithLegs, ParlayLegWithParlayContext } from "@shared/schema";
+import { filterLegsByQuery, LEG_QUERY_HELP, filterParlaysByQuery, PARLAY_QUERY_HELP } from "@/lib/historyQuery";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -440,6 +443,8 @@ export default function History() {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [allCollapsed, setAllCollapsed] = useState(true);
   const [legsCollapsed, setLegsCollapsed] = useState(true);
+  const [legQuery, setLegQuery] = useState("");
+  const [parlayQuery, setParlayQuery] = useState("");
 
   const handleCopySlip = async (parlay: Parameters<typeof buildSlipText>[0]) => {
     try {
@@ -456,6 +461,16 @@ export default function History() {
   const { data: parlays, isLoading } = useMyParlayHistory(leagueId);
   const { data: myLegs } = useMyLegHistory(leagueId);
   const [activeTile, setActiveTile] = useState<TileKey | null>(null);
+
+  const filteredMyLegs = useMemo(
+    () => filterLegsByQuery(myLegs ?? [], legQuery),
+    [myLegs, legQuery],
+  );
+
+  const filteredParlays = useMemo(
+    () => filterParlaysByQuery(parlays ?? [], parlayQuery),
+    [parlays, parlayQuery],
+  );
 
   const activeParlays = parlays?.filter(p => p.status !== "void") ?? [];
   const stats = {
@@ -651,9 +666,10 @@ export default function History() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-muted-foreground">
-              {parlays.length} parlay{parlays.length !== 1 ? "s" : ""} I have created
+              {filteredParlays.length} of {parlays.length} parlay{parlays.length !== 1 ? "s" : ""}
+              {parlayQuery.trim() ? " match" : " I have created"}
             </p>
             <button
               onClick={() => setAllCollapsed(c => !c)}
@@ -663,24 +679,54 @@ export default function History() {
               {allCollapsed ? "Expand All" : "Collapse All"}
             </button>
           </div>
-          {parlays.map(parlay => (
-            <HistoryParlayCard
-              key={parlay.id}
-              parlay={parlay}
-              onCopySlip={handleCopySlip}
-              copiedId={copiedId}
-              initialCollapsed={allCollapsed}
-            />
-          ))}
+
+          <div className="relative flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <Input
+                value={parlayQuery}
+                onChange={e => setParlayQuery(e.target.value)}
+                placeholder='Filter parlays: status:win week:"Week 5" type:player_prop -status:void'
+                className="pl-9 bg-background border-white/10 font-mono text-sm"
+                data-testid="input-parlay-query"
+              />
+            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0"
+                >
+                  <HelpCircle className="w-4 h-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs text-xs">{PARLAY_QUERY_HELP}</TooltipContent>
+            </Tooltip>
+          </div>
+
+          {filteredParlays.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic py-2 px-1">No parlays match this query.</p>
+          ) : (
+            filteredParlays.map(parlay => (
+              <HistoryParlayCard
+                key={parlay.id}
+                parlay={parlay}
+                onCopySlip={handleCopySlip}
+                copiedId={copiedId}
+                initialCollapsed={allCollapsed}
+              />
+            ))
+          )}
         </div>
       )}
 
       {/* My Parlay Legs */}
       {!!myLegs?.length && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-muted-foreground">
-              {myLegs.length} leg{myLegs.length !== 1 ? "s" : ""} I have placed
+              {filteredMyLegs.length} of {myLegs.length} leg{myLegs.length !== 1 ? "s" : ""}
+              {legQuery.trim() ? " match" : " I have placed"}
             </p>
             <button
               onClick={() => setLegsCollapsed(c => !c)}
@@ -690,7 +736,40 @@ export default function History() {
               {legsCollapsed ? "Expand" : "Collapse"}
             </button>
           </div>
-          {!legsCollapsed && <LegsWithParlayTable legs={myLegs} />}
+
+          {!legsCollapsed && (
+            <>
+              <div className="relative flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                  <Input
+                    value={legQuery}
+                    onChange={e => setLegQuery(e.target.value)}
+                    placeholder='Filter legs: result:win type:player_prop player:"Josh Allen" -status:void'
+                    className="pl-9 bg-background border-white/10 font-mono text-sm"
+                    data-testid="input-leg-query"
+                  />
+                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0"
+                    >
+                      <HelpCircle className="w-4 h-4" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-xs">{LEG_QUERY_HELP}</TooltipContent>
+                </Tooltip>
+              </div>
+
+              {filteredMyLegs.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic py-2 px-1">No legs match this query.</p>
+              ) : (
+                <LegsWithParlayTable legs={filteredMyLegs} />
+              )}
+            </>
+          )}
         </div>
       )}
 
