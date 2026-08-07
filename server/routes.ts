@@ -1639,6 +1639,32 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/leagues/:leagueId/weeks/:weekId/missing-parlay-members", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const weekId = Number(req.params.weekId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const missing = await storage.getMissingParlayMembers(leagueId, weekId);
+      res.json(missing);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/leagues/:leagueId/weeks/:weekId/backfill-missing-parlays", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const weekId = Number(req.params.weekId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const created = await storage.backfillMissingParlays(leagueId, weekId);
+      res.json({ message: `Backfilled ${created.length} missing parlay(s) as Void`, parlays: created });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   const CLONEABLE_PARLAY_STATUSES = ["approved", "win", "loss", "push"];
 
   app.post("/api/parlays/:id/clone", isAuthenticated, auditLog("parlay.clone", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
