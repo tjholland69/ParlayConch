@@ -24,7 +24,7 @@ import { uploadDisputeScreenshot, getDisputeScreenshotUrl } from "./disputeStora
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
-import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
+import { syncGameScoresFromNflverse, syncGameTimesFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
 import { syncGameFinishTimesFromPlayByPlay } from "./services/playByPlay";
 import { detectExactDecisionMoments, detectHeuristicDecisionMoments } from "./services/decisionDetection";
 import { parseTicketImages } from "./services/screenshotParser";
@@ -1089,6 +1089,18 @@ export async function registerRoutes(
         const scoreSync = await syncGameScoresFromNflverse(seasonNum, weekNums);
         result.scores = scoreSync;
         logger.info({ scoreSync }, "[nflverse] scores sync");
+
+        // Correct games.gameTime from the real schedule — historical imports
+        // that lacked a real date left some rows stamped with the import
+        // date instead of kickoff. Best-effort: a schedule fetch hiccup here
+        // shouldn't block the score sync that already succeeded.
+        try {
+          const gameTimeSync = await syncGameTimesFromNflverse(seasonNum, weekNums);
+          result.gameTimes = gameTimeSync;
+          logger.info({ gameTimeSync }, "[nflverse] gameTime sync");
+        } catch (err) {
+          logger.warn({ err }, "[nflverse] gameTime sync failed; existing gameTime values kept");
+        }
 
         // Best-effort precision pass: replace the cron-noticed finishedAt
         // stamp with the real last-play timestamp from play-by-play data.

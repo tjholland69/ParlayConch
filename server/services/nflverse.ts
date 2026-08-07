@@ -199,6 +199,37 @@ interface NflverseScheduleRow {
   stadium: string;
   roof: string;
   surface: string;
+  gameday: string; // e.g. "2023-01-08"
+  gametime: string; // e.g. "13:00" (24h, America/New_York) — blank for some very old games
+}
+
+/**
+ * Minutes `timeZone` is offset from UTC at the given instant (e.g. -300 for
+ * EST, -240 for EDT), read via Intl rather than a timezone-database
+ * dependency. Correctly accounts for DST since it's resolved per-instant.
+ */
+function getUtcOffsetMinutes(instant: Date, timeZone: string): number {
+  const part = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset", hour: "2-digit" })
+    .formatToParts(instant)
+    .find(p => p.type === "timeZoneName")?.value ?? "";
+  const match = part.match(/GMT([+-])(\d{2}):(\d{2})/);
+  if (!match) return 0;
+  const sign = match[1] === "-" ? -1 : 1;
+  return sign * (parseInt(match[2], 10) * 60 + parseInt(match[3], 10));
+}
+
+/**
+ * Converts a wall-clock date/time as observed in `timeZone` to the UTC
+ * instant it actually represents. Note: this must NOT rely on the server
+ * process's own local timezone (e.g. via Date string parsing without an
+ * explicit offset) — that would silently produce the wrong instant on any
+ * host not running in UTC. Resolving the offset via Intl.formatToParts
+ * keeps this correct regardless of the server's TZ setting.
+ */
+function zonedWallTimeToUtc(dateStr: string, timeStr: string, timeZone: string): Date {
+  const asIfUtc = new Date(`${dateStr}T${timeStr}:00Z`);
+  const offsetMinutes = getUtcOffsetMinutes(asIfUtc, timeZone);
+  return new Date(asIfUtc.getTime() - offsetMinutes * 60_000);
 }
 
 /**
@@ -276,6 +307,63 @@ export async function syncGameScoresFromNflverse(
   return { updated, noMatch, alreadyFinal };
 }
 
+/**
+ * Corrects `games.gameTime` using the real kickoff date/time from the
+ * nflverse schedule CSV (`gameday` + `gametime`, both America/New_York wall
+ * clock). Historical-import paths that lacked a real date left some games
+ * with `gameTime` set to whatever day the import ran on — this repairs
+ * those (and anything else drifted) by matching on season + week + teams,
+ * the same way syncGameScoresFromNflverse does.
+ *
+ * Runs over every row for the season/weeks, not just played games, so it
+ * also corrects rows for games that haven't kicked off yet.
+ */
+export async function syncGameTimesFromNflverse(
+  season: number,
+  weekNumbers?: number[]
+): Promise<{ updated: number; noMatch: number; noScheduleTime: number }> {
+  logger.info(`[nflverse] Fetching schedules for gameTime sync, season ${season}…`);
+  const rows = (await fetchCsv(schedulesUrl())) as unknown as NflverseScheduleRow[];
+
+  const relevant = rows.filter((r) => {
+    if (parseInt(r.season) !== season) return false;
+    if (weekNumbers && weekNumbers.length > 0) {
+      return weekNumbers.includes(parseInt(r.week));
+    }
+    return true;
+  });
+
+  let updated = 0;
+  let noMatch = 0;
+  let noScheduleTime = 0;
+
+  for (const row of relevant) {
+    if (!row.gameday) {
+      noScheduleTime++;
+      continue;
+    }
+
+    const nflWeek = parseInt(row.week);
+    const homeShort = abbrevToShort(row.home_team);
+    const awayShort = abbrevToShort(row.away_team);
+
+    const game = await findGameInDb(season, nflWeek, homeShort, awayShort);
+    if (!game) {
+      noMatch++;
+      continue;
+    }
+
+    // Very old schedule rows sometimes have no kickoff time — default to
+    // the early-afternoon slot most games actually use rather than
+    // skipping the date correction entirely.
+    const gameTime = zonedWallTimeToUtc(row.gameday, row.gametime || "13:00", "America/New_York");
+    await storage.updateGameTime(game.id, gameTime);
+    updated++;
+  }
+
+  return { updated, noMatch, noScheduleTime };
+}
+
 // ─── Player stats sync ───────────────────────────────────────────────────────
 
 interface NflversePlayerStatRow {
@@ -330,6 +418,9 @@ interface NflversePlayerStatRow {
   air_yards_share: string;
   wopr: string;
   special_teams_tds: string;
+  def_sacks: string;
+  def_tackles_solo: string;
+  def_tackles_with_assist: string;
   fantasy_points: string;
   fantasy_points_ppr: string;
   headshot_url: string;
@@ -405,6 +496,9 @@ async function upsertPlayerStatsRows(
       targets: p(row.targets),
       receivingYards: p(row.receiving_yards),
       receivingTds: p(row.receiving_tds),
+      defSacks: pf(row.def_sacks),
+      defTacklesSolo: p(row.def_tackles_solo),
+      defTacklesWithAssist: p(row.def_tackles_with_assist),
       fantasyPoints: pf(row.fantasy_points),
       fantasyPointsPpr: pf(row.fantasy_points_ppr),
     });

@@ -185,6 +185,7 @@ export interface IStorage {
   getWonPropLegsPendingDecision(leagueId?: number): Promise<(ParlayLeg & { season: number; weekNumber: number })[]>;
   setLegDecision(legId: number, info: { decidedAt: Date; decidedPlayDesc: string; decidedQuarter: string; decidedClock: string; decidedConfidence: string }): Promise<void>;
   patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
+  updateGameTime(gameId: number, gameTime: Date): Promise<void>;
   getUser(userId: string): Promise<typeof users.$inferSelect | null>;
 
   // nflverse / Players
@@ -1705,11 +1706,17 @@ export class DatabaseStorage implements IStorage {
     const existing = await this.findGameByTeams(weekId, homeTeam, awayTeam);
     if (existing) return existing;
 
+    // Never fabricate a kickoff time — a caller-supplied gameDate is used as
+    // given, but without one this must stay null (not "now"). Callers and
+    // display code already treat a missing gameTime as "Time TBD"; a fake
+    // "now" timestamp masquerades as real data instead and is exactly what
+    // corrupted games.gameTime for historical imports before. A later
+    // syncGameTimesFromNflverse run fills the real date in from the schedule.
     const [created] = await db.insert(games).values({
       weekId,
       homeTeam: homeTeam.trim(),
       awayTeam: awayTeam.trim(),
-      gameTime: gameDate ?? new Date(),
+      gameTime: gameDate ?? null,
       isFinished: false,
     }).returning();
     return created;
@@ -1759,6 +1766,16 @@ export class DatabaseStorage implements IStorage {
    */
   async setGameFinishedAt(gameId: number, finishedAt: Date): Promise<void> {
     await db.update(games).set({ finishedAt }).where(eq(games.id, gameId));
+  }
+
+  /**
+   * Overwrites a game's kickoff timestamp — used to correct rows whose
+   * gameTime was never the real kickoff (e.g. historical imports that
+   * defaulted to the import date) with the actual date/time from a
+   * schedule source like nflverse.
+   */
+  async updateGameTime(gameId: number, gameTime: Date): Promise<void> {
+    await db.update(games).set({ gameTime }).where(eq(games.id, gameId));
   }
 
   /**

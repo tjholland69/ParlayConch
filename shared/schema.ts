@@ -596,6 +596,12 @@ export const playerWeekStats = pgTable("player_week_stats", {
   targets: integer("targets"),
   receivingYards: integer("receiving_yards"),
   receivingTds: integer("receiving_tds"),
+  // Defense — "tackles" prop lines are conventionally solo + assist combined;
+  // kept as two columns (rather than pre-summed) so solo-only lines can be
+  // supported later without a schema change.
+  defSacks: real("def_sacks"),
+  defTacklesSolo: integer("def_tackles_solo"),
+  defTacklesWithAssist: integer("def_tackles_with_assist"),
   // Scoring / Fantasy
   fantasyPoints: real("fantasy_points"),
   fantasyPointsPpr: real("fantasy_points_ppr"),
