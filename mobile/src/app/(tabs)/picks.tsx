@@ -7,54 +7,82 @@ import {
   Pressable,
 } from "react-native";
 import { useState, useEffect } from "react";
-import * as Linking from "expo-linking";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useLeagues } from "@/hooks/use-leagues";
+import { useLeagues, useWeekLockStatus } from "@/hooks/use-leagues";
 import { useActiveWeek } from "@/hooks/use-weeks";
 import { useMyParlay } from "@/hooks/use-parlays";
 import { format, formatDistanceToNow, isPast } from "date-fns";
 
-function ParlayStatusRow({ leagueId, weekId, leagueName, onPress }: {
+function ParlayStatusRow({
+  leagueId,
+  weekId,
+  leagueName,
+}: {
   leagueId: number;
   weekId: number;
   leagueName: string;
-  onPress: () => void;
 }) {
+  const router = useRouter();
   const { data: parlay, isLoading } = useMyParlay(leagueId, weekId);
+  const { data: lockStatus } = useWeekLockStatus(leagueId, weekId);
+  const isLocked = !!lockStatus?.isLocked;
 
   const statusConfig = (() => {
-    if (!parlay) return {
-      icon: "alert-circle-outline" as const,
-      iconColor: "#f59e0b",
-      label: "Not submitted",
-      sublabel: "Tap to view league",
-      bg: "#1c1a0a",
-      border: "#3d2e00",
-    };
-    if (parlay.status === "approved") return {
-      icon: "checkmark-circle" as const,
-      iconColor: "#22c55e",
-      label: "Approved",
-      sublabel: `${parlay.legs?.length ?? 0} legs`,
-      bg: "#0a1c14",
-      border: "#1a3d28",
-    };
-    if (parlay.status === "rejected") return {
-      icon: "close-circle" as const,
-      iconColor: "#ef4444",
-      label: "Rejected",
-      sublabel: `${parlay.legs?.length ?? 0} legs`,
-      bg: "#1c0a0a",
-      border: "#3d1a1a",
-    };
+    if (!parlay && isLocked) {
+      return {
+        icon: "lock-closed" as const,
+        iconColor: "#ef4444",
+        label: "Missed — week locked",
+        sublabel: "Tap to view league",
+        bg: "#1c0a0a",
+        border: "#3d1a1a",
+        action: "view" as const,
+      };
+    }
+    if (!parlay) {
+      return {
+        icon: "alert-circle-outline" as const,
+        iconColor: "#f59e0b",
+        label: "Not submitted",
+        sublabel: "Tap to build your pick",
+        bg: "#1c1a0a",
+        border: "#3d2e00",
+        action: "build" as const,
+      };
+    }
+    if (parlay.status === "approved") {
+      return {
+        icon: "checkmark-circle" as const,
+        iconColor: "#22c55e",
+        label: "Approved",
+        sublabel: `${parlay.legs?.length ?? 0} legs`,
+        bg: "#0a1c14",
+        border: "#1a3d28",
+        action: "view" as const,
+      };
+    }
+    if (parlay.status === "rejected") {
+      return {
+        icon: "close-circle" as const,
+        iconColor: "#ef4444",
+        label: "Rejected",
+        sublabel: isLocked ? "Week locked" : "Tap to edit and resubmit",
+        bg: "#1c0a0a",
+        border: "#3d1a1a",
+        action: isLocked ? ("view" as const) : ("build" as const),
+      };
+    }
     return {
       icon: "time-outline" as const,
       iconColor: "#94a3b8",
       label: "Pending review",
-      sublabel: `${parlay.legs?.length ?? 0} legs`,
+      sublabel: isLocked
+        ? `${parlay.legs?.length ?? 0} legs`
+        : `${parlay.legs?.length ?? 0} legs · tap to edit`,
       bg: "#141926",
       border: "#2a3447",
+      action: isLocked ? ("view" as const) : ("build" as const),
     };
   })();
 
@@ -68,7 +96,19 @@ function ParlayStatusRow({ leagueId, weekId, leagueName, onPress }: {
 
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        if (statusConfig.action === "build") {
+          router.push({
+            pathname: "/leagues/[id]/build",
+            params: { id: String(leagueId) },
+          });
+        } else {
+          router.push({
+            pathname: "/leagues/[id]",
+            params: { id: String(leagueId) },
+          });
+        }
+      }}
       style={({ pressed }) => [
         styles.parlayCard,
         { backgroundColor: statusConfig.bg, borderColor: statusConfig.border },
@@ -79,13 +119,19 @@ function ParlayStatusRow({ leagueId, weekId, leagueName, onPress }: {
         <Ionicons name={statusConfig.icon} size={24} color={statusConfig.iconColor} />
       </View>
       <View style={styles.parlayCardContent}>
-        <Text style={styles.parlayLeagueName} numberOfLines={1}>{leagueName}</Text>
+        <Text style={styles.parlayLeagueName} numberOfLines={1}>
+          {leagueName}
+        </Text>
         <Text style={styles.parlayStatusLabel}>{statusConfig.label}</Text>
-        {statusConfig.sublabel && (
+        {statusConfig.sublabel ? (
           <Text style={styles.parlaySubLabel}>{statusConfig.sublabel}</Text>
-        )}
+        ) : null}
       </View>
-      <Ionicons name="chevron-forward" size={16} color="#475569" />
+      <Ionicons
+        name={statusConfig.action === "build" ? "create-outline" : "chevron-forward"}
+        size={16}
+        color="#475569"
+      />
     </Pressable>
   );
 }
@@ -93,12 +139,12 @@ function ParlayStatusRow({ leagueId, weekId, leagueName, onPress }: {
 export default function PicksScreen() {
   const { data: leagues, isLoading: leaguesLoading } = useLeagues();
   const activeWeek = useActiveWeek();
-  const router = useRouter();
 
-  const deadline = (activeWeek as any)?.deadline ? new Date((activeWeek as any).deadline) : null;
+  const deadline = (activeWeek as any)?.deadline
+    ? new Date((activeWeek as any).deadline)
+    : null;
   const deadlinePast = deadline ? isPast(deadline) : false;
 
-  // Re-render every minute so the countdown stays current
   const [, tick] = useState(0);
   useEffect(() => {
     if (!deadline || deadlinePast) return;
@@ -130,7 +176,6 @@ export default function PicksScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Week header */}
       {activeWeek ? (
         <View style={styles.weekBanner}>
           <View style={styles.weekBannerLeft}>
@@ -170,24 +215,10 @@ export default function PicksScreen() {
               leagueId={league.id}
               weekId={activeWeek.id}
               leagueName={league.name}
-              onPress={() => router.push(`/leagues/${league.id}`)}
             />
           ))}
         </>
       )}
-
-      {/* Web app nudge */}
-      <Pressable
-        style={({ pressed }) => [styles.webNudge, pressed && styles.pressed]}
-        onPress={() => Linking.openURL("https://parlayconch.com")}
-      >
-        <Ionicons name="globe-outline" size={16} color="#475569" />
-        <Text style={styles.webNudgeText}>
-          Submit and edit picks at{" "}
-          <Text style={styles.webNudgeLink}>parlayconch.com</Text>
-        </Text>
-        <Ionicons name="open-outline" size={14} color="#475569" />
-      </Pressable>
     </ScrollView>
   );
 }
@@ -278,17 +309,4 @@ const styles = StyleSheet.create({
   parlayStatusLabel: { fontSize: 13, color: "#94a3b8" },
   parlaySubLabel: { fontSize: 12, color: "#475569", marginTop: 1 },
   pressed: { opacity: 0.75 },
-  webNudge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    marginTop: 20,
-    padding: 14,
-    backgroundColor: "#1c2538",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#2a3447",
-  },
-  webNudgeText: { fontSize: 13, color: "#475569", flex: 1 },
-  webNudgeLink: { color: "#2563eb", fontWeight: "600" },
 });

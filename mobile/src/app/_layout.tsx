@@ -48,8 +48,12 @@ export default function RootLayout() {
               <Stack.Screen name="login" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen
-                name="leagues/[id]"
+                name="leagues/[id]/index"
                 options={{ headerBackTitle: "Leagues" }}
+              />
+              <Stack.Screen
+                name="leagues/[id]/build"
+                options={{ headerBackTitle: "Back", title: "Build Pick" }}
               />
             </Stack>
           </AuthGuard>

@@ -10,8 +10,8 @@ export function useWeeks() {
 
 export function useGames(weekId: number) {
   return useQuery<GameWithBet[]>({
-    queryKey: ["/api/games", weekId],
-    queryFn: async () => apiRequest("GET", `/api/games?weekId=${weekId}`),
+    queryKey: ["/api/weeks", weekId, "games"],
+    queryFn: async () => apiRequest("GET", `/api/weeks/${weekId}/games`),
     enabled: !!weekId,
   });
 }

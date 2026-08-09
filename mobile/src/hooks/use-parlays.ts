@@ -47,6 +47,8 @@ export function useCreateParlay(leagueId: number) {
     onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", vars.weekId, "parlays"] });
       queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", vars.weekId, "my-parlay"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", vars.weekId, "lock"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues/active-week-status"] });
     },
   });
 }
