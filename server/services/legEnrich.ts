@@ -5,6 +5,7 @@ import { parlayLegs, games, players, playerWeekStats } from "@shared/schema";
 import type { Game, ParlayLeg, PlayerWeekStat, Player } from "@shared/schema";
 import { storage } from "../storage";
 import { syncGameScoresFromNflverse, syncAllPlayerStatsForWeek } from "./nflverse";
+import { getHistoricalGameLines } from "./historicalOddsCache";
 import { buildResultDetail } from "@shared/legJustification";
 
 export type EnrichLog = {
@@ -14,7 +15,13 @@ export type EnrichLog = {
   errors: string[];
 };
 
-function calculateLegResult(betType: string, pick: string, game: Game): "win" | "loss" | "push" | null {
+/**
+ * `line` is the line to grade against — pass the leg's own actual line
+ * (what the bettor took) when known; only fall back to the game's current
+ * spread/overUnder (`game.spread`/`game.overUnder`) when the leg has none,
+ * since the current line can drift from what was actually bet.
+ */
+function calculateLegResult(betType: string, pick: string, game: Game, line?: string | null): "win" | "loss" | "push" | null {
   const homeScore = game.homeScore;
   const awayScore = game.awayScore;
   if (homeScore == null || awayScore == null) return null;
@@ -25,14 +32,14 @@ function calculateLegResult(betType: string, pick: string, game: Game): "win" | 
     if (pick === "away") return scoreDiff < 0 ? "win" : scoreDiff > 0 ? "loss" : "push";
   }
   if (betType === "spread") {
-    const spread = parseFloat(game.spread ?? "0");
+    const spread = parseFloat(line ?? game.spread ?? "0");
     const adj = scoreDiff + spread;
     if (pick === "home") return adj > 0 ? "win" : adj < 0 ? "loss" : "push";
     if (pick === "away") return adj < 0 ? "win" : adj > 0 ? "loss" : "push";
   }
   if (betType === "over" || betType === "under") {
     const total = homeScore + awayScore;
-    const ou = parseFloat(game.overUnder ?? "0");
+    const ou = parseFloat(line ?? game.overUnder ?? "0");
     if (ou === 0) return null;
     if (betType === "over") return total > ou ? "win" : total < ou ? "loss" : "push";
     if (betType === "under") return total < ou ? "win" : total > ou ? "loss" : "push";
@@ -43,8 +50,7 @@ function calculateLegResult(betType: string, pick: string, game: Game): "win" | 
 function deriveApproximateLine(betType: string, pick: string, game: Game): string | null {
   if (betType === "spread") return game.spread ?? null;
   if (betType === "moneyline") return pick === "home" ? (game.moneylineHome ?? null) : (game.moneylineAway ?? null);
-  if (betType === "over") return game.overUnder ? `o${game.overUnder}` : null;
-  if (betType === "under") return game.overUnder ? `u${game.overUnder}` : null;
+  if (betType === "over" || betType === "under") return game.overUnder ?? null;
   return null;
 }
 
@@ -246,12 +252,52 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
       if (!freshGame.isFinished) {
         log.warnings.push("Game is not yet marked as finished — nflverse data typically arrives ~24h after the final whistle");
       } else {
+        // Resolve the line to grade against *before* calculating the result,
+        // so grading uses the leg's own line (or the closest historical
+        // approximation of it) instead of whatever the current game record
+        // happens to show — the market can move well past what was actually bet.
+        let resolvedLine = leg.line;
+        let lineSource: "leg" | "historical" | "current" | null = leg.line ? "leg" : null;
+
+        if (!resolvedLine && freshGame.gameTime) {
+          try {
+            const historicalLines = await getHistoricalGameLines(
+              season, weekNumber, freshGame.homeTeam, freshGame.awayTeam,
+              freshGame.gameTime, parlay.createdAt ?? new Date()
+            );
+            if (historicalLines) {
+              resolvedLine = deriveApproximateLine(leg.betType, leg.pick, { ...freshGame, ...historicalLines });
+              if (resolvedLine) lineSource = "historical";
+            }
+          } catch (err: any) {
+            log.warnings.push(`Historical odds lookup failed, falling back to current line: ${err.message}`);
+          }
+        }
+
+        if (!resolvedLine) {
+          resolvedLine = deriveApproximateLine(leg.betType, leg.pick, freshGame);
+          if (resolvedLine) lineSource = "current";
+        }
+
+        if (!leg.line && resolvedLine) {
+          await storage.updateParlayLeg(legId, { line: resolvedLine });
+          log.changes.push(
+            lineSource === "historical"
+              ? `✓ Line filled from historical odds snapshot: ${resolvedLine}`
+              : `✓ Line filled from current game record (approximate): ${resolvedLine}`
+          );
+        } else if (!leg.line) {
+          log.warnings.push("No line/odds data found for this game");
+        } else {
+          log.changes.push(`Line already set to "${leg.line}" — no change`);
+        }
+
         if (!leg.result) {
-          const result = calculateLegResult(leg.betType, leg.pick, freshGame);
+          const result = calculateLegResult(leg.betType, leg.pick, freshGame, resolvedLine);
           if (result) {
             const resultDetail = buildResultDetail({ leg, game: freshGame });
             await storage.updateParlayLeg(legId, { result, resultDetail });
-            log.changes.push(`✓ Result set to "${result}"`);
+            log.changes.push(`✓ Result set to "${result}" (graded against line: ${resolvedLine ?? "game default"})`);
             // Roll up the parlay status now that this leg is resolved
             await storage.rollupParlayStatus(leg.parlayId);
             log.changes.push(`↑ Parlay status rolled up`);
@@ -260,18 +306,6 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
           }
         } else {
           log.warnings.push(`Result already set to "${leg.result}" — no change made`);
-        }
-
-        if (!leg.line) {
-          const line = deriveApproximateLine(leg.betType, leg.pick, freshGame);
-          if (line) {
-            await storage.updateParlayLeg(legId, { line });
-            log.changes.push(`✓ Line filled from nflverse: ${line}`);
-          } else {
-            log.warnings.push("No line/odds data found in nflverse for this game");
-          }
-        } else {
-          log.changes.push(`Line already set to "${leg.line}" — no change`);
         }
       }
     }

@@ -49,7 +49,7 @@ describe("server/replit_integrations/batch/utils", () => {
         concurrency: 3,
         retries: 0,
         onProgress: (completed, total, item) =>
-          events.push({ completed, total, item }),
+          events.push({ completed, total, item: item as number }),
       });
 
       expect(events.map((e) => e.completed)).toEqual([1, 2, 3]);

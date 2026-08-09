@@ -17,9 +17,13 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
     .from(leagueMembers)
     .where(eq(leagueMembers.userId, userId));
 
+  const [{ parlaysPlaced }] = await db
+    .select({ parlaysPlaced: sql<number>`count(*)` })
+    .from(parlays)
+    .where(eq(parlays.userId, userId));
+
   const [row] = await db
     .select({
-      parlaysPlaced: sql<number>`count(distinct ${parlayLegs.parlayId})`,
       legsPlaced: sql<number>`count(*)`,
       legWins: sql<number>`count(*) filter (where ${parlayLegs.result} = 'win')`,
       legLosses: sql<number>`count(*) filter (where ${parlayLegs.result} = 'loss')`,
@@ -33,7 +37,7 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
 
   return {
     leagueCount: Number(leagueCount ?? 0),
-    parlaysPlaced: Number(row?.parlaysPlaced ?? 0),
+    parlaysPlaced: Number(parlaysPlaced ?? 0),
     legsPlaced: Number(row?.legsPlaced ?? 0),
     legWins,
     legLosses,

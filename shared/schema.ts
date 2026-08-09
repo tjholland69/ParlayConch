@@ -110,6 +110,27 @@ export const games = pgTable("games", {
   index("games_week_teams_idx").on(table.weekId, table.homeTeam, table.awayTeam),
 ]);
 
+// Cached snapshots from The Odds API's historical endpoint, used to backfill
+// game-market lines/odds (spread/total/moneyline) closer to what they actually
+// were when a bet was placed, instead of whatever the `games` row holds today.
+// One row covers every game in that week's slate as of a given snapshot time —
+// games sharing a kickoff window (e.g. the early Sunday slate) share a row, and
+// once a game is in the past the odds never change, so rows are cached forever
+// (no TTL/invalidation needed).
+export const historicalOddsSnapshots = pgTable("historical_odds_snapshots", {
+  id: serial("id").primaryKey(),
+  season: integer("season").notNull(),
+  weekNumber: integer("week_number").notNull(),
+  // 'open' for the early-week line, or an ISO timestamp for a closing-line
+  // snapshot tied to a specific kickoff slot.
+  bucketLabel: text("bucket_label").notNull(),
+  snapshotAt: timestamp("snapshot_at").notNull(), // the `date` param sent to the historical API
+  payload: jsonb("payload").notNull(), // raw odds-api game list for that snapshot (all teams)
+  fetchedAt: timestamp("fetched_at").defaultNow(),
+}, (table) => [
+  uniqueIndex("historical_odds_snapshots_scope_idx").on(table.season, table.weekNumber, table.bucketLabel),
+]);
+
 // Leagues - groups of users
 export const leagues = pgTable("leagues", {
   id: serial("id").primaryKey(),
