@@ -3,7 +3,6 @@ import "express-async-errors";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { storage } from "./storage";
 import { logger, httpLogger } from "./logger";
 import { startAuditWriter } from "./jobs/audit-queue";
 
@@ -94,17 +93,8 @@ app.use(httpLogger);
     () => {
       log(`serving on port ${port}`);
       startAuditWriter();
-
-      // One-time backfill: promote fully-resolved parlays from 'approved'/'pending'
-      // to win/loss/push so the Dashboard leaderboard shows real data.
-      // Runs every startup but is fully idempotent — skips terminal-status parlays.
-      storage.rollupLeagueParlayStatuses().then(result => {
-        if (result.updated > 0) {
-          log(`[startup] parlay status rollup: ${result.updated} promoted, ${result.skipped} skipped`);
-        }
-      }).catch(err => {
-        logger.error({ err }, "[startup] parlay status rollup failed");
-      });
+      // Parlay status rollup runs after enrichment / explicit admin endpoints —
+      // not on every boot (was a full-table N+1 scan).
     },
   );
 })();

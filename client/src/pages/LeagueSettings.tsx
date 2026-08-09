@@ -29,6 +29,7 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { getDisplayName } from "@/lib/displayName";
+import { PageLoader } from "@/components/PageLoader";
 import {
   Settings,
   Users,
@@ -457,11 +458,7 @@ export default function LeagueSettings() {
   }, [league]);
 
   if (!league) {
-    return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="w-10 h-10 text-primary animate-spin" />
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (!league.isAdmin) {

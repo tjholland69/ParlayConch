@@ -1,5 +1,6 @@
-import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlays } from "@/hooks/use-bets";
-import { useState, useEffect, useMemo, Fragment } from "react";
+import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, flattenParlayPages } from "@/hooks/use-bets";
+import { useState, useEffect, useMemo, useRef, Fragment, memo } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -16,38 +17,13 @@ import { format } from "date-fns";
 import { getDisplayName } from "@/lib/displayName";
 import type { ParlayWithLegs, ParlayLegWithParlayContext } from "@shared/schema";
 import { filterLegsByQuery, LEG_QUERY_HELP, filterParlaysByQuery, PARLAY_QUERY_HELP } from "@/lib/historyQuery";
+import { resultColor, getStatusVariant } from "@/lib/parlayStatusStyles";
+import { legMatchup } from "@/lib/legLabel";
+import { PageLoader } from "@/components/PageLoader";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const resultColor = (r: string | null | undefined) =>
-  r === "win" ? "text-green-400" :
-  r === "loss" ? "text-red-400" :
-  r === "push" ? "text-blue-400" :
-  "text-muted-foreground";
-
-const getStatusVariant = (status: string | null): "default" | "destructive" | "secondary" | "outline" => {
-  switch (status) {
-    case "win": return "default";
-    case "loss": return "destructive";
-    case "push": return "secondary";
-    case "approved": return "outline";
-    case "rejected": return "destructive";
-    case "void": return "outline";
-    default: return "secondary";
-  }
-};
-
 type TileKey = "total" | "wins" | "losses" | "winRate" | "gameLegs" | "gameWinRate" | "propLegs" | "propWinRate";
-
-function legMatchup(leg: any) {
-  if (leg.betType === "player_prop") {
-    const propLabel = leg.propType
-      ? leg.propType.replace(/_/g, " ").replace(/\b\w/g, (c: string) => c.toUpperCase())
-      : null;
-    return `${leg.playerName || "Player"}${propLabel ? ` — ${propLabel}` : ""}`;
-  }
-  return `${leg.game?.awayTeam ?? "?"} @ ${leg.game?.homeTeam ?? "?"}`;
-}
 
 // ── LegTable ─────────────────────────────────────────────────────────────────
 
@@ -203,7 +179,7 @@ function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
 
 // ── HistoryParlayCard ─────────────────────────────────────────────────────────
 
-function HistoryParlayCard({
+const HistoryParlayCard = memo(function HistoryParlayCard({
   parlay,
   onCopySlip,
   copiedId,
@@ -221,10 +197,21 @@ function HistoryParlayCard({
   }, [initialCollapsed]);
   const [showAll, setShowAll] = useState(false);
 
-  const { data: allLeagueParlays, isLoading: loadingAll } = useAllLeagueParlays(
-    parlay.leagueId,
-    showAll,
-  );
+  const {
+    data: allLeagueParlaysPages,
+    isLoading: loadingAll,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useAllLeagueParlaysReadOnly(parlay.leagueId, showAll);
+
+  useEffect(() => {
+    if (showAll && hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
+    }
+  }, [showAll, hasNextPage, isFetchingNextPage, fetchNextPage]);
+
+  const allLeagueParlays = flattenParlayPages(allLeagueParlaysPages);
 
   const otherParlays = showAll
     ? (allLeagueParlays ?? []).filter(p => p.weekId === parlay.weekId && p.id !== parlay.id)
@@ -432,7 +419,7 @@ function HistoryParlayCard({
       )}
     </Card>
   );
-}
+});
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -472,6 +459,15 @@ export default function History() {
     [parlays, parlayQuery],
   );
 
+  const parentRef = useRef<HTMLDivElement>(null);
+  const shouldVirtualize = filteredParlays.length > 20;
+  const rowVirtualizer = useVirtualizer({
+    count: shouldVirtualize ? filteredParlays.length : 0,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 160,
+    overscan: 4,
+  });
+
   const activeParlays = parlays?.filter(p => p.status !== "void") ?? [];
   const stats = {
     total: activeParlays.length,
@@ -508,11 +504,7 @@ export default function History() {
       : "—";
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="w-10 h-10 text-primary animate-spin" />
-      </div>
-    );
+    return <PageLoader />;
   }
 
   const tileInfo: Record<TileKey, { title: string; kind: "parlays"; items: ParlayWithLegs[] } | { title: string; kind: "legs"; items: typeof allLegs }> = {
@@ -706,6 +698,36 @@ export default function History() {
 
           {filteredParlays.length === 0 ? (
             <p className="text-sm text-muted-foreground italic py-2 px-1">No parlays match this query.</p>
+          ) : shouldVirtualize ? (
+            <div
+              ref={parentRef}
+              className="max-h-[70vh] overflow-y-auto"
+            >
+              <div
+                className="relative w-full"
+                style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+              >
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const parlay = filteredParlays[virtualRow.index]!;
+                  return (
+                    <div
+                      key={parlay.id}
+                      data-index={virtualRow.index}
+                      ref={rowVirtualizer.measureElement}
+                      className="absolute top-0 left-0 w-full pb-4"
+                      style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    >
+                      <HistoryParlayCard
+                        parlay={parlay}
+                        onCopySlip={handleCopySlip}
+                        copiedId={copiedId}
+                        initialCollapsed={allCollapsed}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
           ) : (
             filteredParlays.map(parlay => (
               <HistoryParlayCard

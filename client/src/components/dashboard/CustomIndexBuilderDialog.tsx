@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
-import { PLAYER_PROP_TYPES, type CustomIndexWithAccess } from "@shared/schema";
+import { type CustomIndexWithAccess } from "@shared/schema";
 import { useLeagues } from "@/hooks/use-bets";
 import { useCreateCustomIndex, useUpdateCustomIndex, useLeagueMembers } from "@/hooks/use-custom-indexes";
 import { MultiSelect } from "@/components/MultiSelect";
@@ -12,16 +12,9 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { getDisplayName } from "@/lib/displayName";
+import { BET_TYPE_OPTIONS, PROP_TYPE_OPTIONS } from "@/lib/bettingConstants";
 
-export const BET_TYPES = [
-  { value: "spread", label: "Spread" },
-  { value: "moneyline", label: "Moneyline" },
-  { value: "over", label: "Over" },
-  { value: "under", label: "Under" },
-  { value: "player_prop", label: "Player Prop" },
-];
-
-const PROP_TYPE_OPTIONS = PLAYER_PROP_TYPES.map((p) => ({ value: p.value, label: p.label }));
+export { BET_TYPE_OPTIONS as BET_TYPES } from "@/lib/bettingConstants";
 
 type BuilderState = {
   displayName: string;
@@ -208,7 +201,7 @@ export function CustomIndexBuilderDialog({
             <MultiSelect
               testId="input-index-bet-types"
               placeholder="All bet types"
-              options={BET_TYPES}
+              options={BET_TYPE_OPTIONS}
               selected={state.betTypes}
               onChange={(next) => setState((s) => ({ ...s, betTypes: next }))}
             />

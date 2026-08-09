@@ -74,7 +74,9 @@ export const weeks = pgTable("weeks", {
   weekNumber: integer("week_number").notNull(),
   label: text("label").notNull(),
   isActive: boolean("is_active").default(false),
-});
+}, (table) => [
+  uniqueIndex("weeks_season_week_uidx").on(table.season, table.weekNumber),
+]);
 
 export const games = pgTable("games", {
   id: serial("id").primaryKey(),
@@ -105,6 +107,7 @@ export const games = pgTable("games", {
   awayRecord: text("away_record"),
 }, (table) => [
   index("games_week_id_idx").on(table.weekId),
+  index("games_week_teams_idx").on(table.weekId, table.homeTeam, table.awayTeam),
 ]);
 
 // Leagues - groups of users
@@ -224,6 +227,8 @@ export const parlays = pgTable("parlays", {
 }, (table) => [
   uniqueIndex("parlays_user_league_week_uidx").on(table.userId, table.leagueId, table.weekId),
   index("parlays_league_week_idx").on(table.leagueId, table.weekId),
+  index("parlays_status_idx").on(table.status),
+  index("parlays_league_status_idx").on(table.leagueId, table.status),
 ]);
 
 // Valid player prop types for reference
@@ -295,6 +300,7 @@ export const parlayLegs = pgTable("parlay_legs", {
 }, (table) => [
   index("parlay_legs_parlay_id_idx").on(table.parlayId),
   index("parlay_legs_user_id_idx").on(table.userId),
+  index("parlay_legs_odds_enriched_idx").on(table.oddsEnriched),
 ]);
 
 // A league member disputing a leg's outcome or entry. Reviewed by support in
@@ -605,7 +611,9 @@ export const playerWeekStats = pgTable("player_week_stats", {
   // Scoring / Fantasy
   fantasyPoints: real("fantasy_points"),
   fantasyPointsPpr: real("fantasy_points_ppr"),
-});
+}, (table) => [
+  uniqueIndex("player_week_stats_player_season_week_uidx").on(table.playerId, table.season, table.week),
+]);
 
 export const insertPlayerSchema = createInsertSchema(players).omit({ id: true, updatedAt: true });
 export const insertPlayerWeekStatSchema = createInsertSchema(playerWeekStats).omit({ id: true });

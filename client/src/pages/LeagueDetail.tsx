@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, useLeagueDataStats, usePopularPicks, useMyParlayHistory } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Trophy, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown } from "lucide-react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
@@ -20,6 +21,8 @@ import { BetSlipPanel } from "@/components/BetSlipPanel";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
+import { PageLoader } from "@/components/PageLoader";
+import { UserAvatar } from "@/components/UserAvatar";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
@@ -27,6 +30,112 @@ import { getBuildingVerb } from "@/lib/parlaySlang";
 import type { Game, UserStat } from "@shared/schema";
 
 type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
+
+function AllParlaysList({
+  list,
+  leagueId,
+  allCollapseSignal,
+  allExpandSignal,
+  setAllCollapseSignal,
+  setAllExpandSignal,
+  submittersByWeek,
+  memberCount,
+  loserLabel,
+  heroLabel,
+  shouldVirtualize,
+  hasNextPage,
+  isFetchingNextPage,
+  fetchNextPage,
+}: {
+  list: import("@shared/schema").ParlayWithLegs[];
+  leagueId: number;
+  allCollapseSignal: number;
+  allExpandSignal: number;
+  setAllCollapseSignal: Dispatch<SetStateAction<number>>;
+  setAllExpandSignal: Dispatch<SetStateAction<number>>;
+  submittersByWeek: Map<number, Set<string>>;
+  memberCount: number;
+  loserLabel: string | null | undefined;
+  heroLabel: string | null | undefined;
+  shouldVirtualize: boolean;
+  hasNextPage: boolean;
+  isFetchingNextPage: boolean;
+  fetchNextPage: () => void;
+}) {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: shouldVirtualize ? list.length : 0,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 180,
+    overscan: 4,
+  });
+
+  const renderCard = (parlay: (typeof list)[number]) => (
+    <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
+      <ParlayRollupCard
+        parlay={parlay}
+        leagueId={leagueId}
+        readOnly
+        collapseSignal={allCollapseSignal}
+        expandSignal={allExpandSignal}
+        participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
+        loserLabel={loserLabel}
+        heroLabel={heroLabel}
+      />
+    </CardErrorBoundary>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-end">
+        <ExpandCollapseControls
+          onCollapseAll={() => setAllCollapseSignal((s) => s + 1)}
+          onExpandAll={() => setAllExpandSignal((s) => s + 1)}
+        />
+      </div>
+      {shouldVirtualize ? (
+        <div ref={parentRef} className="max-h-[70vh] overflow-y-auto">
+          <div className="relative w-full" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+              const parlay = list[virtualRow.index]!;
+              return (
+                <div
+                  key={parlay.id}
+                  data-index={virtualRow.index}
+                  ref={rowVirtualizer.measureElement}
+                  className="absolute top-0 left-0 w-full pb-4"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  {renderCard(parlay)}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {list.map(renderCard)}
+        </div>
+      )}
+      {hasNextPage && (
+        <div className="flex justify-center pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => fetchNextPage()}
+            disabled={isFetchingNextPage}
+          >
+            {isFetchingNextPage ? (
+              <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Loading…</>
+            ) : (
+              "Load more"
+            )}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function StandingsList({ list }: { list: UserStat[] }) {
   if (!list.length) {
@@ -50,13 +159,11 @@ function StandingsList({ list }: { list: UserStat[] }) {
               {i + 1}
             </span>
             <div className="flex items-center gap-2">
-              {stat.profileImageUrl ? (
-                <img src={stat.profileImageUrl} alt="" className="w-7 h-7 rounded-full" />
-              ) : (
-                <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-xs">
-                  {stat.username[0]}
-                </div>
-              )}
+              <UserAvatar
+                profileImageUrl={stat.profileImageUrl}
+                name={stat.username}
+                size="sm"
+              />
               <p className="font-bold text-sm">{stat.username}</p>
             </div>
           </div>
@@ -104,6 +211,7 @@ export default function LeagueDetail() {
   const [allYearFilter, setAllYearFilter] = useState<string>("all");
   const [allWeekFilter, setAllWeekFilter] = useState<string>("all");
   const [allMemberFilter, setAllMemberFilter] = useState<string>("all");
+  const [activeTab, setActiveTab] = useState("open");
   const allSeasons = [...new Set((weeks ?? []).map(w => w.season))].sort((a, b) => b - a);
   const allVisibleWeeksDesc = (weeks ?? [])
     .filter(w => allYearFilter === "all" || w.season === Number(allYearFilter))
@@ -112,7 +220,17 @@ export default function LeagueDetail() {
   const { data: stats } = useLeagueStats(leagueId);
   const { data: overviewStats } = useLeaguesOverviewStats();
   const { data: dataStats, isLoading: loadingDataStats } = useLeagueDataStats(leagueId);
-  const { data: allParlays, isLoading: loadingAllParlays } = useAllLeagueParlaysReadOnly(leagueId);
+  const {
+    data: allParlaysPages,
+    isLoading: loadingAllParlays,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useAllLeagueParlaysReadOnly(leagueId, activeTab === "all");
+  const allParlays = useMemo(
+    () => flattenParlayPages(allParlaysPages),
+    [allParlaysPages],
+  );
 
   const { data: games } = useGames(activeWeekId || 0);
   const { data: leagueParlays } = useLeagueParlays(leagueId, activeWeekId || 0);
@@ -214,11 +332,7 @@ export default function LeagueDetail() {
   };
 
   if (!league) {
-    return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="w-10 h-10 text-primary animate-spin" />
-      </div>
-    );
+    return <PageLoader />;
   }
 
   const minLegs = league.minLegsPerParlay || 3;
@@ -348,7 +462,7 @@ export default function LeagueDetail() {
         </div>
       </div>
 
-      <Tabs defaultValue="open" className="space-y-6">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="bg-card/50 border border-white/5">
           <TabsTrigger value="open" data-testid="tab-open">Open Parlays</TabsTrigger>
           <TabsTrigger value="all" data-testid="tab-all">All Parlays</TabsTrigger>
@@ -842,7 +956,7 @@ export default function LeagueDetail() {
           </div>
 
           {(() => {
-            let list = allParlays ?? [];
+            let list = allParlays;
             if (allYearFilter !== "all") {
               list = list.filter(p => p.week?.season === Number(allYearFilter));
             }
@@ -868,34 +982,29 @@ export default function LeagueDetail() {
             }
             // Participation rate per week: distinct submitters that week / current member count.
             const submittersByWeek = new Map<number, Set<string>>();
-            for (const p of allParlays ?? []) {
+            for (const p of allParlays) {
               if (!submittersByWeek.has(p.weekId)) submittersByWeek.set(p.weekId, new Set());
               submittersByWeek.get(p.weekId)!.add(p.userId);
             }
             const memberCount = league.memberCount || 1;
+            const shouldVirtualize = list.length > 20;
             return (
-              <div className="space-y-4">
-                <div className="flex justify-end">
-                  <ExpandCollapseControls
-                    onCollapseAll={() => setAllCollapseSignal(s => s + 1)}
-                    onExpandAll={() => setAllExpandSignal(s => s + 1)}
-                  />
-                </div>
-                {list.map(parlay => (
-                  <CardErrorBoundary key={parlay.id} parlayId={parlay.id}>
-                    <ParlayRollupCard
-                      parlay={parlay}
-                      leagueId={leagueId}
-                      readOnly
-                      collapseSignal={allCollapseSignal}
-                      expandSignal={allExpandSignal}
-                      participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
-                      loserLabel={league.loserLabel}
-                      heroLabel={league.heroLabel}
-                    />
-                  </CardErrorBoundary>
-                ))}
-              </div>
+              <AllParlaysList
+                list={list}
+                leagueId={leagueId}
+                allCollapseSignal={allCollapseSignal}
+                allExpandSignal={allExpandSignal}
+                setAllCollapseSignal={setAllCollapseSignal}
+                setAllExpandSignal={setAllExpandSignal}
+                submittersByWeek={submittersByWeek}
+                memberCount={memberCount}
+                loserLabel={league.loserLabel}
+                heroLabel={league.heroLabel}
+                shouldVirtualize={shouldVirtualize}
+                hasNextPage={!!hasNextPage}
+                isFetchingNextPage={isFetchingNextPage}
+                fetchNextPage={fetchNextPage}
+              />
             );
           })()}
         </TabsContent>
@@ -1030,13 +1139,11 @@ export default function LeagueDetail() {
                         data-testid={`row-member-${m.userId}`}
                       >
                         <div className="flex items-center gap-3">
-                          {m.user.profileImageUrl ? (
-                            <img src={m.user.profileImageUrl} alt="" className="w-9 h-9 rounded-full" />
-                          ) : (
-                            <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm">
-                              {getDisplayName(m.user, "?")[0].toUpperCase()}
-                            </div>
-                          )}
+                          <UserAvatar
+                            profileImageUrl={m.user.profileImageUrl}
+                            name={getDisplayName(m.user, "?")}
+                            size="lg"
+                          />
                           <div>
                             <p className="text-sm font-medium">{getDisplayName(m.user)}</p>
                             <p className="text-xs text-muted-foreground">{m.user.email}</p>
@@ -1344,13 +1451,12 @@ export default function LeagueDetail() {
                   )}
                   data-testid={`button-select-successor-${m.userId}`}
                 >
-                  {m.user.profileImageUrl ? (
-                    <img src={m.user.profileImageUrl} alt="" className="w-8 h-8 rounded-full shrink-0" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-sm shrink-0">
-                      {getDisplayName(m.user, "?")[0].toUpperCase()}
-                    </div>
-                  )}
+                  <UserAvatar
+                    profileImageUrl={m.user.profileImageUrl}
+                    name={getDisplayName(m.user, "?")}
+                    size="md"
+                    className="shrink-0"
+                  />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{getDisplayName(m.user)}</p>
                     {m.user.email && <p className="text-xs text-muted-foreground truncate">{m.user.email}</p>}

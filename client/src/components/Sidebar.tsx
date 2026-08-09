@@ -7,7 +7,6 @@ import {
   History, 
   LogOut, 
   Menu,
-  User,
   Users,
   FlaskConical,
   Settings,
@@ -18,6 +17,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { UserAvatar } from "@/components/UserAvatar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
@@ -147,13 +147,12 @@ export function Sidebar() {
       <div className="p-4 border-t border-white/5">
         <div className="bg-card/50 rounded-xl p-4 mb-4 backdrop-blur-sm border border-white/5">
           <div className="flex items-center gap-3 mb-3">
-            {user?.profileImageUrl ? (
-              <img src={user.profileImageUrl} alt="" className="w-10 h-10 rounded-full" />
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-lg shadow-lg">
-                {getDisplayName(user, "")[0] || <User className="w-5 h-5" />}
-              </div>
-            )}
+            <UserAvatar
+              profileImageUrl={user?.profileImageUrl}
+              name={getDisplayName(user, "")}
+              size="xl"
+              className="shadow-lg"
+            />
             <div className="overflow-hidden flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-sm font-bold truncate text-foreground">

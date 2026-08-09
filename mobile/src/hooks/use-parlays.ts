@@ -2,6 +2,27 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
 import type { ParlayWithLegs } from "@shared/schema";
 
+/**
+ * Paginated league-wide parlays (`GET /api/leagues/:id/parlays?limit=&offset=`).
+ * Mobile has no All Parlays UI yet; when that ships, pass `{ limit, offset }` (or
+ * follow `hasMore`) instead of fetching uncapped. Prefer `all=1` only for admin tools.
+ */
+export type LeagueParlaysPageParams = {
+  limit?: number;
+  offset?: number;
+  all?: boolean;
+};
+
+export function buildLeagueParlaysQuery(params?: LeagueParlaysPageParams): string {
+  if (!params) return "";
+  const qs = new URLSearchParams();
+  if (params.all) qs.set("all", "1");
+  if (params.limit != null) qs.set("limit", String(params.limit));
+  if (params.offset != null) qs.set("offset", String(params.offset));
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
 export function useMyParlay(leagueId: number, weekId: number) {
   return useQuery<ParlayWithLegs | null>({
     queryKey: ["/api/leagues", leagueId, "weeks", weekId, "my-parlay"],
