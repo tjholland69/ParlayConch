@@ -1,15 +1,26 @@
-import { Trophy, Users, ListChecks, TrendingUp, Dices, User, CalendarDays, Clock, Loader2 } from "lucide-react";
+import { Trophy, Users, ListChecks, TrendingUp, Dices, User, CalendarDays, Clock, Loader2, Zap, Activity, BarChart3 } from "lucide-react";
 import { SlidingCard, EmptyState } from "@/components/SlidingCard";
 import { useDashboardSummary, useDashboardPatterns } from "@/hooks/use-dashboard";
+import { cn } from "@/lib/utils";
 
-function StatCard({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  valueClassName,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  valueClassName?: string;
+}) {
   return (
     <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
       <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
         <Icon className="w-3.5 h-3.5" />
         {label}
       </div>
-      <p className="font-mono font-bold text-2xl">{value}</p>
+      <p className={cn("font-mono font-bold text-2xl", valueClassName)}>{value}</p>
     </div>
   );
 }
@@ -30,6 +41,10 @@ function SummarySlide() {
     return <EmptyState icon={Trophy} message="Couldn't load your summary right now." />;
   }
 
+  const powerScore = data.powerScore ?? 0;
+  const participationRate = data.participationRate ?? 0;
+  const bar = data.bar ?? 0;
+
   return (
     <div>
       <h2 className="text-xl font-bold flex items-center gap-2 mb-5">
@@ -43,6 +58,20 @@ function SummarySlide() {
         <StatCard icon={TrendingUp} label="Leg Win Rate" value={`${data.legWinRate.toFixed(1)}%`} />
         <StatCard icon={Trophy} label="Leg Wins" value={String(data.legWins)} />
         <StatCard icon={Dices} label="Leg Losses" value={String(data.legLosses)} />
+        <StatCard icon={Zap} label="Power Score" value={powerScore.toFixed(2)} />
+        <StatCard
+          icon={Activity}
+          label="Participation Rate"
+          value={`${(participationRate * 100).toFixed(0)}%`}
+        />
+        <StatCard
+          icon={BarChart3}
+          label="BAR"
+          value={`${bar > 0 ? "+" : ""}${bar.toFixed(2)}`}
+          valueClassName={
+            bar > 0 ? "text-primary" : bar < 0 ? "text-destructive" : undefined
+          }
+        />
       </div>
     </div>
   );

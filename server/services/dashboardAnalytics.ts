@@ -1,4 +1,5 @@
 import { db } from "../db";
+import { storage } from "../storage";
 import { parlayLegs, parlays, weeks, leagueMembers, games, players } from "@shared/schema";
 import { eq, and, or, inArray, sql, isNotNull, ilike, exists, gte, lte } from "drizzle-orm";
 
@@ -9,6 +10,47 @@ export interface UserSummary {
   legWins: number;
   legLosses: number;
   legWinRate: number;
+  /** Mean Power Score across leagues (0 if none). */
+  powerScore: number;
+  /** Mean participation rate across leagues (0–1). */
+  participationRate: number;
+  /** Mean BAR across leagues (league-relative, then averaged). */
+  bar: number;
+}
+
+/** Unweighted average of the user's Power / Part / BAR across each league they belong to. */
+async function getUserPowerMetrics(userId: string): Promise<{
+  powerScore: number;
+  participationRate: number;
+  bar: number;
+}> {
+  const memberships = await db
+    .select({ leagueId: leagueMembers.leagueId })
+    .from(leagueMembers)
+    .where(eq(leagueMembers.userId, userId));
+
+  if (memberships.length === 0) {
+    return { powerScore: 0, participationRate: 0, bar: 0 };
+  }
+
+  const rows = await Promise.all(
+    memberships.map(async ({ leagueId }) => {
+      const stats = await storage.getLeagueStats(leagueId);
+      return stats.find((s) => s.userId === userId) ?? null;
+    }),
+  );
+
+  const mine = rows.filter((r): r is NonNullable<typeof r> => r != null);
+  if (mine.length === 0) {
+    return { powerScore: 0, participationRate: 0, bar: 0 };
+  }
+
+  const n = mine.length;
+  return {
+    powerScore: mine.reduce((s, r) => s + r.powerScore, 0) / n,
+    participationRate: mine.reduce((s, r) => s + r.participationRate, 0) / n,
+    bar: mine.reduce((s, r) => s + r.bar, 0) / n,
+  };
 }
 
 export async function getUserSummary(userId: string): Promise<UserSummary> {
@@ -34,6 +76,7 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
   const legWins = Number(row?.legWins ?? 0);
   const legLosses = Number(row?.legLosses ?? 0);
   const totalDecided = legWins + legLosses;
+  const powerMetrics = await getUserPowerMetrics(userId);
 
   return {
     leagueCount: Number(leagueCount ?? 0),
@@ -42,6 +85,7 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
     legWins,
     legLosses,
     legWinRate: totalDecided > 0 ? (legWins / totalDecided) * 100 : 0,
+    ...powerMetrics,
   };
 }
 
