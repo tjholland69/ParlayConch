@@ -1,6 +1,7 @@
-import { Trophy, Users, ListChecks, TrendingUp, Dices, User, CalendarDays, Clock, Loader2, Zap, Activity, BarChart3 } from "lucide-react";
+import { Trophy, Users, ListChecks, TrendingUp, Dices, User, CalendarDays, Clock, Loader2, Zap, Activity, BarChart3, Info } from "lucide-react";
 import { SlidingCard, EmptyState } from "@/components/SlidingCard";
 import { useDashboardSummary, useDashboardPatterns } from "@/hooks/use-dashboard";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
 
 function StatCard({
@@ -8,17 +9,36 @@ function StatCard({
   label,
   value,
   valueClassName,
+  info,
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
   valueClassName?: string;
+  info?: { fullName: string; description: string };
 }) {
   return (
     <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
       <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
         <Icon className="w-3.5 h-3.5" />
         {label}
+        {info && (
+          <Popover>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                aria-label={`About ${label}`}
+                className="ml-auto -my-1 -mr-1 p-1 rounded-full text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
+              >
+                <Info className="w-3.5 h-3.5" />
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 text-sm" align="start">
+              <p className="font-semibold mb-1">{info.fullName}</p>
+              <p className="text-muted-foreground text-xs">{info.description}</p>
+            </PopoverContent>
+          </Popover>
+        )}
       </div>
       <p className={cn("font-mono font-bold text-2xl", valueClassName)}>{value}</p>
     </div>
@@ -58,12 +78,12 @@ function SummarySlide() {
         <StatCard icon={TrendingUp} label="Leg Win Rate" value={`${data.legWinRate.toFixed(1)}%`} />
         <StatCard icon={Trophy} label="Leg Wins" value={String(data.legWins)} />
         <StatCard icon={Dices} label="Leg Losses" value={String(data.legLosses)} />
-        <StatCard icon={Zap} label="Power Score" value={powerScore.toFixed(2)} />
         <StatCard
           icon={Activity}
           label="Participation Rate"
           value={`${(participationRate * 100).toFixed(0)}%`}
         />
+        <StatCard icon={Zap} label="Power Score" value={powerScore.toFixed(2)} />
         <StatCard
           icon={BarChart3}
           label="BAR"
@@ -71,6 +91,11 @@ function SummarySlide() {
           valueClassName={
             bar > 0 ? "text-primary" : bar < 0 ? "text-destructive" : undefined
           }
+          info={{
+            fullName: "Bets Above Replacement",
+            description:
+              "How much value you're adding compared to an average bettor in your league — your Power Score weighted by how consistently you submit picks each week compared against the field.",
+          }}
         />
       </div>
     </div>
