@@ -82,7 +82,10 @@ export interface IStorage {
   createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId" | "userId">[]): Promise<Parlay>;
   getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
-  getAllLeagueParlays(leagueId: number): Promise<ParlayWithLegs[]>;
+  getAllLeagueParlays(
+    leagueId: number,
+    opts?: { limit?: number; offset?: number; all?: boolean },
+  ): Promise<{ items: ParlayWithLegs[]; total: number; limit: number; offset: number; hasMore: boolean }>;
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
   markParlaySent(parlayId: number, userId: string): Promise<Parlay>;
@@ -177,6 +180,7 @@ export interface IStorage {
   upsertGameForImport(weekId: number, homeTeam: string, awayTeam: string, gameDate?: Date): Promise<Game>;
   getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game | null })[]>;
   enrichParlayLeg(legId: number, updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
+  enrichParlayLegsBatch(updates: Array<{ id: number; result?: string | null; line?: string | null; oddsEnriched: boolean }>): Promise<void>;
   updateGameScores(gameId: number, homeScore: number, awayScore: number, isFinished: boolean, winner?: string): Promise<void>;
   setGameFinishedAt(gameId: number, finishedAt: Date): Promise<void>;
   backfillGameFinishedAt(): Promise<{ updated: number }>;
@@ -1105,17 +1109,42 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getAllLeagueParlays(leagueId: number): Promise<ParlayWithLegs[]> {
+  async getAllLeagueParlays(
+    leagueId: number,
+    opts: { limit?: number; offset?: number; all?: boolean } = {},
+  ): Promise<{ items: ParlayWithLegs[]; total: number; limit: number; offset: number; hasMore: boolean }> {
+    const DEFAULT_LIMIT = 50;
+    const MAX_LIMIT = 100;
+    const offset = Math.max(0, opts.offset ?? 0);
+    const limit = opts.all
+      ? Number.MAX_SAFE_INTEGER
+      : Math.min(MAX_LIMIT, Math.max(1, opts.limit ?? DEFAULT_LIMIT));
+
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(parlays)
+      .where(eq(parlays.leagueId, leagueId));
+    const total = Number(count) || 0;
+
     // leftJoin (not innerJoin) — a parlay must never disappear from the results just
     // because its userId doesn't resolve to a row in `users` (e.g. legacy/import
     // data with a stale owner reference). Missing `user` signals that to callers.
-    const leagueParlays = await db.select({ parlay: parlays, user: users })
+    let query = db.select({ parlay: parlays, user: users })
       .from(parlays)
       .leftJoin(users, eq(parlays.userId, users.id))
       .where(eq(parlays.leagueId, leagueId))
-      .orderBy(desc(parlays.createdAt));
+      .orderBy(desc(parlays.createdAt))
+      .$dynamic();
 
-    if (leagueParlays.length === 0) return [];
+    if (!opts.all) {
+      query = query.limit(limit).offset(offset);
+    }
+
+    const leagueParlays = await query;
+
+    if (leagueParlays.length === 0) {
+      return { items: [], total, limit: opts.all ? total : limit, offset, hasMore: false };
+    }
 
     const parlayIds = leagueParlays.map(({ parlay }) => parlay.id);
     const weekIds = [...new Set(leagueParlays.map(({ parlay }) => parlay.weekId))];
@@ -1144,12 +1173,21 @@ export class DatabaseStorage implements IStorage {
     }
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
-    return leagueParlays.map(({ parlay, user }) => ({
+    const items = leagueParlays.map(({ parlay, user }) => ({
       ...parlay,
       legs: legsByParlayId.get(parlay.id) ?? [],
       week: weekById.get(parlay.weekId)!,
       user: user ? { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any } : undefined,
     }));
+
+    const effectiveLimit = opts.all ? items.length : limit;
+    return {
+      items,
+      total,
+      limit: effectiveLimit,
+      offset,
+      hasMore: opts.all ? false : offset + items.length < total,
+    };
   }
 
   async deleteParlay(parlayId: number): Promise<void> {
@@ -1483,28 +1521,51 @@ export class DatabaseStorage implements IStorage {
     const excludedStatuses = recomputeTerminal ? ['rejected', 'void'] : terminalStatuses;
 
     const allParlays = leagueId
-      ? await db.select().from(parlays)
+      ? await db.select({ id: parlays.id }).from(parlays)
           .where(and(
             eq(parlays.leagueId, leagueId),
             not(inArray(parlays.status as any, excludedStatuses))
           ))
-      : await db.select().from(parlays)
+      : await db.select({ id: parlays.id }).from(parlays)
           .where(not(inArray(parlays.status as any, excludedStatuses)));
 
-    let updated = 0;
-    let skipped = 0;
+    if (allParlays.length === 0) return { updated: 0, skipped: 0 };
 
-    for (const parlay of allParlays) {
-      const legs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlay.id));
-      if (legs.length === 0 || legs.some(l => !l.result)) { skipped++; continue; }
+    const parlayIds = allParlays.map((p) => p.id);
+    const allLegs = await db
+      .select({ parlayId: parlayLegs.parlayId, result: parlayLegs.result })
+      .from(parlayLegs)
+      .where(inArray(parlayLegs.parlayId, parlayIds));
 
-      const newStatus = legs.some(l => l.result === 'loss') ? 'loss' : 'win';
-
-      await db.update(parlays).set({ status: newStatus }).where(eq(parlays.id, parlay.id));
-      updated++;
+    const resultsByParlay = new Map<number, (string | null)[]>();
+    for (const leg of allLegs) {
+      const list = resultsByParlay.get(leg.parlayId) ?? [];
+      list.push(leg.result);
+      resultsByParlay.set(leg.parlayId, list);
     }
 
-    return { updated, skipped };
+    const toWin: number[] = [];
+    const toLoss: number[] = [];
+    let skipped = 0;
+
+    for (const { id } of allParlays) {
+      const results = resultsByParlay.get(id) ?? [];
+      if (results.length === 0 || results.some((r) => !r)) {
+        skipped++;
+        continue;
+      }
+      if (results.some((r) => r === "loss")) toLoss.push(id);
+      else toWin.push(id);
+    }
+
+    if (toWin.length > 0) {
+      await db.update(parlays).set({ status: "win" }).where(inArray(parlays.id, toWin));
+    }
+    if (toLoss.length > 0) {
+      await db.update(parlays).set({ status: "loss" }).where(inArray(parlays.id, toLoss));
+    }
+
+    return { updated: toWin.length + toLoss.length, skipped };
   }
 
   async getLeagueMemberByEmail(leagueId: number, email: string): Promise<LeagueMember | null> {
@@ -1613,14 +1674,17 @@ export class DatabaseStorage implements IStorage {
 
   async createLeagueAnnouncement(leagueId: number, title: string, message: string): Promise<void> {
     const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
-    for (const member of members) {
-      await db.insert(notifications).values({
+    if (members.length === 0) return;
+    await db.insert(notifications).values(
+      members.map((member) => ({
         userId: member.userId,
         leagueId,
-        type: 'announcement',
+        type: "announcement" as const,
         title,
         message,
-      });
+      })),
+    );
+    for (const member of members) {
       emitUser(member.userId, "notifications_updated");
     }
     emitLeague(leagueId, undefined, "notifications_updated");
@@ -1745,6 +1809,27 @@ export class DatabaseStorage implements IStorage {
     if (updates.result !== undefined) set.result = updates.result;
     if (updates.line !== undefined) set.line = updates.line;
     await db.update(parlayLegs).set(set as any).where(eq(parlayLegs.id, legId));
+  }
+
+  /** Batch variant of enrichParlayLeg — chunks concurrent updates inside one transaction. */
+  async enrichParlayLegsBatch(
+    updates: Array<{ id: number; result?: string | null; line?: string | null; oddsEnriched: boolean }>
+  ): Promise<void> {
+    if (updates.length === 0) return;
+    const CHUNK = 50;
+    await db.transaction(async (tx) => {
+      for (let i = 0; i < updates.length; i += CHUNK) {
+        const chunk = updates.slice(i, i + CHUNK);
+        await Promise.all(
+          chunk.map((u) => {
+            const set: Record<string, unknown> = { oddsEnriched: u.oddsEnriched };
+            if (u.result !== undefined) set.result = u.result;
+            if (u.line !== undefined) set.line = u.line;
+            return tx.update(parlayLegs).set(set as any).where(eq(parlayLegs.id, u.id));
+          }),
+        );
+      }
+    });
   }
 
   async updateGameScores(

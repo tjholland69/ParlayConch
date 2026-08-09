@@ -1,7 +1,45 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery, type InfiniteData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player, ParlayLegDispute, LeagueMemberWithUser } from "@shared/schema";
+
+export type PaginatedParlays = {
+  items: ParlayWithLegs[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
+const PARLAY_PAGE_LIMIT = 50;
+
+export function flattenParlayPages(
+  data: InfiniteData<PaginatedParlays> | undefined,
+): ParlayWithLegs[] {
+  return data?.pages.flatMap((p) => p.items) ?? [];
+}
+
+async function fetchPaginatedParlays(
+  url: string,
+): Promise<PaginatedParlays> {
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.message || "Failed to fetch parlays");
+  }
+  const data = await res.json();
+  // Tolerate legacy array responses during rollout.
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      total: data.length,
+      limit: data.length,
+      offset: 0,
+      hasMore: false,
+    };
+  }
+  return data as PaginatedParlays;
+}
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -818,29 +856,72 @@ export function useUnlockWeekParlay(leagueId: number, weekId: number) {
 
 // ===== DEMO DATA EDITOR HOOKS =====
 
-export function useAllLeagueParlays(leagueId: number, enabled = true) {
-  return useQuery<ParlayWithLegs[]>({
-    queryKey: ['/api/leagues', leagueId, 'parlays', 'all'],
+/**
+ * Admin/demo endpoint: `/api/leagues/:id/parlays/all`.
+ * Default: infinite pages (limit 50). Pass `{ all: true }` for uncapped `?all=1`
+ * (DemoDataEditor / History "show all" that need the full set).
+ */
+export function useAllLeagueParlays(
+  leagueId: number,
+  enabled?: boolean,
+  opts?: { all?: false },
+): ReturnType<typeof useInfiniteQuery<PaginatedParlays>>;
+export function useAllLeagueParlays(
+  leagueId: number,
+  enabled: boolean | undefined,
+  opts: { all: true },
+): ReturnType<typeof useQuery<ParlayWithLegs[]>>;
+export function useAllLeagueParlays(
+  leagueId: number,
+  enabled = true,
+  opts?: { all?: boolean },
+) {
+  const fetchAll = opts?.all === true;
+
+  const allQuery = useQuery<ParlayWithLegs[]>({
+    queryKey: ["/api/leagues", leagueId, "parlays", "all", { all: true }],
     queryFn: async () => {
-      const res = await fetch(`/api/leagues/${leagueId}/parlays/all`, { credentials: "include" });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
-      return res.json();
+      const page = await fetchPaginatedParlays(
+        `/api/leagues/${leagueId}/parlays/all?all=1`,
+      );
+      return page.items;
     },
-    enabled: !!leagueId && enabled,
+    enabled: !!leagueId && enabled && fetchAll,
   });
+
+  const infinite = useInfiniteQuery<PaginatedParlays>({
+    queryKey: ["/api/leagues", leagueId, "parlays", "all", { limit: PARLAY_PAGE_LIMIT }],
+    queryFn: async ({ pageParam }) => {
+      const offset = typeof pageParam === "number" ? pageParam : 0;
+      return fetchPaginatedParlays(
+        `/api/leagues/${leagueId}/parlays/all?limit=${PARLAY_PAGE_LIMIT}&offset=${offset}`,
+      );
+    },
+    initialPageParam: 0,
+    getNextPageParam: (last) =>
+      last.hasMore ? last.offset + last.limit : undefined,
+    enabled: !!leagueId && enabled && !fetchAll,
+  });
+
+  if (fetchAll) return allQuery;
+  return infinite;
 }
 
 // Member-facing read-only view of all parlays (no demo/admin gating), used by the
 // League Detail "All Parlays" tab. Distinct query key from useAllLeagueParlays so
 // admin-editor mutations don't invalidate/collide with this cache.
 export function useAllLeagueParlaysReadOnly(leagueId: number, enabled = true) {
-  return useQuery<ParlayWithLegs[]>({
-    queryKey: ['/api/leagues', leagueId, 'parlays'],
-    queryFn: async () => {
-      const res = await fetch(`/api/leagues/${leagueId}/parlays`, { credentials: "include" });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
-      return res.json();
+  return useInfiniteQuery<PaginatedParlays>({
+    queryKey: ["/api/leagues", leagueId, "parlays", { limit: PARLAY_PAGE_LIMIT }],
+    queryFn: async ({ pageParam }) => {
+      const offset = typeof pageParam === "number" ? pageParam : 0;
+      return fetchPaginatedParlays(
+        `/api/leagues/${leagueId}/parlays?limit=${PARLAY_PAGE_LIMIT}&offset=${offset}`,
+      );
     },
+    initialPageParam: 0,
+    getNextPageParam: (last) =>
+      last.hasMore ? last.offset + last.limit : undefined,
     enabled: !!leagueId && enabled,
   });
 }

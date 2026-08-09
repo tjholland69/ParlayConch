@@ -232,6 +232,16 @@ export function underCushion(play: PbpRow, ouLine: number): number | null {
 // Shared across detectExactDecisionMoments and detectHeuristicDecisionMoments
 // so a season fetched by one isn't re-fetched by the other in the same run.
 const seasonPlaysCache = new Map<number, Map<string, PbpRow[]> | null>();
+const SEASON_PLAYS_CACHE_MAX = 2;
+
+function trimSeasonPlaysCache() {
+  while (seasonPlaysCache.size > SEASON_PLAYS_CACHE_MAX) {
+    const oldest = seasonPlaysCache.keys().next().value;
+    if (oldest === undefined) break;
+    seasonPlaysCache.delete(oldest);
+  }
+}
+
 async function playsForSeason(season: number): Promise<Map<string, PbpRow[]> | null> {
   if (seasonPlaysCache.has(season)) return seasonPlaysCache.get(season)!;
   let plays: Map<string, PbpRow[]> | null;
@@ -242,6 +252,7 @@ async function playsForSeason(season: number): Promise<Map<string, PbpRow[]> | n
     plays = null;
   }
   seasonPlaysCache.set(season, plays);
+  trimSeasonPlaysCache();
   return plays;
 }
 

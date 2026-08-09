@@ -4,11 +4,12 @@ import { useWeeks, useGames, useLeagues, useLeaguesActiveStatus } from "@/hooks/
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Calendar, Users, ArrowRight, Info, Newspaper } from "lucide-react";
+import { Calendar, Users, ArrowRight, Info, Newspaper } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { getBuildingVerb } from "@/lib/parlaySlang";
+import { PageLoader } from "@/components/PageLoader";
 
 interface InjuryNewsItem {
   id: string;
@@ -80,11 +81,7 @@ export default function Picks() {
   }, [games, injuries]);
 
   if (isLoadingWeeks || isLoadingLeagues) {
-    return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="w-10 h-10 text-primary animate-spin" />
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (!leagues?.length) {

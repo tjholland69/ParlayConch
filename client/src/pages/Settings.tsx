@@ -9,15 +9,153 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin, Moon, Sun, Monitor } from "lucide-react";
+import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin, Moon, Sun, Monitor, RefreshCw, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import { getDisplayName } from "@/lib/displayName";
+import { UserAvatar } from "@/components/UserAvatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { REGION_TILES } from "@/lib/geo";
 import type { UserNotificationPreferences, UserRegion } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
 
 const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
+
+function NflverseSyncCard() {
+  const { toast } = useToast();
+  const [season, setSeason] = useState(String(new Date().getFullYear()));
+  const [week, setWeek] = useState("");
+  const [mode, setMode] = useState<"scores" | "players" | "all">("scores");
+  const [busy, setBusy] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobState, setJobState] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/admin/sync-nflverse/${jobId}`, { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setJobState(data.state);
+        if (data.state === "completed") {
+          setBusy(false);
+          setJobId(null);
+          toast({ title: "nflverse sync complete" });
+        } else if (data.state === "failed") {
+          setBusy(false);
+          setJobId(null);
+          toast({
+            title: "nflverse sync failed",
+            description: data.failedReason || "Unknown error",
+            variant: "destructive",
+          });
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    };
+    const id = setInterval(poll, 2000);
+    void poll();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [jobId, toast]);
+
+  async function runSync() {
+    setBusy(true);
+    setJobState(null);
+    try {
+      const body: Record<string, unknown> = {
+        season: Number(season),
+        mode,
+      };
+      if (week.trim()) body.week = Number(week);
+      const res = await fetch("/api/admin/sync-nflverse", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Sync failed");
+      if (res.status === 202 && data.jobId) {
+        setJobId(data.jobId);
+        setJobState("waiting");
+        toast({ title: "Sync queued", description: `Job ${data.jobId}` });
+      } else {
+        setBusy(false);
+        toast({ title: "nflverse sync complete" });
+      }
+    } catch (e: any) {
+      setBusy(false);
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    }
+  }
+
+  return (
+    <Card className="bg-card/50 border-white/5">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <RefreshCw className="w-4 h-4" />
+          nflverse Data Sync
+        </CardTitle>
+        <CardDescription>
+          Pull scores and player stats from nflverse. When Redis is configured the work runs in the
+          background and this page polls for completion.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="nflverse-season">Season</Label>
+            <Input
+              id="nflverse-season"
+              value={season}
+              onChange={(e) => setSeason(e.target.value)}
+              inputMode="numeric"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="nflverse-week">Week (optional for scores)</Label>
+            <Input
+              id="nflverse-week"
+              value={week}
+              onChange={(e) => setWeek(e.target.value)}
+              placeholder="e.g. 5"
+              inputMode="numeric"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Mode</Label>
+            <Select value={mode} onValueChange={(v) => setMode(v as typeof mode)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="scores">Scores</SelectItem>
+                <SelectItem value="players">Players</SelectItem>
+                <SelectItem value="all">All</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button onClick={runSync} disabled={busy} data-testid="button-nflverse-sync">
+            {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+            {busy ? (jobState ? `Sync ${jobState}…` : "Syncing…") : "Run Sync"}
+          </Button>
+          {jobId && (
+            <span className="text-xs text-muted-foreground">Job {jobId}</span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 const COLOR_PRESETS = [
   { label: "Blue", value: "221 83% 53%" },
@@ -148,17 +286,13 @@ export default function Settings() {
             <CardContent className="space-y-6">
               {/* Avatar */}
               <div className="flex items-center gap-4">
-                {user?.profileImageUrl ? (
-                  <img
-                    src={user.profileImageUrl}
-                    alt="Profile"
-                    className="w-16 h-16 rounded-full border-2 border-white/10"
-                  />
-                ) : (
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-2xl">
-                    {getDisplayName(user, "")[0] || <User className="w-8 h-8" />}
-                  </div>
-                )}
+                <UserAvatar
+                  profileImageUrl={user?.profileImageUrl}
+                  name={getDisplayName(user, "")}
+                  size="2xl"
+                  className="border-2 border-white/10"
+                  alt="Profile"
+                />
                 <div>
                   <p className="text-sm text-muted-foreground">
                     Profile photo is synced from your Replit account
@@ -554,6 +688,8 @@ export default function Settings() {
                       })}
                     </CardContent>
                   </Card>
+
+                  <NflverseSyncCard />
 
                   {/* Full permission framework reference */}
                   <Card className="bg-card/50 border-white/5">

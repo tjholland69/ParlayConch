@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, memo } from "react";
 import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useSplitParlayLegs, useCloneParlay, type EnrichLog } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -22,8 +22,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { DisputeLegDialog } from "@/components/DisputeLegDialog";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
+import { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
+import { legLabel } from "@/lib/legLabel";
+import { resultColor, statusColor } from "@/lib/parlayStatusStyles";
 
-export const BET_TYPES = ["spread", "moneyline", "over", "under", "player_prop"] as const;
+export { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
+
 const PICK_OPTIONS: Record<string, string[]> = {
   spread: ["home", "away"],
   moneyline: ["home", "away"],
@@ -31,39 +35,11 @@ const PICK_OPTIONS: Record<string, string[]> = {
   under: ["under"],
   player_prop: ["over", "under", "yes", "no"],
 };
-export const RESULTS = ["", "win", "loss", "push"] as const;
 const STATUSES = ["pending", "approved", "rejected", "win", "loss", "push", "void"] as const;
 // A parlay must be decided (not "Open"/pending, not rejected or void) before it
 // can be cloned — cloning is meant to reuse a settled parlay's picks as a
 // starting point, not fork one that's still in progress.
 const CLONEABLE_STATUSES = ["approved", "win", "loss", "push"];
-
-function legLabel(leg: ParlayLeg & { game?: any }) {
-  if (leg.betType === "player_prop") {
-    return leg.playerName || "Player Prop";
-  }
-  if (leg.game) return `${leg.game.awayTeam} @ ${leg.game.homeTeam}`;
-  return "Unknown Matchup";
-}
-
-function statusColor(status: string | null) {
-  switch (status) {
-    case "win": return "bg-green-500/20 text-green-400 border-green-500/30";
-    case "loss": return "bg-red-500/20 text-red-400 border-red-500/30";
-    case "push": return "bg-blue-500/20 text-blue-400 border-blue-500/30";
-    case "approved": return "bg-emerald-500/20 text-emerald-400 border-emerald-500/30";
-    case "rejected": return "bg-red-500/20 text-red-400 border-red-500/30";
-    case "void": return "bg-muted text-muted-foreground";
-    default: return "bg-yellow-500/20 text-yellow-400 border-yellow-500/30";
-  }
-}
-
-function resultColor(result: string | null) {
-  if (result === "win") return "text-green-400";
-  if (result === "loss") return "text-red-400";
-  if (result === "push") return "text-blue-400";
-  return "text-muted-foreground";
-}
 
 export type LegFormState = {
   betType: string;
@@ -313,7 +289,7 @@ function LegLogPanel({ log, onClose }: { log: EnrichLog; onClose: () => void }) 
   );
 }
 
-export function ParlayRollupCard({
+export const ParlayRollupCard = memo(function ParlayRollupCard({
   parlay, leagueId, members,
   selectMode = false, isSelected = false, onToggleSelect = () => {},
   legSelectMode = false, selectedLegIds, onToggleLegSelect = () => {},
@@ -977,6 +953,6 @@ export function ParlayRollupCard({
       )}
     </>
   );
-}
+});
 
 export default ParlayRollupCard;

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { BarChart3, Loader2, RotateCcw, SlidersHorizontal, Save } from "lucide-react";
-import { PLAYER_PROP_TYPES } from "@shared/schema";
 import { useLeagues } from "@/hooks/use-bets";
 import { useDashboardAdvancedPerformance } from "@/hooks/use-dashboard";
 import { MultiSelect } from "@/components/MultiSelect";
@@ -16,16 +15,7 @@ import {
   type PerformanceSeries,
 } from "@/components/dashboard/PerformanceLineChart";
 import { CustomIndexBuilderDialog } from "@/components/dashboard/CustomIndexBuilderDialog";
-
-const BET_TYPES = [
-  { value: "spread", label: "Spread" },
-  { value: "moneyline", label: "Moneyline" },
-  { value: "over", label: "Over" },
-  { value: "under", label: "Under" },
-  { value: "player_prop", label: "Player Prop" },
-];
-
-const PROP_TYPE_OPTIONS = PLAYER_PROP_TYPES.map((p) => ({ value: p.value, label: p.label }));
+import { BET_TYPE_OPTIONS, PROP_TYPE_OPTIONS } from "@/lib/bettingConstants";
 
 /**
  * Ad-hoc slicing of the performance graph. Filters live in component state only —
@@ -106,7 +96,7 @@ export default function IndexAdvanced() {
             <MultiSelect
               testId="filter-bet-types"
               placeholder="All bet types"
-              options={BET_TYPES}
+              options={BET_TYPE_OPTIONS}
               selected={betTypes}
               onChange={setBetTypes}
             />

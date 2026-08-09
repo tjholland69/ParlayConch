@@ -55,12 +55,7 @@ function parseToken(raw: string): QueryToken {
   return { key, value: value.toLowerCase(), negate };
 }
 
-function legMatchupText(leg: ParlayLegWithParlayContext | any): string {
-  if (leg.betType === "player_prop") {
-    return `${leg.playerName ?? ""} ${leg.propType ?? ""}`;
-  }
-  return `${leg.game?.awayTeam ?? ""} ${leg.game?.homeTeam ?? ""}`;
-}
+import { legMatchupText } from "./legLabel";
 
 const KEY_ALIASES: Record<string, string> = {
   type: "betType",

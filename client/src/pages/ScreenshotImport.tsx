@@ -35,6 +35,7 @@ import {
   Edit3,
 } from "lucide-react";
 import { Link } from "wouter";
+import { resultColor } from "@/lib/parlayStatusStyles";
 
 interface ParsedLeg {
   betType: string;
@@ -102,15 +103,6 @@ function LegRow({
           BET_TYPE_LABELS[leg.betType] ?? leg.betType
         } ${leg.pick}${leg.line ? ` ${leg.line}` : ""}`;
 
-  const resultColor =
-    leg.result === "win"
-      ? "text-green-400"
-      : leg.result === "loss"
-      ? "text-red-400"
-      : leg.result === "push"
-      ? "text-yellow-400"
-      : "text-muted-foreground";
-
   if (!editing) {
     return (
       <div className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-white/5 group">
@@ -120,7 +112,7 @@ function LegRow({
           <span className="text-xs text-muted-foreground font-mono shrink-0">{leg.odds}</span>
         )}
         {leg.result && (
-          <span className={cn("text-xs font-semibold uppercase shrink-0", resultColor)}>
+          <span className={cn("text-xs font-semibold uppercase shrink-0", resultColor(leg.result))}>
             {leg.result}
           </span>
         )}

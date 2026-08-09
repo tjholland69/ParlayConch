@@ -8,12 +8,18 @@ import { z } from "zod";
 import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs, parlays, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";
 import { ilike, eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
 import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
-import { runOddsSyncQueued, startOddsSyncWorker } from "./jobs/odds-sync-queue";
+import { runOddsSyncQueued, startOddsSyncWorker, getOddsSyncJobStatus } from "./jobs/odds-sync-queue";
+import {
+  enqueueNflverseSync,
+  getNflverseSyncJobStatus,
+  startNflverseSyncWorker,
+} from "./jobs/nflverse-sync-queue";
 import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries, getLeagueWeeklyWinRates } from "./services/dashboardAnalytics";
+import { cacheGetJson, cacheSetJson } from "./cache";
 import { getWeeklyAnalyticsReport } from "./services/storyStudio/analyticsEngine";
 import { discoverStories } from "./services/storyStudio/storyDiscovery";
 import { generateSection } from "./services/storyStudio/editorialGeneration";
@@ -24,7 +30,6 @@ import { uploadDisputeScreenshot, getDisputeScreenshotUrl } from "./disputeStora
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
-import { syncGameScoresFromNflverse, syncGameTimesFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
 import { syncGameFinishTimesFromPlayByPlay } from "./services/playByPlay";
 import { detectExactDecisionMoments, detectHeuristicDecisionMoments } from "./services/decisionDetection";
 import { parseTicketImages } from "./services/screenshotParser";
@@ -54,6 +59,7 @@ export async function registerRoutes(
 
   if (isRedisConfigured()) {
     startOddsSyncWorker();
+    startNflverseSyncWorker();
   }
   registerRealtimeWebSocket(httpServer, app);
 
@@ -208,13 +214,21 @@ export async function registerRoutes(
   // ===== DASHBOARD =====
   app.get("/api/dashboard/summary", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
+    const cacheKey = `dashboard:summary:${userId}`;
+    const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserSummary>>>(cacheKey);
+    if (cached) return res.json(cached);
     const summary = await getUserSummary(userId);
+    await cacheSetJson(cacheKey, summary, 60);
     res.json(summary);
   });
 
   app.get("/api/dashboard/patterns", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
+    const cacheKey = `dashboard:patterns:${userId}`;
+    const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserPatterns>>>(cacheKey);
+    if (cached) return res.json(cached);
     const patterns = await getUserPatterns(userId);
+    await cacheSetJson(cacheKey, patterns, 60);
     res.json(patterns);
   });
 
@@ -504,8 +518,10 @@ export async function registerRoutes(
     const superUser = await storage.isSuperUser(userId);
     const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
     if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
-    const allParlays = await storage.getAllLeagueParlays(leagueId);
-    res.json(allParlays);
+    const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+    const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
+    const page = await storage.getAllLeagueParlays(leagueId, { limit, offset });
+    res.json(page);
   });
 
   app.get("/api/leagues/:leagueId/weeks/:weekId/popular-picks", isAuthenticated, async (req, res) => {
@@ -739,7 +755,29 @@ export async function registerRoutes(
       }
 
       const result = await runOddsSyncQueued(weekId);
-      res.json({ message: `Synced games: ${result.added} added, ${result.updated} updated` });
+      if (result.queued) {
+        return res.status(202).json({
+          message: "Odds sync queued",
+          jobId: result.jobId,
+          queued: true,
+        });
+      }
+      res.json({
+        message: `Synced games: ${result.added} added, ${result.updated} updated`,
+        queued: false,
+        added: result.added,
+        updated: result.updated,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/odds/sync/:jobId", isAuthenticated, async (req, res) => {
+    try {
+      const status = await getOddsSyncJobStatus(req.params.jobId);
+      if (!status) return res.status(404).json({ message: "Job not found" });
+      res.json(status);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -759,6 +797,9 @@ export async function registerRoutes(
     try {
       const feed = (req.query.feed as string) || "headlines";
       const limit = Math.min(Number(req.query.limit) || 12, 60);
+      const cacheKey = `news:${feed}:${limit}`;
+      const cached = await cacheGetJson<unknown>(cacheKey);
+      if (cached) return res.json(cached);
 
       let news;
       if (feed === "injuries") {
@@ -769,6 +810,7 @@ export async function registerRoutes(
         news = await fetchNFLNews(limit);
       }
 
+      await cacheSetJson(cacheKey, news, 90);
       res.json(news);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1068,12 +1110,9 @@ export async function registerRoutes(
 
   // POST /api/admin/sync-nflverse
   // Body: { season, week?, mode: 'scores' | 'players' | 'all' }
-  // Syncs game scores and/or player stats from nflverse open data for the given
-  // season (and optionally a specific week). Only touches games already in our DB.
+  // Enqueues a background job (202) when Redis is available; otherwise runs inline.
   app.post("/api/admin/sync-nflverse", isAuthenticated, auditLog("admin.sync_nflverse"), async (req, res) => {
     try {
-      // Require the user to be an admin in at least one league (rough guard)
-      // A dedicated global-admin check can be added later
       const { season, week, mode = "all" } = req.body;
 
       if (!season || isNaN(Number(season))) {
@@ -1081,79 +1120,43 @@ export async function registerRoutes(
       }
 
       const seasonNum = Number(season);
-      const weekNums = week ? [Number(week)] : undefined;
+      const weekNum = week != null && week !== "" ? Number(week) : undefined;
+      const syncMode = (mode === "scores" || mode === "players" || mode === "all" ? mode : "all") as
+        | "scores"
+        | "players"
+        | "all";
 
-      const result: Record<string, unknown> = { season: seasonNum, week: week ?? "all" };
-
-      if (mode === "scores" || mode === "all") {
-        const scoreSync = await syncGameScoresFromNflverse(seasonNum, weekNums);
-        result.scores = scoreSync;
-        logger.info({ scoreSync }, "[nflverse] scores sync");
-
-        // Correct games.gameTime from the real schedule — historical imports
-        // that lacked a real date left some rows stamped with the import
-        // date instead of kickoff. Best-effort: a schedule fetch hiccup here
-        // shouldn't block the score sync that already succeeded.
-        try {
-          const gameTimeSync = await syncGameTimesFromNflverse(seasonNum, weekNums);
-          result.gameTimes = gameTimeSync;
-          logger.info({ gameTimeSync }, "[nflverse] gameTime sync");
-        } catch (err) {
-          logger.warn({ err }, "[nflverse] gameTime sync failed; existing gameTime values kept");
-        }
-
-        // Best-effort precision pass: replace the cron-noticed finishedAt
-        // stamp with the real last-play timestamp from play-by-play data.
-        // Never blocks the response — a missing/late pbp file just means we
-        // keep the coarser timestamp from updateGameScores.
-        try {
-          const finishTimeSync = await syncGameFinishTimesFromPlayByPlay(seasonNum, weekNums);
-          result.finishTimes = finishTimeSync;
-          logger.info({ finishTimeSync }, "[play-by-play] finish-time sync");
-        } catch (err) {
-          logger.warn({ err }, "[play-by-play] finish-time sync failed; keeping existing finishedAt");
-        }
-
-        // Re-run enrichment after scores are updated
-        result.enrichment = await enrichLeagueParlayLegs();
-
-        // Best-effort: for legs that just resolved to a win, try to pin down
-        // the exact play that decided it (rather than just the final
-        // whistle). Player-prop legs need player_week_stats synced first —
-        // those simply no-op here and get picked up by resolve-props below.
-        try {
-          const decisionSync = await detectExactDecisionMoments();
-          result.decisionMoments = decisionSync;
-          logger.info({ decisionSync }, "[decision-detection] sync");
-        } catch (err) {
-          logger.warn({ err }, "[decision-detection] sync failed; legs stay at 'final' confidence");
-        }
-
-        // Best-effort: same idea for spread/moneyline/under legs, via the
-        // "mathematically eliminated" heuristic (see decisionDetection.ts).
-        // Lower-confidence than the exact pass above — flagged as such on
-        // the leg via decidedConfidence: 'heuristic'.
-        try {
-          const heuristicSync = await detectHeuristicDecisionMoments();
-          result.heuristicDecisionMoments = heuristicSync;
-          logger.info({ heuristicSync }, "[decision-detection] heuristic sync");
-        } catch (err) {
-          logger.warn({ err }, "[decision-detection] heuristic sync failed; legs stay at 'final' confidence");
-        }
+      if (syncMode === "players" && weekNum == null) {
+        return res.status(400).json({ message: "week is required for player stats sync" });
       }
 
-      if (mode === "players" || mode === "all") {
-        if (!week) {
-          return res.status(400).json({ message: "week is required for player stats sync" });
-        }
-        const playerSync = await syncPlayerStatsForGames(seasonNum, Number(week));
-        result.players = playerSync;
-        logger.info({ playerSync }, "[nflverse] player stats sync");
+      const enqueued = await enqueueNflverseSync({
+        season: seasonNum,
+        week: weekNum,
+        mode: syncMode,
+      });
+
+      if (enqueued.queued) {
+        return res.status(202).json({
+          message: "nflverse sync queued",
+          jobId: enqueued.jobId,
+          queued: true,
+        });
       }
 
-      res.json({ message: "nflverse sync complete", ...result });
+      res.json({ message: "nflverse sync complete", queued: false, ...enqueued.result });
     } catch (err: any) {
       logger.error({ err }, "[nflverse] sync error:");
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/admin/sync-nflverse/:jobId", isAuthenticated, async (req, res) => {
+    try {
+      const status = await getNflverseSyncJobStatus(req.params.jobId);
+      if (!status) return res.status(404).json({ message: "Job not found" });
+      res.json(status);
+    } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
@@ -1644,8 +1647,11 @@ export async function registerRoutes(
       const leagueId = Number(req.params.id);
       const uid = await requireDemoAdmin(req, res, leagueId);
       if (!uid) return;
-      const allParlays = await storage.getAllLeagueParlays(leagueId);
-      res.json(allParlays);
+      const all = req.query.all === "1" || req.query.all === "true";
+      const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+      const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
+      const page = await storage.getAllLeagueParlays(leagueId, { limit, offset, all });
+      res.json(page);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

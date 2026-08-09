@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ParlayRollupCard, LegSheet, blankLeg, BET_TYPES, RESULTS, type LegFormState } from "@/components/ParlayRollupCard";
+import { PageLoader } from "@/components/PageLoader";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { getDisplayName, shortId, sortByFirstName } from "@/lib/displayName";
@@ -437,7 +438,7 @@ export default function DemoDataEditor() {
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
 
-  const { data: allParlays, isLoading } = useAllLeagueParlays(leagueId);
+  const { data: allParlays, isLoading } = useAllLeagueParlays(leagueId, true, { all: true });
   const { data: weeks } = useWeeks();
   const { data: membersRaw } = useLeagueMembersWithUsers(leagueId);
   const members = useMemo(() => membersRaw ? sortByFirstName(membersRaw) : membersRaw, [membersRaw]);
@@ -490,11 +491,7 @@ export default function DemoDataEditor() {
   };
 
   if (!league) {
-    return (
-      <div className="flex items-center justify-center h-48">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+    return <PageLoader className="h-48" sizeClassName="w-8 h-8" />;
   }
 
   if (!league.isAdmin || !league.isDemo) {
@@ -728,9 +725,7 @@ export default function DemoDataEditor() {
 
       {/* Content */}
       {isLoading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        </div>
+        <PageLoader className="py-16 h-auto" sizeClassName="w-8 h-8" />
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">
           <p>No parlays found for the selected filters.</p>
