@@ -8,6 +8,9 @@ export interface UserSummary {
   legWins: number;
   legLosses: number;
   legWinRate: number;
+  powerScore: number;
+  participationRate: number;
+  bar: number;
 }
 
 export interface UserPatterns {
