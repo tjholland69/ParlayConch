@@ -8,6 +8,7 @@ import { X, Search, UserCog } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { getDisplayName } from "@/lib/displayName";
+import { api } from "@shared/routes";
 
 type SuperUserResult = {
   id: string;
@@ -20,6 +21,15 @@ type SuperUserResult = {
 type ActingAsData = {
   actingAs: SuperUserResult | null;
 };
+
+function invalidateIdentityScopedQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+  queryClient.invalidateQueries({ queryKey: [api.dashboard.summary.path] });
+  queryClient.invalidateQueries({ queryKey: [api.dashboard.patterns.path] });
+  queryClient.invalidateQueries({ queryKey: [api.dashboard.performance.path] });
+  queryClient.invalidateQueries({ queryKey: [api.dashboard.advancedPerformance.path] });
+}
 
 function useDebounce<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -78,8 +88,7 @@ export function ActForBar() {
     },
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/superuser/acting-as"], data);
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      invalidateIdentityScopedQueries(queryClient);
       setOpen(false);
       setQuery("");
       toast({
@@ -101,8 +110,7 @@ export function ActForBar() {
     },
     onSuccess: () => {
       queryClient.setQueryData(["/api/superuser/acting-as"], { actingAs: null });
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
+      invalidateIdentityScopedQueries(queryClient);
       toast({ title: "Returned to your own account" });
     },
     onError: () => toast({ title: "Failed to clear act-as", variant: "destructive" }),
@@ -119,13 +127,17 @@ export function ActForBar() {
           {getDisplayName(actingAs)}
         </span>
         <Button
-          size="icon"
+          size="sm"
           variant="ghost"
-          className="h-5 w-5 ml-0.5 text-yellow-400/70 hover:text-yellow-200 hover:bg-yellow-500/20 rounded"
+          className="h-5 gap-1 px-1.5 ml-0.5 text-yellow-400/70 hover:text-yellow-200 hover:bg-yellow-500/20 rounded"
           onClick={() => clearActAs.mutate()}
           disabled={clearActAs.isPending}
+          title="Return to your own account"
         >
           <X className="w-3 h-3" />
+          <span className="text-[10px] font-mono hidden sm:inline">
+            {clearActAs.isPending ? "Exiting..." : "Exit"}
+          </span>
         </Button>
       </div>
     );
