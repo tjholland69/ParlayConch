@@ -17,9 +17,10 @@ import { format } from "date-fns";
 import { getDisplayName } from "@/lib/displayName";
 import type { ParlayWithLegs, ParlayLegWithParlayContext } from "@shared/schema";
 import { filterLegsByQuery, LEG_QUERY_HELP, filterParlaysByQuery, PARLAY_QUERY_HELP } from "@/lib/historyQuery";
-import { resultColor, getStatusVariant } from "@/lib/parlayStatusStyles";
+import { getStatusVariant } from "@/lib/parlayStatusStyles";
 import { legMatchup } from "@/lib/legLabel";
 import { PageLoader } from "@/components/PageLoader";
+import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -77,8 +78,8 @@ function LegTable({ legs, compact = false }: { legs: any[]; compact?: boolean })
                 {!compact && (
                   <td className="px-3 py-2 text-muted-foreground hidden md:table-cell text-xs">{leg.odds || "—"}</td>
                 )}
-                <td className={cn("px-3 py-2 font-medium text-xs", resultColor(leg.result))}>
-                  {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
+                <td className="px-3 py-2 font-medium text-xs">
+                  <ParlayLegResultBadge leg={leg} game={leg.game} />
                 </td>
               </tr>
               {leg.notes && (
@@ -166,8 +167,8 @@ function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
                 </Badge>
               </td>
               <td className="px-3 py-2 text-muted-foreground text-xs">{formatPickLabel(leg)}</td>
-              <td className={cn("px-3 py-2 font-medium text-xs", resultColor(leg.result))}>
-                {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
+              <td className="px-3 py-2 font-medium text-xs">
+                <ParlayLegResultBadge leg={leg} game={leg.game} />
               </td>
             </tr>
           ))}
