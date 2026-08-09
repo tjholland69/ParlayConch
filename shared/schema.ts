@@ -745,6 +745,12 @@ export type UserStat = {
   losses: number;
   pushes: number;
   winRate: number;
+  /** Mean of I(win)*oddsFactor over decided legs (0 if none). */
+  powerScore: number;
+  /** Weeks with a non-void/rejected parlay / eligible league weeks (0–1). */
+  participationRate: number;
+  /** (powerScore × participation) − league mean of the same product. */
+  bar: number;
   region?: UserRegion | null;
 };
 

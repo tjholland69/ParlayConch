@@ -281,20 +281,28 @@ function MemberCard({ member }: { member: any }) {
   );
 }
 
-function StatCard({ stat }: { stat: any }) {
-  const name =
-    stat.user?.settings?.displayName ??
-    stat.user?.firstName ??
-    stat.user?.email ??
-    "Unknown";
-
-  const winRate =
-    stat.winRate != null ? `${Math.round(stat.winRate * 100)}%` : "—";
+function StatCard({ stat }: { stat: {
+  userId: string;
+  username: string;
+  profileImageUrl?: string | null;
+  wins: number;
+  losses: number;
+  winRate: number;
+  powerScore?: number;
+  bar?: number;
+} }) {
+  const name = stat.username || "Unknown";
+  // API winRate is already 0–100
+  const winRate = stat.winRate != null ? `${Math.round(stat.winRate)}%` : "—";
+  const power = (stat.powerScore ?? 0).toFixed(2);
+  const barVal = stat.bar ?? 0;
+  const barText = `${barVal > 0 ? "+" : ""}${barVal.toFixed(2)}`;
+  const barColor = barVal > 0 ? "#22c55e" : barVal < 0 ? "#ef4444" : "#f1f5f9";
 
   return (
     <View style={styles.statCard}>
       <View style={styles.statCardHeader}>
-        <Avatar src={stat.user?.profileImageUrl} name={name} size={36} />
+        <Avatar src={stat.profileImageUrl} name={name} size={36} />
         <Text style={styles.statName} numberOfLines={1}>{name}</Text>
       </View>
       <View style={styles.statRow}>
@@ -310,12 +318,17 @@ function StatCard({ stat }: { stat: any }) {
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
           <Text style={[styles.statValue, styles.statValuePrimary]}>{winRate}</Text>
-          <Text style={styles.statLabel}>Win Rate</Text>
+          <Text style={styles.statLabel}>Win%</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{stat.parlays ?? 0}</Text>
-          <Text style={styles.statLabel}>Parlays</Text>
+          <Text style={styles.statValue}>{power}</Text>
+          <Text style={styles.statLabel}>Power</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: barColor }]}>{barText}</Text>
+          <Text style={styles.statLabel}>BAR</Text>
         </View>
       </View>
     </View>
@@ -1133,8 +1146,8 @@ const styles = StyleSheet.create({
     justifyContent: "space-around",
   },
   statItem: { alignItems: "center", flex: 1 },
-  statValue: { fontSize: 20, fontWeight: "800", color: "#f1f5f9" },
+  statValue: { fontSize: 15, fontWeight: "800", color: "#f1f5f9" },
   statValuePrimary: { color: "#2563eb" },
-  statLabel: { fontSize: 11, color: "#475569", marginTop: 2, fontWeight: "500" },
-  statDivider: { width: 1, height: 32, backgroundColor: "#2a3447" },
+  statLabel: { fontSize: 10, color: "#475569", marginTop: 2, fontWeight: "500" },
+  statDivider: { width: 1, height: 28, backgroundColor: "#2a3447" },
 });

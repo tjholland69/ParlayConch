@@ -174,11 +174,27 @@ function StandingsList({ list }: { list: UserStat[] }) {
               <p className="font-mono text-xs">{stat.wins}-{stat.losses}-{stat.pushes}</p>
             </div>
             <div className="text-right min-w-[50px]">
+              <p className="text-xs text-muted-foreground">Win%</p>
               <p className={cn(
-                "font-mono font-bold text-base",
+                "font-mono font-bold text-sm",
                 stat.winRate >= 50 ? "text-primary" : "text-muted-foreground"
               )}>
                 {stat.winRate.toFixed(1)}%
+              </p>
+            </div>
+            <div className="text-right min-w-[44px]">
+              <p className="text-xs text-muted-foreground">Power</p>
+              <p className="font-mono font-bold text-sm text-foreground">
+                {(stat.powerScore ?? 0).toFixed(2)}
+              </p>
+            </div>
+            <div className="text-right min-w-[44px]">
+              <p className="text-xs text-muted-foreground">BAR</p>
+              <p className={cn(
+                "font-mono font-bold text-sm",
+                (stat.bar ?? 0) > 0 ? "text-primary" : (stat.bar ?? 0) < 0 ? "text-destructive" : "text-muted-foreground"
+              )}>
+                {(stat.bar ?? 0) > 0 ? "+" : ""}{(stat.bar ?? 0).toFixed(2)}
               </p>
             </div>
           </div>
@@ -1087,8 +1103,19 @@ export default function LeagueDetail() {
                 data-testid="button-export-standings"
                 onClick={() => downloadCsv(
                   `${league?.name ?? "league"}-standings.csv`,
-                  ["rank", "user_id", "username", "wins", "losses", "pushes", "win_rate_pct"],
-                  stats.map((s, i) => [i + 1, s.userId, s.username, s.wins, s.losses, s.pushes, s.winRate.toFixed(1)])
+                  ["rank", "user_id", "username", "wins", "losses", "pushes", "win_rate_pct", "power_score", "participation_rate", "bar"],
+                  stats.map((s, i) => [
+                    i + 1,
+                    s.userId,
+                    s.username,
+                    s.wins,
+                    s.losses,
+                    s.pushes,
+                    s.winRate.toFixed(1),
+                    (s.powerScore ?? 0).toFixed(3),
+                    (s.participationRate ?? 0).toFixed(3),
+                    (s.bar ?? 0).toFixed(3),
+                  ])
                 )}
               >
                 <Download className="w-4 h-4" />

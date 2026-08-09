@@ -19,6 +19,12 @@ import {
   type ActiveWeekStatus, type LeagueDataStats, type PopularPick,
 } from "@shared/schema";
 import { eq, and, desc, asc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
+import {
+  averagePowerScore,
+  legPowerContribution,
+  participationRate,
+  withBar,
+} from "@shared/powerScore";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 
 function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
@@ -327,6 +333,10 @@ export class DatabaseStorage implements IStorage {
           losses,
           pushes,
           winRate,
+          // Global leaderboard is parlay-based; Power Score / BAR are league leg metrics.
+          powerScore: 0,
+          participationRate: 0,
+          bar: 0,
           region: settings?.region || null,
         };
       })
@@ -339,6 +349,10 @@ export class DatabaseStorage implements IStorage {
    * to whichever member contributed it (parlayLegs.userId). Legs belonging to
    * a 'void' (no submission) or 'rejected' parlay are excluded, since those
    * don't represent a real decided bet.
+   *
+   * Also computes Power Score (avg win×oddsFactor over decided legs) and BAR
+   * (cohort-adjusted PS × participation). Participation = distinct weeks with
+   * a submitted parlay / distinct weeks with any league activity in scope.
    */
   async getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]> {
     const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
@@ -348,35 +362,80 @@ export class DatabaseStorage implements IStorage {
 
     const memberUsers = await db.select().from(users).where(inArray(users.id, memberIds));
 
-    const legRows = await db.select({ userId: parlayLegs.userId, result: parlayLegs.result })
+    const weekFilter = weekIds && weekIds.length > 0 ? inArray(parlays.weekId, weekIds) : undefined;
+
+    const legRows = await db.select({
+      userId: parlayLegs.userId,
+      result: parlayLegs.result,
+      odds: parlayLegs.odds,
+    })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
       .where(and(
         eq(parlays.leagueId, leagueId),
         not(inArray(parlays.status as any, ['void', 'rejected'])),
         inArray(parlayLegs.userId, memberIds),
-        weekIds && weekIds.length > 0 ? inArray(parlays.weekId, weekIds) : undefined,
+        weekFilter,
       ));
 
-    return memberUsers.map(user => {
-      const userLegs = legRows.filter(l => l.userId === user.id);
-      const wins = userLegs.filter(l => l.result === 'win').length;
-      const losses = userLegs.filter(l => l.result === 'loss').length;
-      const pushes = userLegs.filter(l => l.result === 'push').length;
+    // Participation uses parlay ownership (submitted a weekly pick), not leg contribution.
+    const parlayRows = await db.select({
+      userId: parlays.userId,
+      weekId: parlays.weekId,
+    })
+      .from(parlays)
+      .where(and(
+        eq(parlays.leagueId, leagueId),
+        not(inArray(parlays.status as any, ['void', 'rejected'])),
+        inArray(parlays.userId, memberIds),
+        weekFilter,
+      ));
+
+    const eligibleWeeks = new Set(parlayRows.map((p) => p.weekId));
+    const weeksEligible = eligibleWeeks.size;
+
+    const submittedWeeksByUser = new Map<string, Set<number>>();
+    for (const row of parlayRows) {
+      let set = submittedWeeksByUser.get(row.userId);
+      if (!set) {
+        set = new Set();
+        submittedWeeksByUser.set(row.userId, set);
+      }
+      set.add(row.weekId);
+    }
+
+    const base = memberUsers.map((user) => {
+      const userLegs = legRows.filter((l) => l.userId === user.id);
+      const wins = userLegs.filter((l) => l.result === "win").length;
+      const losses = userLegs.filter((l) => l.result === "loss").length;
+      const pushes = userLegs.filter((l) => l.result === "push").length;
       const totalDecided = wins + losses;
       const winRate = totalDecided > 0 ? (wins / totalDecided) * 100 : 0;
 
+      const legScores: number[] = [];
+      for (const leg of userLegs) {
+        const score = legPowerContribution(leg.result, leg.odds);
+        if (score != null) legScores.push(score);
+      }
+      const powerScore = averagePowerScore(legScores);
+      const weeksSubmitted = submittedWeeksByUser.get(user.id)?.size ?? 0;
+      const part = participationRate(weeksSubmitted, weeksEligible);
+
       return {
         userId: user.id,
-        username: (user.settings as any)?.displayName || user.firstName || user.email || 'Unknown',
+        username: (user.settings as any)?.displayName || user.firstName || user.email || "Unknown",
         profileImageUrl: user.profileImageUrl,
         wins,
         losses,
         pushes,
         winRate,
+        powerScore,
+        participationRate: part,
         region: (user.settings as any)?.region || null,
       };
-    }).sort((a, b) => b.winRate - a.winRate);
+    });
+
+    return withBar(base).sort((a, b) => b.winRate - a.winRate);
   }
 
   async getLeagueDataStats(leagueId: number): Promise<LeagueDataStats> {
