@@ -25,6 +25,7 @@ import { ParlayMixBar } from "@/components/ParlayMixBar";
 import { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 import { legLabel } from "@/lib/legLabel";
 import { resultColor, statusColor } from "@/lib/parlayStatusStyles";
+import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
 
 export { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 
@@ -728,8 +729,8 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                               ? new Date(leg.game.gameTime).toLocaleTimeString(undefined, { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })
                               : "—"}
                           </td>
-                          <td className={cn("px-3 py-2 font-medium", resultColor(leg.result))}>
-                            {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
+                          <td className="px-3 py-2 font-medium">
+                            <ParlayLegResultBadge leg={leg} game={leg.game} />
                           </td>
                           <td className="px-2 py-2">
                             <Popover>

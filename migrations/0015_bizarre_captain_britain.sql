@@ -1,0 +1,1 @@
+ALTER TABLE "parlay_legs" ADD COLUMN "result_detail" text;

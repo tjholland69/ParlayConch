@@ -13,6 +13,7 @@ import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
+import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import { apiRequest } from "@/lib/api";
 import {
   useLeagueStats,
@@ -26,6 +27,10 @@ import { useAuth } from "@/hooks/use-auth";
 import { Avatar } from "@/components/ui/Avatar";
 import { format } from "date-fns";
 import { SPORTSBOOK_PROVIDERS, pickDeepLinkGame, type SportsbookProvider } from "@shared/sportsbook-providers";
+import type { ParlayWithLegs } from "@shared/schema";
+import { resolveResultDetail } from "@shared/legJustification";
+
+type ParlayLegWithGame = ParlayWithLegs["legs"][number];
 
 type Tab = "parlays" | "members" | "stats";
 
@@ -48,7 +53,7 @@ function ParlayCard({
   weekId,
   preferredSportsbook,
 }: {
-  parlay: any;
+  parlay: ParlayWithLegs;
   isAdmin: boolean;
   leagueId: number;
   weekId: number;
@@ -58,6 +63,7 @@ function ParlayCard({
   const approveParlay = useApproveParlay(leagueId, weekId);
   const rejectParlay = useRejectParlay(leagueId, weekId);
   const markParlaySent = useMarkParlaySent(leagueId, weekId);
+  const [expandedLegIndex, setExpandedLegIndex] = useState<number | null>(null);
 
   const name =
     parlay.user?.settings?.displayName ??
@@ -150,7 +156,7 @@ function ParlayCard({
 
       {parlay.legs && parlay.legs.length > 0 && (
         <View style={styles.legsSection}>
-          {parlay.legs.map((leg: any, i: number) => {
+          {parlay.legs.map((leg: ParlayLegWithGame, i: number) => {
             const isWin = leg.result === "win";
             const isLoss = leg.result === "loss";
             const dotColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#374151";
@@ -158,13 +164,28 @@ function ParlayCard({
               leg.betType === "player_prop"
                 ? `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"}`
                 : `${leg.game?.homeTeam ?? "?"} vs ${leg.game?.awayTeam ?? "?"} — ${leg.pick}`;
+            const expanded = expandedLegIndex === i;
 
             return (
-              <View key={i} style={styles.legRow}>
-                <View style={[styles.legDot, { backgroundColor: dotColor }]} />
-                <Text style={styles.legText} numberOfLines={1}>{label}</Text>
-                {leg.line != null && (
-                  <Text style={styles.legLine}>{leg.line > 0 ? `+${leg.line}` : leg.line}</Text>
+              <View key={i}>
+                <Pressable
+                  onPress={() => leg.result && setExpandedLegIndex(expanded ? null : i)}
+                  style={({ pressed }) => [styles.legRow, pressed && styles.pressed]}
+                >
+                  <View style={[styles.legDot, { backgroundColor: dotColor }]} />
+                  <Text style={styles.legText} numberOfLines={1}>{label}</Text>
+                  {leg.line != null && (
+                    <Text style={styles.legLine}>{parseFloat(leg.line) > 0 ? `+${leg.line}` : leg.line}</Text>
+                  )}
+                </Pressable>
+                {expanded && leg.result && (
+                  <Animated.View
+                    entering={FadeIn.duration(150)}
+                    exiting={FadeOut.duration(100)}
+                    style={styles.legDetailRow}
+                  >
+                    <Text style={styles.legDetailText}>{resolveResultDetail(leg, leg.game)}</Text>
+                  </Animated.View>
                 )}
               </View>
             );
@@ -432,7 +453,7 @@ export default function LeagueDetailScreen() {
                   </Text>
                 </View>
               ) : (
-                parlays.map((parlay: any) => (
+                parlays.map((parlay: ParlayWithLegs) => (
                   <ParlayCard
                     key={parlay.id}
                     parlay={parlay}
@@ -623,6 +644,13 @@ const styles = StyleSheet.create({
   legDot: { width: 7, height: 7, borderRadius: 4 },
   legText: { flex: 1, fontSize: 12, color: "#94a3b8" },
   legLine: { fontSize: 12, color: "#475569", fontWeight: "600" },
+  pressed: { opacity: 0.6 },
+  legDetailRow: {
+    paddingLeft: 15,
+    paddingRight: 4,
+    paddingBottom: 4,
+  },
+  legDetailText: { fontSize: 11, color: "#64748b", fontStyle: "italic" },
   moderationRow: {
     flexDirection: "row",
     borderTopWidth: 1,

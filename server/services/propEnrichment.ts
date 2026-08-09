@@ -14,6 +14,7 @@ import { db } from "../db";
 import { parlayLegs, parlays, weeks } from "@shared/schema";
 import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import { storage } from "../storage";
+import { buildResultDetail } from "@shared/legJustification";
 
 const BASE_URL = "https://api.the-odds-api.com/v4";
 const SPORT    = "americanfootball_nfl";
@@ -186,7 +187,8 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
       }
 
       if (legResult) {
-        await storage.enrichParlayLeg(leg.id, { result: legResult, oddsEnriched: true });
+        const resultDetail = buildResultDetail({ leg, stat });
+        await storage.enrichParlayLeg(leg.id, { result: legResult, oddsEnriched: true, resultDetail });
         result.resolved++;
         result.details.push(
           `Resolved "${leg.playerName}" ${propType} ${pick} ${leg.line ?? ""} → ${legResult}`

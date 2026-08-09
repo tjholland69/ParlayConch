@@ -5,6 +5,7 @@ import { parlayLegs, games, players, playerWeekStats } from "@shared/schema";
 import type { Game, ParlayLeg, PlayerWeekStat, Player } from "@shared/schema";
 import { storage } from "../storage";
 import { syncGameScoresFromNflverse, syncAllPlayerStatsForWeek } from "./nflverse";
+import { buildResultDetail } from "@shared/legJustification";
 
 export type EnrichLog = {
   at: string;
@@ -196,7 +197,8 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
         log.changes.push(note);
 
         if (result && !leg.result) {
-          await storage.updateParlayLeg(legId, { result });
+          const resultDetail = buildResultDetail({ leg, stat: playerStat });
+          await storage.updateParlayLeg(legId, { result, resultDetail });
           log.changes.push(`✓ Result set to "${result}"`);
           // Roll up the parlay status now that this leg is resolved
           await storage.rollupParlayStatus(leg.parlayId);
@@ -247,7 +249,8 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
         if (!leg.result) {
           const result = calculateLegResult(leg.betType, leg.pick, freshGame);
           if (result) {
-            await storage.updateParlayLeg(legId, { result });
+            const resultDetail = buildResultDetail({ leg, game: freshGame });
+            await storage.updateParlayLeg(legId, { result, resultDetail });
             log.changes.push(`✓ Result set to "${result}"`);
             // Roll up the parlay status now that this leg is resolved
             await storage.rollupParlayStatus(leg.parlayId);

@@ -97,7 +97,7 @@ export interface IStorage {
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
   deleteParlayLeg(legId: number): Promise<void>;
-  updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg>;
+  updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'resultDetail' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg>;
   bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]>;
   addParlayLeg(parlayId: number, leg: Omit<InsertParlayLeg, 'parlayId'> & { userId: string }): Promise<ParlayLeg>;
   mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
@@ -179,8 +179,8 @@ export interface IStorage {
   findGameByTeams(weekId: number, homeTeam: string, awayTeam: string): Promise<Game | null>;
   upsertGameForImport(weekId: number, homeTeam: string, awayTeam: string, gameDate?: Date): Promise<Game>;
   getUnenrichedLegs(leagueId?: number): Promise<(ParlayLeg & { game: Game | null })[]>;
-  enrichParlayLeg(legId: number, updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
-  enrichParlayLegsBatch(updates: Array<{ id: number; result?: string | null; line?: string | null; oddsEnriched: boolean }>): Promise<void>;
+  enrichParlayLeg(legId: number, updates: { result?: string | null; resultDetail?: string | null; line?: string | null; oddsEnriched: boolean }): Promise<void>;
+  enrichParlayLegsBatch(updates: Array<{ id: number; result?: string | null; resultDetail?: string | null; line?: string | null; oddsEnriched: boolean }>): Promise<void>;
   updateGameScores(gameId: number, homeScore: number, awayScore: number, isFinished: boolean, winner?: string): Promise<void>;
   setGameFinishedAt(gameId: number, finishedAt: Date): Promise<void>;
   backfillGameFinishedAt(): Promise<{ updated: number }>;
@@ -1203,7 +1203,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(parlayLegs).where(eq(parlayLegs.id, legId));
   }
 
-  async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg> {
+  async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'resultDetail' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg> {
     const [updated] = await db.update(parlayLegs).set(updates).where(eq(parlayLegs.id, legId)).returning();
     return updated;
   }
@@ -1803,17 +1803,18 @@ export class DatabaseStorage implements IStorage {
 
   async enrichParlayLeg(
     legId: number,
-    updates: { result?: string | null; line?: string | null; oddsEnriched: boolean }
+    updates: { result?: string | null; resultDetail?: string | null; line?: string | null; oddsEnriched: boolean }
   ): Promise<void> {
     const set: Record<string, unknown> = { oddsEnriched: updates.oddsEnriched };
     if (updates.result !== undefined) set.result = updates.result;
+    if (updates.resultDetail !== undefined) set.resultDetail = updates.resultDetail;
     if (updates.line !== undefined) set.line = updates.line;
     await db.update(parlayLegs).set(set as any).where(eq(parlayLegs.id, legId));
   }
 
   /** Batch variant of enrichParlayLeg — chunks concurrent updates inside one transaction. */
   async enrichParlayLegsBatch(
-    updates: Array<{ id: number; result?: string | null; line?: string | null; oddsEnriched: boolean }>
+    updates: Array<{ id: number; result?: string | null; resultDetail?: string | null; line?: string | null; oddsEnriched: boolean }>
   ): Promise<void> {
     if (updates.length === 0) return;
     const CHUNK = 50;
@@ -1824,6 +1825,7 @@ export class DatabaseStorage implements IStorage {
           chunk.map((u) => {
             const set: Record<string, unknown> = { oddsEnriched: u.oddsEnriched };
             if (u.result !== undefined) set.result = u.result;
+            if (u.resultDetail !== undefined) set.resultDetail = u.resultDetail;
             if (u.line !== undefined) set.line = u.line;
             return tx.update(parlayLegs).set(set as any).where(eq(parlayLegs.id, u.id));
           }),

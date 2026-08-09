@@ -280,6 +280,7 @@ export const parlayLegs = pgTable("parlay_legs", {
   oddsSource: text("odds_source"), // Bookmaker the line/odds came from (e.g. 'DraftKings', 'FanDuel')
   gameSegment: text("game_segment"), // Optional game portion the bet applies to (e.g. 'First Half', 'Second Quarter')
   result: text("result"), // 'win', 'loss', 'push', null
+  resultDetail: text("result_detail"), // human-readable justification for the result, e.g. "Passed for 312 yds (needed 245.5+)" or "Final: DAL 24 @ PHI 17"
   oddsEnriched: boolean("odds_enriched").default(false), // true once odds/result have been auto-resolved
   playerName: text("player_name"), // for player_prop bets: the player's name
   propType: text("prop_type"),     // for player_prop bets: the prop category (e.g. 'rush_yards')
