@@ -143,6 +143,11 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
 
   if (res.ok) {
     logger.info(`[nflverse] Per-season file found for ${season} (${res.status})`);
+    logger.warn(
+      `[nflverse] Using legacy player_stats release for season ${season} — ` +
+      `this file has no defensive columns (def_sacks, def_tackles_solo, etc.), ` +
+      `so pure defensive players (e.g. DE/DT/LB/DB) will be silently missing.`
+    );
     const text = await res.text();
     const parsed = Papa.parse<Record<string, string>>(text, {
       header: true, skipEmptyLines: true,
@@ -162,6 +167,11 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
 
   if (seasonRows.length > 0) {
     logger.info(`[nflverse] Found ${seasonRows.length} rows for season ${season} in combined file.`);
+    logger.warn(
+      `[nflverse] Using legacy player_stats release (combined file) for season ${season} — ` +
+      `this file has no defensive columns (def_sacks, def_tackles_solo, etc.), ` +
+      `so pure defensive players (e.g. DE/DT/LB/DB) will be silently missing.`
+    );
     return seasonRows;
   }
 
