@@ -53,3 +53,48 @@ export function useJoinLeague() {
     },
   });
 }
+
+export function useLockWeekParlay(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (hadMissingBets: boolean) =>
+      apiRequest("POST", `/api/leagues/${leagueId}/weeks/${weekId}/lock`, { hadMissingBets }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "lock"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "my-parlay"] });
+    },
+  });
+}
+
+export function useUnlockWeekParlay(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      apiRequest("DELETE", `/api/leagues/${leagueId}/weeks/${weekId}/lock`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "lock"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "my-parlay"] });
+    },
+  });
+}
+
+export type InviteByEmailResult = {
+  results: {
+    email: string;
+    status: "invited" | "added" | "already_member";
+    username?: string;
+  }[];
+};
+
+export function useInviteByEmail(leagueId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (emails: string[]) =>
+      apiRequest<InviteByEmailResult>("POST", `/api/leagues/${leagueId}/invite-by-email`, { emails }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "members"] });
+    },
+  });
+}

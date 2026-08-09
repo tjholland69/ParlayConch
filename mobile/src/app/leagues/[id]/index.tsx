@@ -8,19 +8,33 @@ import {
   Linking,
   Alert,
   StyleSheet,
+  Modal,
+  TextInput,
+  Share,
+  KeyboardAvoidingView,
+  Platform,
 } from "react-native";
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
-import { apiRequest } from "@/lib/api";
+import * as WebBrowser from "expo-web-browser";
+import { apiRequest, API_BASE_URL } from "@/lib/api";
 import {
   useLeagueStats,
   useLeagueMembersWithUsers,
   useWeekLockStatus,
+  useLockWeekParlay,
+  useUnlockWeekParlay,
+  useInviteByEmail,
 } from "@/hooks/use-leagues";
-import { useLeagueParlays, useApproveParlay, useRejectParlay } from "@/hooks/use-parlays";
+import {
+  useLeagueParlays,
+  useApproveParlay,
+  useRejectParlay,
+  useMyParlay,
+} from "@/hooks/use-parlays";
 import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
 import { useActiveWeek } from "@/hooks/use-weeks";
 import { useAuth } from "@/hooks/use-auth";
@@ -29,6 +43,7 @@ import { format } from "date-fns";
 import { SPORTSBOOK_PROVIDERS, pickDeepLinkGame, type SportsbookProvider } from "@shared/sportsbook-providers";
 import type { ParlayWithLegs } from "@shared/schema";
 import { resolveResultDetail } from "@shared/legJustification";
+import { webLeagueSettingsUrl } from "@/lib/pickHelpers";
 
 type ParlayLegWithGame = ParlayWithLegs["legs"][number];
 
@@ -310,13 +325,22 @@ function StatCard({ stat }: { stat: any }) {
 export default function LeagueDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const leagueId = parseInt(id, 10);
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("parlays");
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteEmails, setInviteEmails] = useState("");
   const activeWeek = useActiveWeek();
   const { user } = useAuth();
 
   const { data: league, isLoading: leagueLoading } = useQuery({
     queryKey: ["/api/leagues", leagueId],
-    queryFn: () => apiRequest("GET", `/api/leagues/${leagueId}`),
+    queryFn: () =>
+      apiRequest<{
+        name?: string;
+        isDemo?: boolean;
+        inviteCode?: string;
+        memberCount?: number;
+      }>("GET", `/api/leagues/${leagueId}`),
     enabled: !!leagueId,
   });
 
@@ -331,9 +355,98 @@ export default function LeagueDetailScreen() {
     isLoading: parlaysLoading,
     refetch: refetchParlays,
   } = useLeagueParlays(leagueId, weekId);
-  const { data: lockStatus } = useWeekLockStatus(leagueId, weekId);
+  const { data: lockStatus, refetch: refetchLock } = useWeekLockStatus(leagueId, weekId);
+  const { data: myParlay } = useMyParlay(leagueId, weekId);
+  const lockWeek = useLockWeekParlay(leagueId, weekId);
+  const unlockWeek = useUnlockWeekParlay(leagueId, weekId);
+  const inviteByEmail = useInviteByEmail(leagueId);
 
-  const leagueName = (league as any)?.name ?? "League";
+  const leagueName = league?.name ?? "League";
+  const isLocked = !!lockStatus?.isLocked;
+  const canBuild = !!activeWeek && !isLocked;
+
+  function openManageOnWeb() {
+    WebBrowser.openBrowserAsync(webLeagueSettingsUrl(leagueId, API_BASE_URL));
+  }
+
+  function handleLockPress() {
+    if (!lockStatus) return;
+    if (lockStatus.allSubmitted) {
+      lockWeek.mutate(false, {
+        onError: (err: Error) => Alert.alert("Couldn't lock", err.message),
+      });
+      return;
+    }
+    Alert.alert(
+      "Lock this week?",
+      `${lockStatus.submittedCount} of ${lockStatus.totalMembers} members have submitted. Members without a pick will be marked void.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Lock week",
+          style: "destructive",
+          onPress: () =>
+            lockWeek.mutate(true, {
+              onError: (err: Error) => Alert.alert("Couldn't lock", err.message),
+            }),
+        },
+      ],
+    );
+  }
+
+  function handleUnlockPress() {
+    Alert.alert("Unlock this week?", "Members will be able to submit or edit picks again.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Unlock",
+        onPress: () =>
+          unlockWeek.mutate(undefined, {
+            onError: (err: Error) => Alert.alert("Couldn't unlock", err.message),
+          }),
+      },
+    ]);
+  }
+
+  async function shareInviteCode() {
+    const code = league?.inviteCode;
+    if (!code) return;
+    await Share.share({ message: `Join my Parlay.Conch league with code: ${code}` });
+  }
+
+  function submitInvites() {
+    const emails = inviteEmails
+      .split(/[\s,;]+/)
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean);
+    if (emails.length === 0) {
+      Alert.alert("Add emails", "Enter at least one email address.");
+      return;
+    }
+    if (emails.length > 5) {
+      Alert.alert("Too many", "Invite up to 5 emails at a time.");
+      return;
+    }
+    inviteByEmail.mutate(emails, {
+      onSuccess: (data) => {
+        const added = data.results.filter((r) => r.status === "added").length;
+        const invited = data.results.filter((r) => r.status === "invited").length;
+        const already = data.results.filter((r) => r.status === "already_member").length;
+        Alert.alert(
+          "Invites sent",
+          [
+            added ? `${added} added` : null,
+            invited ? `${invited} emailed` : null,
+            already ? `${already} already members` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "Done",
+        );
+        setInviteEmails("");
+        setInviteOpen(false);
+      },
+      onError: (err: Error) => Alert.alert("Invite failed", err.message),
+    });
+  }
 
   if (leagueLoading) {
     return (
@@ -352,6 +465,23 @@ export default function LeagueDetailScreen() {
           headerTintColor: "#f1f5f9",
           headerTitleStyle: { fontWeight: "700", fontSize: 17 },
           headerShadowVisible: false,
+          headerRight: () => (
+            <Pressable
+              onPress={() =>
+                Alert.alert(leagueName, undefined, [
+                  ...(isAdmin
+                    ? [{ text: "Invite members", onPress: () => setInviteOpen(true) }]
+                    : []),
+                  { text: "Manage on web", onPress: openManageOnWeb },
+                  { text: "Cancel", style: "cancel" as const },
+                ])
+              }
+              hitSlop={10}
+              style={{ paddingHorizontal: 4 }}
+            >
+              <Ionicons name="ellipsis-horizontal" size={22} color="#f1f5f9" />
+            </Pressable>
+          ),
         }}
       />
       <View style={styles.container}>
@@ -364,13 +494,18 @@ export default function LeagueDetailScreen() {
                 <Text style={styles.weekPillText}>{activeWeek.label}</Text>
               </View>
             )}
-            {lockStatus?.isLocked && (
+            {isLocked ? (
               <View style={styles.lockPill}>
                 <Ionicons name="lock-closed" size={12} color="#ef4444" />
                 <Text style={styles.lockPillText}>Locked</Text>
               </View>
+            ) : (
+              <View style={styles.openPill}>
+                <Ionicons name="lock-open-outline" size={12} color="#22c55e" />
+                <Text style={styles.openPillText}>Open</Text>
+              </View>
             )}
-            {(league as any)?.isDemo && (
+            {league?.isDemo && (
               <View style={styles.demoPill}>
                 <Text style={styles.demoPillText}>DEMO</Text>
               </View>
@@ -382,6 +517,49 @@ export default function LeagueDetailScreen() {
             </Text>
           )}
         </View>
+
+        {isAdmin && activeWeek && (
+          <View style={styles.adminBar}>
+            <Text style={styles.adminBarText}>
+              {lockStatus?.submittedCount ?? 0} / {lockStatus?.totalMembers ?? members?.length ?? "—"} submitted
+            </Text>
+            {isLocked ? (
+              <Pressable
+                onPress={handleUnlockPress}
+                disabled={unlockWeek.isPending}
+                style={({ pressed }) => [styles.adminActionBtn, pressed && { opacity: 0.7 }]}
+              >
+                {unlockWeek.isPending ? (
+                  <ActivityIndicator size="small" color="#f1f5f9" />
+                ) : (
+                  <>
+                    <Ionicons name="lock-open-outline" size={14} color="#f1f5f9" />
+                    <Text style={styles.adminActionText}>Unlock</Text>
+                  </>
+                )}
+              </Pressable>
+            ) : (
+              <Pressable
+                onPress={handleLockPress}
+                disabled={lockWeek.isPending}
+                style={({ pressed }) => [
+                  styles.adminActionBtn,
+                  lockStatus?.allSubmitted ? styles.adminActionReady : styles.adminActionMuted,
+                  pressed && { opacity: 0.7 },
+                ]}
+              >
+                {lockWeek.isPending ? (
+                  <ActivityIndicator size="small" color="#f1f5f9" />
+                ) : (
+                  <>
+                    <Ionicons name="lock-closed-outline" size={14} color="#f1f5f9" />
+                    <Text style={styles.adminActionText}>Lock week</Text>
+                  </>
+                )}
+              </Pressable>
+            )}
+          </View>
+        )}
 
         {/* Tabs */}
         <View style={styles.tabBar}>
@@ -418,11 +596,16 @@ export default function LeagueDetailScreen() {
                 activeTab === "members" ? membersLoading :
                 statsLoading
               }
-              onRefresh={
-                activeTab === "parlays" ? refetchParlays :
-                activeTab === "members" ? refetchMembers :
-                refetchStats
-              }
+              onRefresh={() => {
+                if (activeTab === "parlays") {
+                  refetchParlays();
+                  refetchLock();
+                } else if (activeTab === "members") {
+                  refetchMembers();
+                } else {
+                  refetchStats();
+                }
+              }}
               tintColor="#2563eb"
             />
           }
@@ -430,15 +613,30 @@ export default function LeagueDetailScreen() {
           {/* PARLAYS */}
           {activeTab === "parlays" && (
             <>
-              {activeWeek && !lockStatus?.isLocked && (
+              {canBuild && (
                 <Pressable
                   style={({ pressed }) => [styles.submitBanner, pressed && styles.submitBannerPressed]}
-                  onPress={() => Linking.openURL("https://parlayconch.com")}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/leagues/[id]/build",
+                      params: { id: String(leagueId) },
+                    })
+                  }
                 >
                   <Ionicons name="create-outline" size={16} color="#2563eb" />
-                  <Text style={styles.submitBannerText}>Submit or edit your pick at parlayconch.com</Text>
-                  <Ionicons name="open-outline" size={14} color="#2563eb" />
+                  <Text style={styles.submitBannerText}>
+                    {myParlay ? "Edit your pick" : "Build your pick"}
+                  </Text>
+                  <Ionicons name="chevron-forward" size={14} color="#2563eb" />
                 </Pressable>
+              )}
+              {isLocked && !myParlay && (
+                <View style={styles.missedBanner}>
+                  <Ionicons name="alert-circle-outline" size={16} color="#f59e0b" />
+                  <Text style={styles.missedBannerText}>
+                    This week is locked and you didn't submit a pick.
+                  </Text>
+                </View>
               )}
               {parlaysLoading ? (
                 <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
@@ -449,7 +647,9 @@ export default function LeagueDetailScreen() {
                   </View>
                   <Text style={styles.emptyTitle}>No parlays yet</Text>
                   <Text style={styles.emptySubtitle}>
-                    No picks have been submitted for this week.
+                    {canBuild
+                      ? "Be the first to submit a pick this week."
+                      : "No picks have been submitted for this week."}
                   </Text>
                 </View>
               ) : (
@@ -470,6 +670,23 @@ export default function LeagueDetailScreen() {
           {/* MEMBERS */}
           {activeTab === "members" && (
             <>
+              {isAdmin && (
+                <Pressable
+                  style={({ pressed }) => [styles.submitBanner, pressed && styles.submitBannerPressed]}
+                  onPress={() => setInviteOpen(true)}
+                >
+                  <Ionicons name="person-add-outline" size={16} color="#2563eb" />
+                  <Text style={styles.submitBannerText}>Invite members</Text>
+                  <Ionicons name="chevron-forward" size={14} color="#2563eb" />
+                </Pressable>
+              )}
+              <Pressable
+                style={({ pressed }) => [styles.webLinkRow, pressed && { opacity: 0.7 }]}
+                onPress={openManageOnWeb}
+              >
+                <Ionicons name="globe-outline" size={14} color="#64748b" />
+                <Text style={styles.webLinkText}>Manage roles & rules on the web</Text>
+              </Pressable>
               {membersLoading ? (
                 <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
               ) : !members || members.length === 0 ? (
@@ -508,6 +725,75 @@ export default function LeagueDetailScreen() {
           )}
         </ScrollView>
       </View>
+
+      <Modal
+        visible={inviteOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setInviteOpen(false)}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          style={styles.modalOverlay}
+        >
+          <Pressable style={styles.modalBackdrop} onPress={() => setInviteOpen(false)} />
+          <View style={styles.modalSheet}>
+            <Text style={styles.modalTitle}>Invite members</Text>
+            <Text style={styles.modalSubtitle}>
+              Email up to 5 people, or share the invite code.
+            </Text>
+
+            {league?.inviteCode ? (
+              <Pressable
+                style={({ pressed }) => [styles.codeRow, pressed && { opacity: 0.8 }]}
+                onPress={shareInviteCode}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.codeLabel}>Invite code</Text>
+                  <Text style={styles.codeValue}>{league.inviteCode}</Text>
+                </View>
+                <Ionicons name="share-outline" size={20} color="#2563eb" />
+              </Pressable>
+            ) : null}
+
+            <TextInput
+              style={styles.emailInput}
+              value={inviteEmails}
+              onChangeText={setInviteEmails}
+              placeholder="email@example.com, friend@…"
+              placeholderTextColor="#475569"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              multiline
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable
+                style={({ pressed }) => [styles.modalCancel, pressed && { opacity: 0.7 }]}
+                onPress={() => setInviteOpen(false)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={({ pressed }) => [
+                  styles.modalConfirm,
+                  pressed && { opacity: 0.85 },
+                  inviteByEmail.isPending && { opacity: 0.5 },
+                ]}
+                onPress={submitInvites}
+                disabled={inviteByEmail.isPending}
+              >
+                {inviteByEmail.isPending ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.modalConfirmText}>Send invites</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </>
   );
 }
@@ -552,6 +838,16 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   lockPillText: { fontSize: 11, color: "#ef4444", fontWeight: "600" },
+  openPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#0a1c14",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  openPillText: { fontSize: 11, color: "#22c55e", fontWeight: "600" },
   demoPill: {
     backgroundColor: "#2d2000",
     borderRadius: 6,
@@ -560,6 +856,31 @@ const styles = StyleSheet.create({
   },
   demoPillText: { fontSize: 10, fontWeight: "700", color: "#f59e0b", letterSpacing: 0.5 },
   deadlineText: { fontSize: 11, color: "#475569" },
+  adminBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#1c2538",
+    borderBottomWidth: 1,
+    borderBottomColor: "#2a3447",
+    gap: 12,
+  },
+  adminBarText: { fontSize: 13, color: "#94a3b8", fontWeight: "500", flex: 1 },
+  adminActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#2563eb",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    minHeight: 36,
+  },
+  adminActionReady: { backgroundColor: "#16a34a" },
+  adminActionMuted: { backgroundColor: "#334155" },
+  adminActionText: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
   tabBar: {
     flexDirection: "row",
     backgroundColor: "#1c2538",
@@ -596,6 +917,86 @@ const styles = StyleSheet.create({
   },
   submitBannerPressed: { opacity: 0.7 },
   submitBannerText: { flex: 1, fontSize: 13, color: "#93c5fd", fontWeight: "500" },
+  missedBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#1c1a0a",
+    borderWidth: 1,
+    borderColor: "#3d2e00",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+  },
+  missedBannerText: { flex: 1, fontSize: 13, color: "#fbbf24", fontWeight: "500" },
+  webLinkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 14,
+    paddingVertical: 4,
+  },
+  webLinkText: { fontSize: 13, color: "#64748b", fontWeight: "500" },
+  modalOverlay: { flex: 1, justifyContent: "flex-end" },
+  modalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.55)",
+  },
+  modalSheet: {
+    backgroundColor: "#1c2538",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 32,
+    borderTopWidth: 1,
+    borderColor: "#2a3447",
+    gap: 12,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "700", color: "#f1f5f9" },
+  modalSubtitle: { fontSize: 13, color: "#94a3b8", marginBottom: 4 },
+  codeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#141926",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    padding: 14,
+    gap: 12,
+  },
+  codeLabel: { fontSize: 11, color: "#64748b", fontWeight: "600", marginBottom: 2 },
+  codeValue: { fontSize: 18, fontWeight: "800", color: "#f1f5f9", letterSpacing: 1 },
+  emailInput: {
+    minHeight: 88,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    backgroundColor: "#141926",
+    color: "#f1f5f9",
+    padding: 14,
+    fontSize: 15,
+    textAlignVertical: "top",
+  },
+  modalActions: { flexDirection: "row", gap: 10, marginTop: 4 },
+  modalCancel: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalCancelText: { fontSize: 15, fontWeight: "600", color: "#94a3b8" },
+  modalConfirm: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 12,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalConfirmText: { fontSize: 15, fontWeight: "700", color: "#ffffff" },
   emptyState: { alignItems: "center", paddingVertical: 48, gap: 10 },
   emptyIcon: {
     width: 64,
