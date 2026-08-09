@@ -107,7 +107,7 @@ export const games = pgTable("games", {
   awayRecord: text("away_record"),
 }, (table) => [
   index("games_week_id_idx").on(table.weekId),
-  index("games_week_teams_idx").on(table.weekId, table.homeTeam, table.awayTeam),
+  uniqueIndex("games_week_teams_idx").on(table.weekId, table.homeTeam, table.awayTeam),
 ]);
 
 // Cached snapshots from The Odds API's historical endpoint, used to backfill

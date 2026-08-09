@@ -73,6 +73,27 @@ export function parseGameId(gameId: string): GameId | null {
   return { season, week, awayAbbrev: away, homeAbbrev: home };
 }
 
+// The nflverse pbp release has ~370 columns; only these are ever read (see
+// the PbpRow interface). Projecting down to just these right after parsing
+// keeps the cached per-season Map (up to SEASON_PLAYS_CACHE_MAX seasons held
+// in memory at once in decisionDetection.ts) roughly 15x smaller than
+// retaining the full-width rows — the difference between this fitting in
+// memory and OOM-crashing the process on a full season's ~50k plays.
+const PBP_FIELDS: (keyof PbpRow)[] = [
+  "play_id", "game_id", "season", "week", "home_team", "away_team",
+  "qtr", "time", "time_of_day", "desc", "game_seconds_remaining",
+  "total_home_score", "total_away_score",
+  "rush_attempt", "rusher_player_id", "rushing_yards", "rush_touchdown",
+  "complete_pass", "receiver_player_id", "receiving_yards", "pass_touchdown",
+  "pass_attempt", "passer_player_id", "passing_yards", "interception",
+];
+
+function pruneRow(row: PbpRow): PbpRow {
+  const pruned = {} as PbpRow;
+  for (const field of PBP_FIELDS) pruned[field] = row[field];
+  return pruned;
+}
+
 /**
  * Fetch a season's play-by-play file and group rows by game_id, each game's
  * plays sorted chronologically (ascending numeric play_id — nflverse assigns
@@ -80,10 +101,11 @@ export function parseGameId(gameId: string): GameId | null {
  */
 export async function getPlaysByGame(season: number): Promise<Map<string, PbpRow[]>> {
   logger.info(`[play-by-play] Fetching play-by-play for season ${season}…`);
-  const rows = (await fetchCsv(playByPlayUrl(season))) as unknown as PbpRow[];
+  const rawRows = (await fetchCsv(playByPlayUrl(season))) as unknown as PbpRow[];
 
   const byGame = new Map<string, PbpRow[]>();
-  for (const row of rows) {
+  for (const raw of rawRows) {
+    const row = pruneRow(raw);
     const list = byGame.get(row.game_id);
     if (list) list.push(row);
     else byGame.set(row.game_id, [row]);
@@ -91,7 +113,7 @@ export async function getPlaysByGame(season: number): Promise<Map<string, PbpRow
   for (const plays of byGame.values()) {
     plays.sort((a, b) => (parseInt(a.play_id, 10) || 0) - (parseInt(b.play_id, 10) || 0));
   }
-  logger.info(`[play-by-play] ${byGame.size} games, ${rows.length} plays total for season ${season}`);
+  logger.info(`[play-by-play] ${byGame.size} games, ${rawRows.length} plays total for season ${season}`);
   return byGame;
 }
 

@@ -29,6 +29,7 @@ function NflverseSyncCard() {
   const [busy, setBusy] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobState, setJobState] = useState<string | null>(null);
+  const [result, setResult] = useState<Record<string, any> | null>(null);
 
   useEffect(() => {
     if (!jobId) return;
@@ -43,6 +44,7 @@ function NflverseSyncCard() {
         if (data.state === "completed") {
           setBusy(false);
           setJobId(null);
+          setResult(data.result ?? null);
           toast({ title: "nflverse sync complete" });
         } else if (data.state === "failed") {
           setBusy(false);
@@ -68,6 +70,7 @@ function NflverseSyncCard() {
   async function runSync() {
     setBusy(true);
     setJobState(null);
+    setResult(null);
     try {
       const body: Record<string, unknown> = {
         season: Number(season),
@@ -88,6 +91,7 @@ function NflverseSyncCard() {
         toast({ title: "Sync queued", description: `Job ${data.jobId}` });
       } else {
         setBusy(false);
+        setResult(data);
         toast({ title: "nflverse sync complete" });
       }
     } catch (e: any) {
@@ -152,6 +156,41 @@ function NflverseSyncCard() {
             <span className="text-xs text-muted-foreground">Job {jobId}</span>
           )}
         </div>
+        {result && (
+          <div className="rounded-md border border-white/10 bg-black/20 p-3 text-xs space-y-1.5 font-mono">
+            {result.scores && (
+              <div>
+                <span className="text-muted-foreground">scores:</span>{" "}
+                updated={result.scores.updated} noMatch={result.scores.noMatch} alreadyFinal={result.scores.alreadyFinal}
+              </div>
+            )}
+            {result.gameTimes && (
+              <div>
+                <span className="text-muted-foreground">gameTimes:</span>{" "}
+                updated={result.gameTimes.updated} noMatch={result.gameTimes.noMatch} noScheduleTime={result.gameTimes.noScheduleTime}
+              </div>
+            )}
+            {result.finishTimes && (
+              <div>
+                <span className="text-muted-foreground">finishTimes:</span>{" "}
+                updated={result.finishTimes.updated} noMatch={result.finishTimes.noMatch} notYetFinished={result.finishTimes.notYetFinished}
+              </div>
+            )}
+            {result.players && (
+              <div>
+                <span className="text-muted-foreground">players:</span>{" "}
+                {result.players.skipped
+                  ? `skipped (${result.players.reason})`
+                  : `players=${result.players.players} stats=${result.players.stats}`}
+              </div>
+            )}
+            {(result.scores?.noMatch > 0 || result.gameTimes?.noMatch > 0) && (
+              <div className="text-amber-400 pt-1">
+                noMatch &gt; 0 — those games weren't found by season/week/team; they were left unchanged.
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
