@@ -414,9 +414,10 @@ export interface WeeklyWinRatePoint {
 }
 
 /**
- * Per-league cumulative win rate over lifetime — every decided leg in the league
- * (all members), matching the dashboard performance line shape. Weeks with no
- * decided legs are omitted rather than zeroed. Powers the "My Leagues" tile sparkline.
+ * Per-league week-over-week win rate over lifetime — every decided leg in the
+ * league (all members). Each point is that week's own rate (not cumulative), so
+ * the sparkline shows movement. Weeks with no decided legs are omitted rather
+ * than zeroed. Powers the "My Leagues" tile sparkline.
  */
 export async function getLeagueWeeklyWinRates(
   leagueIds: number[]
@@ -476,16 +477,12 @@ export async function getLeagueWeeklyWinRates(
       .sort(([, a], [, b]) => a.season - b.season || a.weekNumber - b.weekNumber)
       .map(([weekId]) => weekId);
 
-    let cumWin = 0;
-    let cumLoss = 0;
     result[leagueId] = orderedWeekIds.map((weekId) => {
       const { win, loss } = tally.get(weekId)!;
-      cumWin += win;
-      cumLoss += loss;
-      const total = cumWin + cumLoss;
+      const total = win + loss;
       return {
         weekLabel: weekMeta.get(weekId)!.label,
-        winRate: total > 0 ? (cumWin / total) * 100 : 0,
+        winRate: total > 0 ? (win / total) * 100 : 0,
       };
     });
   }

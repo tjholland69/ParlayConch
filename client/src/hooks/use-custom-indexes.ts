@@ -1,8 +1,30 @@
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { CustomIndexWithAccess, CustomIndexFilters, LeagueMemberWithUser } from "@shared/schema";
+import type { CustomIndexWithAccess, CustomIndexFilters, LeagueMemberWithUser, League } from "@shared/schema";
 import type { WinRateTimeSeriesPoint } from "@/hooks/use-dashboard";
+
+/**
+ * Human-readable "Leagues: X · Members: Y · ..." description of an index's
+ * filter criteria — what makes this index different from another. Shared by
+ * the custom index list and any picker that wants a filter-criteria tooltip.
+ */
+export function describeCustomIndexFilters(filters: CustomIndexFilters | undefined, leagues: League[]): string {
+  const leagueNames = (filters?.leagueIds ?? [])
+    .map((id) => leagues.find((l) => l.id === id)?.name)
+    .filter(Boolean);
+
+  return [
+    leagueNames.length > 0 ? leagueNames.join(", ") : "All my leagues",
+    (filters?.memberUserIds ?? []).length > 0
+      ? `${filters!.memberUserIds.length} member${filters!.memberUserIds.length === 1 ? "" : "s"}`
+      : "All members",
+    (filters?.betTypes ?? []).length > 0 ? filters!.betTypes.join(", ") : "All bet types",
+    ...((filters?.propTypes ?? []).length > 0 ? [filters!.propTypes!.join(", ")] : []),
+    ...(filters?.playerName ? [filters.playerName] : []),
+    ...(filters?.teamName ? [filters.teamName] : []),
+  ].join(" · ");
+}
 
 /**
  * Members across several leagues at once, deduped by user id. Uses the existing
