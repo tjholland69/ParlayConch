@@ -1008,7 +1008,9 @@ export default function LeagueDetail() {
               list = list.filter(p => p.weekId === Number(allWeekFilter));
             }
             if (allMemberFilter !== "all") {
-              list = list.filter(p => p.userId === allMemberFilter);
+              list = list
+                .filter(p => p.legs.some(l => l.userId === allMemberFilter))
+                .map(p => ({ ...p, legs: p.legs.filter(l => l.userId === allMemberFilter) }));
             }
             if (loadingAllParlays) {
               return (

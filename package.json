@@ -18,7 +18,8 @@
     "db:migrate": "tsx script/migrate.ts",
     "db:seed": "tsx --env-file=.env.local scripts/seed-dev.ts",
     "db:seed-teams": "tsx --env-file=.env.local scripts/seed-teams.ts",
-    "backfill:leg-justifications": "tsx --env-file=.env.local scripts/backfill-leg-justifications.ts"
+    "backfill:leg-justifications": "tsx --env-file=.env.local scripts/backfill-leg-justifications.ts",
+    "backfill:odds": "tsx --env-file=.env.local scripts/backfill-odds.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",

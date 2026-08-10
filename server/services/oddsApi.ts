@@ -79,6 +79,7 @@ export interface ParsedGameLines {
   underOdds: string | null;
   moneylineHome: string | null;
   moneylineAway: string | null;
+  bookmaker: string | null;
 }
 
 export function parseGameLines(oddsGame: OddsGame): ParsedGameLines {
@@ -90,6 +91,7 @@ export function parseGameLines(oddsGame: OddsGame): ParsedGameLines {
     underOdds: null,
     moneylineHome: null,
     moneylineAway: null,
+    bookmaker: null,
   };
 
   const bookmaker = oddsGame.bookmakers.find(b =>
@@ -97,6 +99,8 @@ export function parseGameLines(oddsGame: OddsGame): ParsedGameLines {
   ) || oddsGame.bookmakers[0];
 
   if (!bookmaker) return lines;
+
+  lines.bookmaker = bookmaker.title || bookmaker.key;
 
   for (const market of bookmaker.markets) {
     if (market.key === "spreads") {
