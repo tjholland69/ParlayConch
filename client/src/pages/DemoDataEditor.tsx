@@ -1,17 +1,18 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, Suspense, lazy } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs, useMissingParlayMembers, useBackfillMissingParlays } from "@/hooks/use-bets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine, UserX } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine, UserX, LayoutGrid, Table2 } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
@@ -21,6 +22,13 @@ import { PageLoader } from "@/components/PageLoader";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { getDisplayName, shortId, sortByFirstName } from "@/lib/displayName";
+import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
+
+// AG Grid alone is ~1MB — only worth loading once someone actually asks
+// for the raw leg grid, not on every Data Editor page visit.
+const ParlayLegsGrid = lazy(() =>
+  import("@/components/ParlayLegsGrid").then((m) => ({ default: m.ParlayLegsGrid }))
+);
 
 // ── Merge Dialog ──────────────────────────────────────────────────────────────
 
@@ -456,6 +464,7 @@ export default function DemoDataEditor() {
   const [legSelectMode, setLegSelectMode] = useState(false);
   const [selectedLegIds, setSelectedLegIds] = useState<Set<number>>(new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<"tiles" | "grid">("tiles");
 
   // Backfill only targets one concrete week — in "All Years" mode the week
   // filter can represent the same weekNumber across multiple season rows, so
@@ -669,55 +678,72 @@ export default function DemoDataEditor() {
           >
             <RefreshCw className="w-4 h-4" />
           </Button>
-          <ExpandCollapseControls
-            className="flex items-center gap-2"
-            onCollapseAll={() => setCollapseSignal(s => s + 1)}
-            onExpandAll={() => setExpandSignal(s => s + 1)}
-          />
-          {selectMode ? (
+          <ToggleGroup
+            type="single"
+            value={viewMode}
+            onValueChange={(v) => { if (v) setViewMode(v as "tiles" | "grid"); }}
+            className="rounded-md border border-white/10 bg-card/40 p-0.5"
+          >
+            <ToggleGroupItem value="tiles" size="sm" className="gap-1.5 text-xs" data-testid="toggle-view-tiles">
+              <LayoutGrid className="w-3.5 h-3.5" /> Rollup Tiles
+            </ToggleGroupItem>
+            <ToggleGroupItem value="grid" size="sm" className="gap-1.5 text-xs" data-testid="toggle-view-grid">
+              <Table2 className="w-3.5 h-3.5" /> Table
+            </ToggleGroupItem>
+          </ToggleGroup>
+          {viewMode === "tiles" && (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 text-sm"
-                onClick={() => {
-                  const allSelected = filtered.every(p => selectedIds.has(p.id));
-                  if (allSelected) {
-                    setSelectedIds(new Set());
-                  } else {
-                    setSelectedIds(new Set(filtered.map(p => p.id)));
-                  }
-                }}
-              >
-                {filtered.every(p => selectedIds.has(p.id)) ? "Deselect All" : "Select All"}
-              </Button>
-              <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitSelectMode}>
-                Cancel
-              </Button>
-            </>
-          ) : legSelectMode ? (
-            <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitLegSelectMode}>
-              Cancel
-            </Button>
-          ) : (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-9 text-sm gap-1.5"
-                onClick={() => setAddHistoricalOpen(true)}
-              >
-                <FilePlus className="w-4 h-4" />
-                Add Bet
-              </Button>
-              <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setSelectMode(true)}>
-                <GitMerge className="w-4 h-4" />
-                Select &amp; Merge
-              </Button>
-              <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setLegSelectMode(true)}>
-                <ListChecks className="w-4 h-4" />
-                Select Legs
-              </Button>
+              <ExpandCollapseControls
+                className="flex items-center gap-2"
+                onCollapseAll={() => setCollapseSignal(s => s + 1)}
+                onExpandAll={() => setExpandSignal(s => s + 1)}
+              />
+              {selectMode ? (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 text-sm"
+                    onClick={() => {
+                      const allSelected = filtered.every(p => selectedIds.has(p.id));
+                      if (allSelected) {
+                        setSelectedIds(new Set());
+                      } else {
+                        setSelectedIds(new Set(filtered.map(p => p.id)));
+                      }
+                    }}
+                  >
+                    {filtered.every(p => selectedIds.has(p.id)) ? "Deselect All" : "Select All"}
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitSelectMode}>
+                    Cancel
+                  </Button>
+                </>
+              ) : legSelectMode ? (
+                <Button variant="outline" size="sm" className="h-9 text-sm" onClick={exitLegSelectMode}>
+                  Cancel
+                </Button>
+              ) : (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-9 text-sm gap-1.5"
+                    onClick={() => setAddHistoricalOpen(true)}
+                  >
+                    <FilePlus className="w-4 h-4" />
+                    Add Bet
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setSelectMode(true)}>
+                    <GitMerge className="w-4 h-4" />
+                    Select &amp; Merge
+                  </Button>
+                  <Button variant="outline" size="sm" className="h-9 text-sm gap-1.5" onClick={() => setLegSelectMode(true)}>
+                    <ListChecks className="w-4 h-4" />
+                    Select Legs
+                  </Button>
+                </>
+              )}
             </>
           )}
         </div>
@@ -730,6 +756,10 @@ export default function DemoDataEditor() {
         <div className="text-center py-16 text-muted-foreground">
           <p>No parlays found for the selected filters.</p>
         </div>
+      ) : viewMode === "grid" ? (
+        <Suspense fallback={<div className="h-[70vh] bg-white/5 rounded-xl animate-pulse" />}>
+          <ParlayLegsGrid rows={flattenParlayLegs(sorted)} />
+        </Suspense>
       ) : (
         <div className="space-y-4">
           {(() => {

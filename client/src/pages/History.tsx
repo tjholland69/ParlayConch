@@ -1,6 +1,6 @@
 import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages } from "@/hooks/use-bets";
 import { useAuth } from "@/hooks/use-auth";
-import { useState, useEffect, useMemo, useRef, Fragment, memo } from "react";
+import { useState, useEffect, useMemo, useRef, Fragment, memo, Suspense, lazy } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,10 +12,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Calendar as CalendarWidget } from "@/components/ui/calendar";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { DateRange } from "react-day-picker";
 import { MultiSelect } from "@/components/MultiSelect";
 import { BET_TYPE_OPTIONS } from "@/lib/bettingConstants";
-import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown, Search, HelpCircle } from "lucide-react";
+import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown, Search, HelpCircle, LayoutGrid, Table2 } from "lucide-react";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -28,6 +29,13 @@ import { getStatusVariant } from "@/lib/parlayStatusStyles";
 import { legMatchup } from "@/lib/legLabel";
 import { PageLoader } from "@/components/PageLoader";
 import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
+import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
+
+// AG Grid alone is ~1MB — only worth loading once someone actually asks
+// for the raw leg grid, not on every History page visit.
+const ParlayLegsGrid = lazy(() =>
+  import("@/components/ParlayLegsGrid").then((m) => ({ default: m.ParlayLegsGrid }))
+);
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -141,7 +149,8 @@ function LegTable({ legs, compact = false }: { legs: any[]; compact?: boolean })
                   "border-t border-white/5",
                   i % 2 === 1 && "bg-muted/10",
                   leg.result === "win" && "bg-primary/10",
-                  leg.result === "loss" && "bg-destructive/5"
+                  leg.result === "loss" && "bg-destructive/5",
+                  leg.game?.isFinished && !leg.result && "bg-amber-500/10"
                 )}
               >
                 <td className="px-3 py-2 font-medium">
@@ -217,7 +226,8 @@ function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
                 "border-t border-white/5",
                 i % 2 === 1 && "bg-muted/10",
                 leg.result === "win" && "bg-primary/10",
-                leg.result === "loss" && "bg-destructive/5"
+                leg.result === "loss" && "bg-destructive/5",
+                leg.game?.isFinished && !leg.result && "bg-amber-500/10"
               )}
             >
               <td className="px-3 py-2">
@@ -520,6 +530,7 @@ export default function History() {
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [allCollapsed, setAllCollapsed] = useState(true);
   const [legsCollapsed, setLegsCollapsed] = useState(true);
+  const [viewMode, setViewMode] = useState<"tiles" | "grid">("tiles");
   const [legQuery, setLegQuery] = useState("");
   const [parlayQuery, setParlayQuery] = useState("");
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
@@ -609,12 +620,19 @@ export default function History() {
       result = result
         .filter(p => p.legs.some(l => selectedMemberIds.includes(l.userId)))
         .map(p => ({ ...p, legs: p.legs.filter(l => selectedMemberIds.includes(l.userId)) }));
+    } else if (!canShowOthers) {
+      // "My picks only": scope every parlay tile down to just this user's own
+      // legs. Unchecking the top-level checkbox is the only way to bring
+      // other members' legs back in.
+      result = result
+        .filter(p => p.legs.some(l => l.userId === user?.id))
+        .map(p => ({ ...p, legs: p.legs.filter(l => l.userId === user?.id) }));
     }
     if (selectedBetTypes.length > 0) {
       result = result.filter(p => p.legs.some(l => selectedBetTypes.includes(l.betType)));
     }
     return result;
-  }, [dateFilteredParlays, canShowOthers, selectedMemberIds, selectedBetTypes]);
+  }, [dateFilteredParlays, canShowOthers, selectedMemberIds, selectedBetTypes, user?.id]);
 
   const allowedParlayIdsForDate = useMemo(
     () => new Set(dateFilteredParlays.map(p => p.id)),
@@ -899,13 +917,30 @@ export default function History() {
                 ? " match"
                 : ownPicksOnly ? " I have created" : " in this league"}
             </p>
-            <button
-              onClick={() => setAllCollapsed(c => !c)}
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded-md hover:bg-white/5"
-            >
-              <ChevronsUpDown className="w-3.5 h-3.5" />
-              {allCollapsed ? "Expand All" : "Collapse All"}
-            </button>
+            <div className="flex items-center gap-2">
+              <ToggleGroup
+                type="single"
+                value={viewMode}
+                onValueChange={(v) => { if (v) setViewMode(v as "tiles" | "grid"); }}
+                className="rounded-md border border-white/10 bg-card/40 p-0.5"
+              >
+                <ToggleGroupItem value="tiles" size="sm" className="gap-1.5 text-xs" data-testid="toggle-view-tiles">
+                  <LayoutGrid className="w-3.5 h-3.5" /> Rollup Tiles
+                </ToggleGroupItem>
+                <ToggleGroupItem value="grid" size="sm" className="gap-1.5 text-xs" data-testid="toggle-view-grid">
+                  <Table2 className="w-3.5 h-3.5" /> Table
+                </ToggleGroupItem>
+              </ToggleGroup>
+              {viewMode === "tiles" && (
+                <button
+                  onClick={() => setAllCollapsed(c => !c)}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded-md hover:bg-white/5"
+                >
+                  <ChevronsUpDown className="w-3.5 h-3.5" />
+                  {allCollapsed ? "Expand All" : "Collapse All"}
+                </button>
+              )}
+            </div>
           </div>
 
           {showAdvancedFilter && (
@@ -936,6 +971,10 @@ export default function History() {
 
           {filteredParlays.length === 0 ? (
             <p className="text-sm text-muted-foreground italic py-2 px-1">No parlays match this query.</p>
+          ) : viewMode === "grid" ? (
+            <Suspense fallback={<div className="h-[70vh] bg-white/5 rounded-xl animate-pulse" />}>
+              <ParlayLegsGrid rows={flattenParlayLegs(filteredParlays)} />
+            </Suspense>
           ) : shouldVirtualize ? (
             <div
               ref={parentRef}
