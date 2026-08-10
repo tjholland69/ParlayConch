@@ -44,6 +44,7 @@ const emptyBuilder: BuilderState = {
 export type CustomIndexInitialValues = {
   displayName?: string;
   leagueIds?: number[];
+  memberUserIds?: string[];
   betTypes?: string[];
   propTypes?: string[];
   playerName?: string;
@@ -89,6 +90,7 @@ export function CustomIndexBuilderDialog({
             ...emptyBuilder,
             displayName: initialValues?.displayName ?? "",
             leagueIds: (initialValues?.leagueIds ?? []).map(String),
+            memberUserIds: initialValues?.memberUserIds ?? [],
             betTypes: initialValues?.betTypes ?? [],
             propTypes: initialValues?.propTypes ?? [],
             playerName: initialValues?.playerName ?? "",

@@ -606,7 +606,9 @@ export default function History() {
   const structurallyFilteredParlays = useMemo(() => {
     let result = dateFilteredParlays;
     if (canShowOthers && selectedMemberIds.length > 0) {
-      result = result.filter(p => selectedMemberIds.includes(p.userId));
+      result = result
+        .filter(p => p.legs.some(l => selectedMemberIds.includes(l.userId)))
+        .map(p => ({ ...p, legs: p.legs.filter(l => selectedMemberIds.includes(l.userId)) }));
     }
     if (selectedBetTypes.length > 0) {
       result = result.filter(p => p.legs.some(l => selectedBetTypes.includes(l.betType)));
@@ -622,7 +624,7 @@ export default function History() {
   const structurallyFilteredLegs = useMemo(() => {
     let result = baseLegs.filter(l => allowedParlayIdsForDate.has(l.parlay.id));
     if (canShowOthers && selectedMemberIds.length > 0) {
-      result = result.filter(l => selectedMemberIds.includes((l.parlay as { userId?: string }).userId ?? ""));
+      result = result.filter(l => selectedMemberIds.includes(l.userId));
     }
     if (selectedBetTypes.length > 0) {
       result = result.filter(l => selectedBetTypes.includes(l.betType));
