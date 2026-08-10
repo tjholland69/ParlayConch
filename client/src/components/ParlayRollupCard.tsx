@@ -648,7 +648,8 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                             splitMode && "cursor-pointer hover:bg-primary/5",
                             splitMode && splitSelected.has(leg.id) && "bg-primary/10",
                             legSelectMode && "cursor-pointer hover:bg-primary/5",
-                            legSelectMode && selectedLegIds?.has(leg.id) && "bg-primary/10"
+                            legSelectMode && selectedLegIds?.has(leg.id) && "bg-primary/10",
+                            leg.game?.isFinished && !leg.result && "bg-amber-500/10"
                           )}
                           onClick={splitMode ? () => toggleSplitLeg(leg.id) : legSelectMode ? () => onToggleLegSelect(leg.id) : undefined}
                         >
