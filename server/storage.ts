@@ -381,6 +381,8 @@ export class DatabaseStorage implements IStorage {
       userId: parlayLegs.userId,
       result: parlayLegs.result,
       odds: parlayLegs.odds,
+      weekId: parlays.weekId,
+      createdAt: parlays.createdAt,
     })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
@@ -391,25 +393,10 @@ export class DatabaseStorage implements IStorage {
         weekFilter,
       ));
 
-    // Participation uses parlay ownership (submitted a weekly pick), not leg
-    // contribution — and only real, decided submissions (push included).
-    const parlayRows = await db.select({
-      userId: parlays.userId,
-      weekId: parlays.weekId,
-      createdAt: parlays.createdAt,
-    })
-      .from(parlays)
-      .where(and(
-        eq(parlays.leagueId, leagueId),
-        not(inArray(parlays.status as any, ['void', 'rejected'])),
-        inArray(parlays.userId, memberIds),
-        weekFilter,
-      ));
-
     // Anchor each week that saw real league activity to its earliest submission
     // — the closest thing to "when that week happened" available to us.
     const weekAnchor = new Map<number, number>();
-    for (const row of parlayRows) {
+    for (const row of legRows) {
       if (!row.createdAt) continue;
       const t = new Date(row.createdAt).getTime();
       const existing = weekAnchor.get(row.weekId);
@@ -417,8 +404,11 @@ export class DatabaseStorage implements IStorage {
     }
     const activeWeekIds = [...weekAnchor.keys()];
 
+    // Participation uses leg contribution (a member contributed at least one
+    // leg to that week's parlay), not parlay ownership — so members whose
+    // legs were rolled into another member's parlay still get credit.
     const submittedWeeksByUser = new Map<string, Set<number>>();
-    for (const row of parlayRows) {
+    for (const row of legRows) {
       let set = submittedWeeksByUser.get(row.userId);
       if (!set) {
         set = new Set();
@@ -1526,11 +1516,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   async resolveDispute(id: number, resolverUserId: string, status: "resolved" | "dismissed", notes?: string): Promise<ParlayLegDispute> {
-    const [updated] = await db.update(parlayLegDisputes)
-      .set({ status, resolvedByUserId: resolverUserId, resolvedAt: new Date(), resolutionNotes: notes ?? null })
-      .where(eq(parlayLegDisputes.id, id))
-      .returning();
-    return updated;
+    const existing = await this.getDispute(id);
+    if (!existing) throw new Error("Dispute not found");
+
+    const resolvedAt = new Date();
+    const title = status === "resolved" ? "Dispute resolved" : "Dispute dismissed";
+    const message = notes?.trim()
+      ? `Ruling: ${notes.trim()}`
+      : status === "resolved"
+        ? "Your dispute was reviewed and resolved."
+        : "Your dispute was reviewed and dismissed — no change was made.";
+
+    let result: ParlayLegDispute;
+    if (status === "dismissed") {
+      // Dismissed disputes have nothing worth keeping on record — hard-delete
+      // the row rather than archiving it (screenshot cleanup is the caller's
+      // job, since bucket access lives outside this data-access layer).
+      await db.delete(parlayLegDisputes).where(eq(parlayLegDisputes.id, id));
+      result = { ...existing, status, resolvedByUserId: resolverUserId, resolvedAt, resolutionNotes: notes ?? null };
+    } else {
+      const [updated] = await db.update(parlayLegDisputes)
+        .set({ status, resolvedByUserId: resolverUserId, resolvedAt, resolutionNotes: notes ?? null, archivedAt: resolvedAt })
+        .where(eq(parlayLegDisputes.id, id))
+        .returning();
+      result = updated;
+    }
+
+    await this.createNotification({ userId: existing.raisedByUserId, type: "dispute_resolved", title, message });
+
+    return result;
   }
 
   // Imports

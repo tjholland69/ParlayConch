@@ -26,7 +26,7 @@ import { generateSection } from "./services/storyStudio/editorialGeneration";
 import { insertStoryReportSchema, updateStoryReportSchema, STORY_SECTION_KINDS, type StorySectionKind } from "@shared/schema";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { auditLog } from "./services/audit";
-import { uploadDisputeScreenshot, getDisputeScreenshotUrl } from "./disputeStorage";
+import { uploadDisputeScreenshot, getDisputeScreenshotUrl, deleteDisputeScreenshot } from "./disputeStorage";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
@@ -1866,7 +1866,20 @@ export async function registerRoutes(
         if (status !== "resolved" && status !== "dismissed") {
           return res.status(400).json({ message: "status must be 'resolved' or 'dismissed'" });
         }
-        const updated = await storage.resolveDispute(Number(req.params.id), userId, status, notes);
+        const disputeId = Number(req.params.id);
+        const dispute = await storage.getDispute(disputeId);
+        if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+        const updated = await storage.resolveDispute(disputeId, userId, status, notes);
+
+        // Dismissed disputes are hard-deleted (see storage.resolveDispute) —
+        // clean up the screenshot evidence in the bucket along with the row.
+        if (status === "dismissed" && dispute.screenshotKey) {
+          await deleteDisputeScreenshot(dispute.screenshotKey).catch((err) => {
+            logger.error({ err }, "[disputes] failed to delete screenshot on dismiss");
+          });
+        }
+
         res.json(updated);
       } catch (err: any) {
         res.status(500).json({ message: err.message });
