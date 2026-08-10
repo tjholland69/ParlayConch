@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
+import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +20,6 @@ import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { BetSlipPanel } from "@/components/BetSlipPanel";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
-import { ParlayLegsGrid } from "@/components/ParlayLegsGrid";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
@@ -31,6 +30,12 @@ import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { getBuildingVerb } from "@/lib/parlaySlang";
 import type { Game, UserStat } from "@shared/schema";
+
+// AG Grid alone is ~1MB — only worth loading once someone actually asks
+// for the raw leg grid, not on every league page visit.
+const ParlayLegsGrid = lazy(() =>
+  import("@/components/ParlayLegsGrid").then((m) => ({ default: m.ParlayLegsGrid }))
+);
 
 type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
 
@@ -1030,7 +1035,9 @@ export default function LeagueDetail() {
             if (allViewMode === "grid") {
               return (
                 <div className="space-y-3">
-                  <ParlayLegsGrid rows={flattenParlayLegs(list)} />
+                  <Suspense fallback={<div className="h-[70vh] bg-white/5 rounded-xl animate-pulse" />}>
+                    <ParlayLegsGrid rows={flattenParlayLegs(list)} />
+                  </Suspense>
                   {hasNextPage && (
                     <div className="flex justify-center pt-2">
                       <Button
