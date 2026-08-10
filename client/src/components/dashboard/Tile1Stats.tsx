@@ -1,4 +1,4 @@
-import { Trophy, Users, ListChecks, TrendingUp, Dices, User, CalendarDays, Clock, Loader2, Zap, Activity, BarChart3, Info } from "lucide-react";
+import { Trophy, Users, ListChecks, TrendingUp, Dices, User, CalendarDays, Clock, Loader2, Zap, Activity, BarChart3, Info, Shield, ArrowUpDown } from "lucide-react";
 import { SlidingCard, EmptyState } from "@/components/SlidingCard";
 import { useDashboardSummary, useDashboardPatterns } from "@/hooks/use-dashboard";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -144,10 +144,13 @@ function AnalyticsSlide() {
 
   return (
     <div>
-      <h2 className="text-xl font-bold flex items-center gap-2 mb-5">
-        <TrendingUp className="w-5 h-5 text-accent" />
-        My Analytics
-      </h2>
+      <div className="flex items-center justify-between mb-5">
+        <h2 className="text-xl font-bold flex items-center gap-2">
+          <TrendingUp className="w-5 h-5 text-accent" />
+          My Analytics
+        </h2>
+        <span className="text-xs text-muted-foreground font-mono">{data.totalLegs} submitted</span>
+      </div>
       <div className="space-y-3">
         <StatRow
           icon={Trophy}
@@ -159,6 +162,16 @@ function AnalyticsSlide() {
             icon={Dices}
             label="Most Common Bet Type"
             value={`${BET_TYPE_LABELS[data.topBetType.type] ?? data.topBetType.type} (${data.topBetType.count})`}
+          />
+        )}
+        {data.favoriteTeam && (
+          <StatRow icon={Shield} label="Favorite Team (Spread/ML)" value={`${data.favoriteTeam.team} (${data.favoriteTeam.count})`} />
+        )}
+        {data.overUnderPreference && (
+          <StatRow
+            icon={ArrowUpDown}
+            label="Over/Under Lean"
+            value={`${data.overUnderPreference.pick === "over" ? "Over" : "Under"} (${data.overUnderPreference.overCount}-${data.overUnderPreference.underCount})`}
           />
         )}
         {data.favoritePlayer && (

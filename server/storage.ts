@@ -2,7 +2,8 @@ import { db } from "./db";
 import { logger } from "./logger";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
-  players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes,
+  players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes, teams,
+  type Team,
   type ParlayLegDispute, type InsertParlayLegDispute,
   type CustomIndex, type CustomIndexWithAccess, type InsertCustomIndex, type UpdateCustomIndex,
   type StoryReport, type StoryReportWithSections, type InsertStoryReport, type UpdateStoryReport,
@@ -216,6 +217,7 @@ export interface IStorage {
   upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player>;
   upsertPlayerByEspn(data: Omit<InsertPlayer, 'updatedAt' | 'nflverseId'> & { espnId: string }): Promise<Player>;
   searchPlayers(query: string, limit?: number): Promise<Player[]>;
+  getAllTeams(): Promise<Team[]>;
   upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
   getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]>;
   getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null>;
@@ -2144,6 +2146,11 @@ export class DatabaseStorage implements IStorage {
       .values({ ...data, updatedAt: new Date() })
       .returning();
     return created;
+  }
+
+  /** Full team reference list, for typeahead pickers (e.g. Advanced Filters' team field). Only 32 rows — no search param needed. */
+  async getAllTeams(): Promise<Team[]> {
+    return db.select().from(teams).orderBy(teams.nickname);
   }
 
   async searchPlayers(query: string, limit = 20): Promise<Player[]> {

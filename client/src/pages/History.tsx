@@ -1,4 +1,4 @@
-import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages } from "@/hooks/use-bets";
+import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useAllMyLeaguesParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages } from "@/hooks/use-bets";
 import { useAuth } from "@/hooks/use-auth";
 import { useState, useEffect, useMemo, useRef, Fragment, memo, Suspense, lazy } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -558,9 +558,11 @@ export default function History() {
   const { data: myLegs } = useMyLegHistory(leagueId);
   const [activeTile, setActiveTile] = useState<TileKey | null>(null);
 
-  // Bringing in other members' picks needs one concrete league (there's no
-  // cross-league "all members" endpoint) — the league filter above provides it.
-  const canShowOthers = !ownPicksOnly && leagueId !== undefined;
+  // Unchecking "My picks only" reveals other members' picks. When a specific
+  // league is selected we use its paginated endpoint (infinite-scrolled below);
+  // on "All Leagues" there's no single league to scope that to, so we merge
+  // results across every league the user belongs to instead.
+  const canShowOthers = !ownPicksOnly;
   const { data: members } = useLeagueMembersWithUsers(leagueId ?? 0);
   const memberOptions = useMemo(
     () => (members ?? []).map(m => ({ value: m.userId, label: getDisplayName(m.user, "Member") })),
@@ -572,15 +574,21 @@ export default function History() {
     hasNextPage: hasNextAllLeaguePage,
     fetchNextPage: fetchNextAllLeaguePage,
     isFetchingNextPage: fetchingNextAllLeaguePage,
-  } = useAllLeagueParlaysReadOnly(leagueId ?? 0, canShowOthers);
+  } = useAllLeagueParlaysReadOnly(leagueId ?? 0, canShowOthers && leagueId !== undefined);
 
   useEffect(() => {
-    if (canShowOthers && hasNextAllLeaguePage && !fetchingNextAllLeaguePage) {
+    if (canShowOthers && leagueId !== undefined && hasNextAllLeaguePage && !fetchingNextAllLeaguePage) {
       void fetchNextAllLeaguePage();
     }
-  }, [canShowOthers, hasNextAllLeaguePage, fetchingNextAllLeaguePage, fetchNextAllLeaguePage]);
+  }, [canShowOthers, leagueId, hasNextAllLeaguePage, fetchingNextAllLeaguePage, fetchNextAllLeaguePage]);
 
-  const allLeagueParlays = flattenParlayPages(allLeaguePages);
+  const allMemberLeagueIds = useMemo(() => (leagues ?? []).map(l => l.id), [leagues]);
+  const { data: allLeaguesOthersParlays } = useAllMyLeaguesParlaysReadOnly(
+    allMemberLeagueIds,
+    canShowOthers && leagueId === undefined,
+  );
+
+  const allLeagueParlays = leagueId !== undefined ? flattenParlayPages(allLeaguePages) : allLeaguesOthersParlays;
   const baseParlays = canShowOthers ? allLeagueParlays : (parlays ?? []);
 
   const baseLegs: ParlayLegWithParlayContext[] = useMemo(() => {

@@ -90,6 +90,8 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
 }
 
 export interface UserPatterns {
+  /** Total legs the user has submitted (all statuses, not just decided ones) — a reference count for the analytics view. */
+  totalLegs: number;
   wins: number;
   losses: number;
   pushes: number;
@@ -98,6 +100,10 @@ export interface UserPatterns {
   favoritePlayer: { name: string; count: number } | null;
   favoriteDay: { day: string; count: number } | null;
   favoriteTimeOfDay: { label: string; count: number } | null;
+  /** Most-picked team across spread/moneyline legs (favorite or underdog side, whichever the user actually picked). */
+  favoriteTeam: { team: string; count: number } | null;
+  /** Which side of over/under the user leans toward, across game totals and numeric player props. */
+  overUnderPreference: { pick: "over" | "under"; overCount: number; underCount: number } | null;
 }
 
 /** Day of week the game kicked off, as observed in US Eastern time. */
@@ -140,8 +146,11 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
     .select({
       result: parlayLegs.result,
       betType: parlayLegs.betType,
+      pick: parlayLegs.pick,
       playerName: parlayLegs.playerName,
       gameTime: games.gameTime,
+      homeTeam: games.homeTeam,
+      awayTeam: games.awayTeam,
     })
     .from(parlayLegs)
     .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
@@ -155,6 +164,9 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
   const playerCounts: Record<string, number> = {};
   const dayCounts: Record<string, number> = {};
   const timeCounts: Record<string, number> = {};
+  const teamCounts: Record<string, number> = {};
+  let overCount = 0;
+  let underCount = 0;
 
   for (const row of rows) {
     if (row.result === "win") wins++;
@@ -166,6 +178,19 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
     if (row.betType === "player_prop" && row.playerName) {
       playerCounts[row.playerName] = (playerCounts[row.playerName] ?? 0) + 1;
     }
+
+    // Spread/moneyline legs pick a side of the game (home/away) — resolve that
+    // to the team name via the joined game.
+    if ((row.betType === "spread" || row.betType === "moneyline") && row.homeTeam && row.awayTeam) {
+      const team = row.pick === "home" ? row.homeTeam : row.pick === "away" ? row.awayTeam : null;
+      if (team) teamCounts[team] = (teamCounts[team] ?? 0) + 1;
+    }
+
+    // Over/under tendency spans game totals (betType 'over'/'under' directly)
+    // and numeric player props (betType 'player_prop', pick 'over'/'under';
+    // yes/no props like anytime-TD don't carry a direction and are excluded).
+    if (row.betType === "over" || row.pick === "over") overCount++;
+    else if (row.betType === "under" || row.pick === "under") underCount++;
 
     if (row.gameTime) {
       const date = new Date(row.gameTime);
@@ -181,8 +206,10 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
   const favoritePlayer = topEntry(playerCounts);
   const favoriteDay = topEntry(dayCounts);
   const favoriteTimeOfDay = topEntry(timeCounts);
+  const favoriteTeamEntry = topEntry(teamCounts);
 
   return {
+    totalLegs: rows.length,
     wins,
     losses,
     pushes,
@@ -191,6 +218,11 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
     favoritePlayer: favoritePlayer ? { name: favoritePlayer.key, count: favoritePlayer.count } : null,
     favoriteDay: favoriteDay ? { day: favoriteDay.key, count: favoriteDay.count } : null,
     favoriteTimeOfDay: favoriteTimeOfDay ? { label: favoriteTimeOfDay.key, count: favoriteTimeOfDay.count } : null,
+    favoriteTeam: favoriteTeamEntry ? { team: favoriteTeamEntry.key, count: favoriteTeamEntry.count } : null,
+    overUnderPreference:
+      overCount + underCount > 0
+        ? { pick: overCount >= underCount ? "over" : "under", overCount, underCount }
+        : null,
   };
 }
 

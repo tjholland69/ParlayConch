@@ -1,7 +1,8 @@
-import { useQuery, useMutation, useQueryClient, useInfiniteQuery, type InfiniteData } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, type InfiniteData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player, ParlayLegDispute, LeagueMemberWithUser } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team } from "@shared/schema";
 
 export type PaginatedParlays = {
   items: ParlayWithLegs[];
@@ -73,6 +74,20 @@ export function usePlayerSearch(query: string) {
       if (!res.ok) throw new Error("Failed to fetch players");
       return res.json();
     },
+  });
+}
+
+// Full team reference list — only 32 rows, so fetched once and filtered
+// client-side (see TeamCombobox) rather than re-querying per keystroke.
+export function useTeams() {
+  return useQuery<Team[]>({
+    queryKey: ["/api/teams"],
+    queryFn: async () => {
+      const res = await fetch("/api/teams", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch teams");
+      return res.json();
+    },
+    staleTime: Infinity,
   });
 }
 
@@ -924,6 +939,43 @@ export function useAllLeagueParlaysReadOnly(leagueId: number, enabled = true) {
       last.hasMore ? last.offset + last.limit : undefined,
     enabled: !!leagueId && enabled,
   });
+}
+
+async function fetchAllPagesForLeague(leagueId: number): Promise<ParlayWithLegs[]> {
+  const items: ParlayWithLegs[] = [];
+  let offset = 0;
+  while (true) {
+    const page = await fetchPaginatedParlays(
+      `/api/leagues/${leagueId}/parlays?limit=${PARLAY_PAGE_LIMIT}&offset=${offset}`,
+    );
+    items.push(...page.items);
+    if (!page.hasMore) break;
+    offset = page.offset + page.limit;
+  }
+  return items;
+}
+
+/**
+ * Member-facing "everyone's picks" view merged across every league in
+ * `leagueIds` — the History tab's "All Leagues" + "My picks only" unchecked
+ * case, where there's no single league to scope the per-league paginated
+ * endpoint to. Each league fetches its full result set (looping pages
+ * internally) rather than infinite-scrolling, since history data per league
+ * is small enough that "load it all" is simpler than juggling N independent
+ * infinite-scroll cursors.
+ */
+export function useAllMyLeaguesParlaysReadOnly(leagueIds: number[], enabled = true) {
+  const queries = useQueries({
+    queries: leagueIds.map((leagueId) => ({
+      queryKey: ["/api/leagues", leagueId, "parlays", "read-only-all-pages"],
+      queryFn: () => fetchAllPagesForLeague(leagueId),
+      enabled: enabled && leagueIds.length > 0,
+    })),
+  });
+
+  const data = useMemo(() => queries.flatMap((q) => q.data ?? []), [queries]);
+  const isLoading = leagueIds.length > 0 && queries.some((q) => q.isLoading);
+  return { data, isLoading };
 }
 
 export function useDeleteParlay(leagueId: number) {
