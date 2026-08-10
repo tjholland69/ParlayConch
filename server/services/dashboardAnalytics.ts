@@ -396,13 +396,11 @@ export interface WeeklyWinRatePoint {
 }
 
 /**
- * Per-league, per-week (non-cumulative) win rate for the requesting user's own
- * legs, from league inception to date. Weeks with no decided legs are omitted
- * rather than zeroed, so a quiet week doesn't read as a loss streak — mirrors
- * a GitHub-style activity line for each "My Leagues" tile.
+ * Per-league cumulative win rate over lifetime — every decided leg in the league
+ * (all members), matching the dashboard performance line shape. Weeks with no
+ * decided legs are omitted rather than zeroed. Powers the "My Leagues" tile sparkline.
  */
 export async function getLeagueWeeklyWinRates(
-  userId: string,
   leagueIds: number[]
 ): Promise<Record<number, WeeklyWinRatePoint[]>> {
   if (leagueIds.length === 0) return {};
@@ -422,7 +420,6 @@ export async function getLeagueWeeklyWinRates(
     .where(
       and(
         inArray(parlays.leagueId, leagueIds),
-        eq(parlayLegs.userId, userId),
         isNotNull(parlayLegs.result)
       )
     );
@@ -461,10 +458,17 @@ export async function getLeagueWeeklyWinRates(
       .sort(([, a], [, b]) => a.season - b.season || a.weekNumber - b.weekNumber)
       .map(([weekId]) => weekId);
 
+    let cumWin = 0;
+    let cumLoss = 0;
     result[leagueId] = orderedWeekIds.map((weekId) => {
       const { win, loss } = tally.get(weekId)!;
-      const total = win + loss;
-      return { weekLabel: weekMeta.get(weekId)!.label, winRate: (win / total) * 100 };
+      cumWin += win;
+      cumLoss += loss;
+      const total = cumWin + cumLoss;
+      return {
+        weekLabel: weekMeta.get(weekId)!.label,
+        winRate: total > 0 ? (cumWin / total) * 100 : 0,
+      };
     });
   }
 

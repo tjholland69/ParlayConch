@@ -1,10 +1,10 @@
 import { ResponsiveContainer, LineChart, Line, YAxis, Tooltip } from "recharts";
 
 /**
- * GitHub-style activity line: per-week win rate from league inception to date,
- * axes hidden — only the shape of the trend matters here. Weeks with no
- * decided parlays are omitted upstream, so the line only connects weeks that
- * actually had activity.
+ * Mini performance line for league tiles: cumulative league-wide win rate
+ * (all members) from inception to date — same shape as the dashboard
+ * performance chart, compressed. Weeks with no decided legs are omitted
+ * upstream so the line only connects weeks that had activity.
  */
 export function LeagueActivitySparkline({
   points,
@@ -30,7 +30,7 @@ export function LeagueActivitySparkline({
               return (
                 <div className="bg-card border border-white/10 px-2.5 py-1.5 rounded-lg shadow-xl text-xs whitespace-nowrap">
                   <span className="text-muted-foreground">{point.weekLabel}: </span>
-                  <span className="font-semibold">{point.winRate.toFixed(0)}%</span>
+                  <span className="font-semibold">{point.winRate.toFixed(1)}%</span>
                 </div>
               );
             }}

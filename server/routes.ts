@@ -478,7 +478,7 @@ export async function registerRoutes(
     const userId = (req.user as any).claims.sub;
     const userLeagues = await storage.getUserLeagues(userId);
     const leagueIds = userLeagues.map(l => l.id);
-    const series = await getLeagueWeeklyWinRates(userId, leagueIds);
+    const series = await getLeagueWeeklyWinRates(leagueIds);
     res.json(series);
   });
 
