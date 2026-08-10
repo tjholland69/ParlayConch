@@ -20,7 +20,8 @@
     "db:seed-teams": "tsx --env-file=.env.local scripts/seed-teams.ts",
     "backfill:leg-justifications": "tsx --env-file=.env.local scripts/backfill-leg-justifications.ts",
     "backfill:odds": "tsx --env-file=.env.local scripts/backfill-odds.ts",
-    "backfill:decision-moments": "tsx --env-file=.env.local scripts/backfill-decision-moments.ts"
+    "backfill:decision-moments": "tsx --env-file=.env.local scripts/backfill-decision-moments.ts",
+    "backfill:local-auth": "tsx --env-file=.env.local scripts/backfill-local-auth.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",
@@ -69,6 +70,7 @@
     "cmdk": "^1.1.1",
     "connect-pg-simple": "^10.0.0",
     "connect-redis": "^9.0.0",
+    "cookie-signature": "^1.0.6",
     "date-fns": "^3.6.0",
     "drizzle-orm": "^0.45.2",
     "drizzle-zod": "^0.7.1",
