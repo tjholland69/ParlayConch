@@ -100,13 +100,30 @@ export interface UserPatterns {
   favoriteTimeOfDay: { label: string; count: number } | null;
 }
 
-const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+/** Day of week the game kicked off, as observed in US Eastern time. */
+function easternDayName(date: Date): string {
+  return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(date);
+}
 
-function timeOfDayBucket(hour: number): string {
-  if (hour >= 5 && hour <= 11) return "Morning";
-  if (hour >= 12 && hour <= 16) return "Afternoon";
-  if (hour >= 17 && hour <= 20) return "Evening";
-  return "Night";
+/**
+ * NFL broadcast-slate bucket for a kickoff time, evaluated in US Eastern time
+ * (the timezone the slates are defined against, regardless of server/client TZ).
+ */
+function slateBucket(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).formatToParts(date);
+  const hour = Number(parts.find(p => p.type === "hour")?.value ?? "0") % 24;
+  const minute = Number(parts.find(p => p.type === "minute")?.value ?? "0");
+  const minutesSinceMidnight = hour * 60 + minute;
+
+  if (minutesSinceMidnight < 12 * 60) return "Morning";
+  if (minutesSinceMidnight < 16 * 60) return "Early Slate";
+  if (minutesSinceMidnight < 18 * 60 + 30) return "Afternoon";
+  return "Nighttime";
 }
 
 function topEntry<T extends string>(counts: Record<T, number>): { key: T; count: number } | null {
@@ -124,10 +141,11 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
       result: parlayLegs.result,
       betType: parlayLegs.betType,
       playerName: parlayLegs.playerName,
-      createdAt: parlays.createdAt,
+      gameTime: games.gameTime,
     })
     .from(parlayLegs)
     .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+    .leftJoin(games, eq(parlayLegs.gameId, games.id))
     .where(eq(parlayLegs.userId, userId));
 
   let wins = 0;
@@ -149,11 +167,11 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
       playerCounts[row.playerName] = (playerCounts[row.playerName] ?? 0) + 1;
     }
 
-    if (row.createdAt) {
-      const date = new Date(row.createdAt);
-      const day = DAY_NAMES[date.getDay()];
+    if (row.gameTime) {
+      const date = new Date(row.gameTime);
+      const day = easternDayName(date);
       dayCounts[day] = (dayCounts[day] ?? 0) + 1;
-      const bucket = timeOfDayBucket(date.getHours());
+      const bucket = slateBucket(date);
       timeCounts[bucket] = (timeCounts[bucket] ?? 0) + 1;
     }
   }
