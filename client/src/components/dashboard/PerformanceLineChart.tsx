@@ -39,6 +39,15 @@ export function seriesColor(slot: number): string {
   return SERIES_COLORS[slot % SERIES_COLORS.length];
 }
 
+/**
+ * A couple shades lighter than the given color, same hue — used to derive a
+ * paired dashed line's color from its solid counterpart so the two read as
+ * linked rather than unrelated series.
+ */
+export function lighten(color: string): string {
+  return `color-mix(in srgb, ${color} 75%, white)`;
+}
+
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (

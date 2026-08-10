@@ -9,6 +9,7 @@ import {
   useShareCustomIndex,
   useUnshareCustomIndex,
   useLeagueMembers,
+  describeCustomIndexFilters,
 } from "@/hooks/use-custom-indexes";
 import { CustomIndexBuilderDialog } from "@/components/dashboard/CustomIndexBuilderDialog";
 import { EmptyState } from "@/components/SlidingCard";
@@ -128,20 +129,7 @@ function IndexRow({
   const remove = useDeleteCustomIndex();
   const { data: leagues } = useLeagues();
 
-  const leagueNames = (index.filters?.leagueIds ?? [])
-    .map((id) => (leagues ?? []).find((l) => l.id === id)?.name)
-    .filter(Boolean);
-
-  const summary = [
-    leagueNames.length > 0 ? leagueNames.join(", ") : "All my leagues",
-    (index.filters?.memberUserIds ?? []).length > 0
-      ? `${index.filters.memberUserIds.length} member${index.filters.memberUserIds.length === 1 ? "" : "s"}`
-      : "All members",
-    (index.filters?.betTypes ?? []).length > 0 ? index.filters.betTypes.join(", ") : "All bet types",
-    ...((index.filters?.propTypes ?? []).length > 0 ? [index.filters!.propTypes!.join(", ")] : []),
-    ...(index.filters?.playerName ? [index.filters.playerName] : []),
-    ...(index.filters?.teamName ? [index.filters.teamName] : []),
-  ].join(" · ");
+  const summary = describeCustomIndexFilters(index.filters, leagues ?? []);
 
   return (
     <Card className="p-4 border-white/5 flex items-center gap-4" data-testid={`row-index-${index.id}`}>

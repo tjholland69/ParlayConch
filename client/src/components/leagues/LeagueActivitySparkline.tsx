@@ -1,10 +1,9 @@
 import { ResponsiveContainer, LineChart, Line, YAxis, Tooltip } from "recharts";
 
 /**
- * Mini performance line for league tiles: cumulative league-wide win rate
- * (all members) from inception to date — same shape as the dashboard
- * performance chart, compressed. Weeks with no decided legs are omitted
- * upstream so the line only connects weeks that had activity.
+ * Mini performance line for league tiles: week-over-week league-wide win rate
+ * (all members) from inception to date. Each point is that week's own rate so
+ * the line has movement. Weeks with no decided legs are omitted upstream.
  */
 export function LeagueActivitySparkline({
   points,

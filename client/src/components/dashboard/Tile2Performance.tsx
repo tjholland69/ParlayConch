@@ -3,15 +3,21 @@ import { BarChart3, Calendar as CalendarIcon, Check, ChevronDown, Loader2 } from
 import { SlidingCard, EmptyState } from "@/components/SlidingCard";
 import { useLeagues } from "@/hooks/use-bets";
 import { useDashboardPerformance, type DashboardDateRange } from "@/hooks/use-dashboard";
-import { useCustomIndexes, useCustomIndexPerformances } from "@/hooks/use-custom-indexes";
+import {
+  useCustomIndexes,
+  useCustomIndexPerformances,
+  describeCustomIndexFilters,
+} from "@/hooks/use-custom-indexes";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { Calendar } from "@/components/ui/calendar";
 import type { DateRange } from "react-day-picker";
 import {
   PerformanceLineChart,
   seriesColor,
+  lighten,
   type PerformancePoint,
   type PerformanceSeries,
 } from "@/components/dashboard/PerformanceLineChart";
@@ -19,6 +25,8 @@ import { PerformanceBarChart } from "@/components/dashboard/PerformanceBarChart"
 
 const ALL_LEAGUES_VALUE = "all";
 const DEFAULT_INDEX_ID = "default";
+/** How many comparison lines a user can have overlaid on the performance chart at once. */
+const MAX_ACTIVE_INDEXES = 3;
 type DateRangeMode = "all" | "year" | "month" | "custom";
 
 function LeagueFilter({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -50,10 +58,16 @@ function CompareAgainstFilter({
   onToggle: (id: string) => void;
 }) {
   const { data: indexes } = useCustomIndexes();
+  const { data: leagues } = useLeagues();
   const options = [
-    { id: DEFAULT_INDEX_ID, label: "Default Index" },
-    ...(indexes ?? []).map((idx) => ({ id: String(idx.id), label: idx.displayName })),
+    { id: DEFAULT_INDEX_ID, label: "Default Index", detail: "Your full history, every league, every bet type." },
+    ...(indexes ?? []).map((idx) => ({
+      id: String(idx.id),
+      label: idx.displayName,
+      detail: describeCustomIndexFilters(idx.filters, leagues ?? []),
+    })),
   ];
+  const atLimit = active.length >= MAX_ACTIVE_INDEXES;
 
   const summary =
     active.length === 0
@@ -76,20 +90,31 @@ function CompareAgainstFilter({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64 p-1">
-        {options.map((option) => (
-          <button
-            key={option.id}
-            type="button"
-            onClick={() => onToggle(option.id)}
-            className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-white/5 text-left"
-            data-testid={`option-compare-${option.id}`}
-          >
-            <span className="w-4 h-4 shrink-0 flex items-center justify-center">
-              {active.includes(option.id) && <Check className="w-3.5 h-3.5 text-primary" />}
-            </span>
-            <span className="truncate">{option.label}</span>
-          </button>
-        ))}
+        {options.map((option) => {
+          const isActive = active.includes(option.id);
+          const disabled = !isActive && atLimit;
+          return (
+            <Tooltip key={option.id} delayDuration={300}>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => !disabled && onToggle(option.id)}
+                  disabled={disabled}
+                  className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm hover:bg-white/5 text-left disabled:opacity-40 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                  data-testid={`option-compare-${option.id}`}
+                >
+                  <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+                    {isActive && <Check className="w-3.5 h-3.5 text-primary" />}
+                  </span>
+                  <span className="truncate">{option.label}</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="max-w-xs text-xs">
+                {disabled ? `Up to ${MAX_ACTIVE_INDEXES} indexes at a time — remove one to add this.` : option.detail}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
         {(indexes ?? []).length === 0 && (
           <p className="px-2 py-2 text-xs text-muted-foreground">
             Build a custom index to compare against more than the default.
@@ -282,9 +307,9 @@ function PerformanceChartSlide({
 
   scopes.forEach((scope, slot) => {
     const color = seriesColor(slot);
-    // Opposite side of the palette from "You" so the index line reads as a
-    // distinct color, not just the same line dashed.
-    const indexColor = seriesColor(slot + 4);
+    // The dotted "index" line shares its paired solid line's hue, just a
+    // couple shades lighter, so the two read as linked.
+    const indexColor = lighten(color);
     const myKey = `my_${scope.id}`;
     const indexKey = `index_${scope.id}`;
 
@@ -331,7 +356,11 @@ export function Tile2Performance() {
   const [dateRange, setDateRange] = useState<DashboardDateRange>({});
 
   const toggleIndex = (id: string) =>
-    setActiveIndexIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    setActiveIndexIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= MAX_ACTIVE_INDEXES) return prev;
+      return [...prev, id];
+    });
 
   return (
     <SlidingCard
