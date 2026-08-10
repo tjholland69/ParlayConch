@@ -594,6 +594,7 @@ export const insertImportBatchSchema = createInsertSchema(importBatches).omit({ 
 export const players = pgTable("players", {
   id: serial("id").primaryKey(),
   nflverseId: text("nflverse_id").unique(), // e.g. "00-0023459" (GSIS ID)
+  espnId: text("espn_id").unique(), // ESPN athlete id — used by the ESPN boxscore defensive-stats sync
   name: text("name").notNull(),
   displayName: text("display_name"),
   position: text("position"), // QB, WR, RB, TE, K, DEF, etc.

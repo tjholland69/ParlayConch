@@ -7,6 +7,7 @@ import {
   syncGameTimesFromNflverse,
   syncPlayerStatsForGames,
 } from "../services/nflverse";
+import { syncDefensiveStatsFromEspn } from "../services/espnBoxscore";
 import { syncGameFinishTimesFromPlayByPlay } from "../services/playByPlay";
 import {
   detectExactDecisionMoments,
@@ -75,6 +76,19 @@ export async function runNflverseSync(data: NflverseSyncJobData): Promise<Nflver
       const playerSync = await syncPlayerStatsForGames(season, week);
       result.players = playerSync;
       logger.info({ playerSync }, "[nflverse] player stats sync");
+
+      // ESPN's boxscore API is used for defensive stats (sacks, tackles)
+      // specifically — nflverse's legacy fallback file has no defensive
+      // columns at all, silently dropping DL/LB/DB players. This only
+      // touches the defensive columns, so it can't clobber nflverse's
+      // passing/rushing/receiving data for the same players/week.
+      try {
+        const defenseSync = await syncDefensiveStatsFromEspn(season, week);
+        result.defenseStats = defenseSync;
+        logger.info({ defenseSync }, "[espn] defensive stats sync");
+      } catch (err) {
+        logger.warn({ err }, "[espn] defensive stats sync failed; nflverse defensive columns (if any) kept");
+      }
     }
   }
 
