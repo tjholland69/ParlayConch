@@ -232,7 +232,7 @@ function PerformanceChartSlide({
           <BarChart3 className="w-5 h-5 text-accent" />
           Week-over-Week Performance
         </h2>
-        <PerformanceBarChart points={points} series={series} />
+        <PerformanceBarChart points={points} series={series} glowPerfect />
       </div>
     );
   }

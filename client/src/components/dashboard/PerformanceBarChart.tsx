@@ -1,5 +1,18 @@
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
+import { ResponsiveContainer, BarChart, Bar, Cell, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
 import type { PerformancePoint, PerformanceSeries } from "@/components/dashboard/PerformanceLineChart";
+import { getParlayVisualStyle } from "@/lib/parlayVisuals";
+
+// Same glowing green as a perfect (100% win rate, full participation) parlay
+// rollup tile — see getParlayVisualStyle in lib/parlayVisuals.ts. boxShadow's
+// "0 0 16px 2px rgba(...)" has a spread value CSS drop-shadow() doesn't accept,
+// so pull just the blur radius + color back out for the SVG filter.
+const PERFECT_WEEK_VISUAL = getParlayVisualStyle(100, 1);
+const PERFECT_WEEK_FILL = "rgb(74, 222, 128)"; // green-400, matches parlayVisuals' GREEN
+const PERFECT_WEEK_DROP_SHADOW = (() => {
+  const match = PERFECT_WEEK_VISUAL.boxShadow?.match(/rgba\([^)]+\)/);
+  const color = match?.[0] ?? "rgba(74, 222, 128, 0.34)";
+  return `0 0 16px ${color}`;
+})();
 
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
@@ -33,10 +46,13 @@ export function PerformanceBarChart({
   points,
   series,
   height = 300,
+  glowPerfect = false,
 }: {
   points: PerformancePoint[];
   series: PerformanceSeries[];
   height?: number;
+  /** Light up any bar at a 100% win rate in the same glowing green as a perfect parlay rollup tile. */
+  glowPerfect?: boolean;
 }) {
   return (
     <div className="w-full" style={{ height }}>
@@ -67,7 +83,20 @@ export function PerformanceBarChart({
               fillOpacity={s.dashed ? 0.55 : 1}
               radius={[4, 4, 0, 0]}
               maxBarSize={28}
-            />
+            >
+              {glowPerfect &&
+                points.map((p, i) => {
+                  const perfect = p[s.key] === 100;
+                  return (
+                    <Cell
+                      key={`cell-${i}`}
+                      fill={perfect ? PERFECT_WEEK_FILL : s.color}
+                      className={perfect ? "animate-pulse" : undefined}
+                      style={perfect ? { filter: `drop-shadow(${PERFECT_WEEK_DROP_SHADOW})` } : undefined}
+                    />
+                  );
+                })}
+            </Bar>
           ))}
         </BarChart>
       </ResponsiveContainer>

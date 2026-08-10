@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, type Dispatch, type SetStateAction } from "react";
+import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSub, DropdownMenuSubTrigger, DropdownMenuSubContent, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown } from "lucide-react";
+import { Trophy, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2 } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -19,6 +20,7 @@ import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { BetSlipPanel } from "@/components/BetSlipPanel";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
+import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { PageLoader } from "@/components/PageLoader";
@@ -28,6 +30,12 @@ import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { getBuildingVerb } from "@/lib/parlaySlang";
 import type { Game, UserStat } from "@shared/schema";
+
+// AG Grid alone is ~1MB — only worth loading once someone actually asks
+// for the raw leg grid, not on every league page visit.
+const ParlayLegsGrid = lazy(() =>
+  import("@/components/ParlayLegsGrid").then((m) => ({ default: m.ParlayLegsGrid }))
+);
 
 type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
 
@@ -233,6 +241,7 @@ export default function LeagueDetail() {
   const [allYearFilter, setAllYearFilter] = useState<string>("all");
   const [allWeekFilter, setAllWeekFilter] = useState<string>("all");
   const [allMemberFilter, setAllMemberFilter] = useState<string>("all");
+  const [allViewMode, setAllViewMode] = useState<"tiles" | "grid">("tiles");
   const [activeTab, setActiveTab] = useState("open");
   const allSeasons = [...new Set((weeks ?? []).map(w => w.season))].sort((a, b) => b - a);
   const allVisibleWeeksDesc = (weeks ?? [])
@@ -975,6 +984,19 @@ export default function LeagueDetail() {
                 </SelectContent>
               </Select>
             </div>
+            <ToggleGroup
+              type="single"
+              value={allViewMode}
+              onValueChange={(v) => { if (v) setAllViewMode(v as "tiles" | "grid"); }}
+              className="ml-auto rounded-md border border-white/10 bg-card/40 p-0.5"
+            >
+              <ToggleGroupItem value="tiles" size="sm" className="gap-1.5 text-xs" data-testid="toggle-view-tiles">
+                <LayoutGrid className="w-3.5 h-3.5" /> Rollup Tiles
+              </ToggleGroupItem>
+              <ToggleGroupItem value="grid" size="sm" className="gap-1.5 text-xs" data-testid="toggle-view-grid">
+                <Table2 className="w-3.5 h-3.5" /> Remove Rollup Tile
+              </ToggleGroupItem>
+            </ToggleGroup>
           </div>
 
           {(() => {
@@ -1010,6 +1032,31 @@ export default function LeagueDetail() {
             }
             const memberCount = league.memberCount || 1;
             const shouldVirtualize = list.length > 20;
+            if (allViewMode === "grid") {
+              return (
+                <div className="space-y-3">
+                  <Suspense fallback={<div className="h-[70vh] bg-white/5 rounded-xl animate-pulse" />}>
+                    <ParlayLegsGrid rows={flattenParlayLegs(list)} />
+                  </Suspense>
+                  {hasNextPage && (
+                    <div className="flex justify-center pt-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => fetchNextPage()}
+                        disabled={isFetchingNextPage}
+                      >
+                        {isFetchingNextPage ? (
+                          <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Loading…</>
+                        ) : (
+                          "Load more"
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              );
+            }
             return (
               <AllParlaysList
                 list={list}
