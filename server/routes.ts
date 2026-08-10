@@ -265,6 +265,7 @@ export async function registerRoutes(
 
     const series = await computeWinRateSeries(userId, {
       leagueIds: csvNumbers(req.query.leagueIds),
+      memberUserIds: csvStrings(req.query.memberUserIds),
       betTypes: csvStrings(req.query.betTypes),
       propTypes: csvStrings(req.query.propTypes),
       playerName: str(req.query.playerName),

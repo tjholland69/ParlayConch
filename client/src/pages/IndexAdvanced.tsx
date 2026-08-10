@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BarChart3, Loader2, RotateCcw, SlidersHorizontal, Save } from "lucide-react";
 import { useLeagues } from "@/hooks/use-bets";
 import { useDashboardAdvancedPerformance } from "@/hooks/use-dashboard";
+import { useLeagueMembers } from "@/hooks/use-custom-indexes";
 import { MultiSelect } from "@/components/MultiSelect";
 import { PlayerCombobox } from "@/components/PlayerCombobox";
 import { EmptyState } from "@/components/SlidingCard";
@@ -16,6 +17,7 @@ import {
 } from "@/components/dashboard/PerformanceLineChart";
 import { CustomIndexBuilderDialog } from "@/components/dashboard/CustomIndexBuilderDialog";
 import { BET_TYPE_OPTIONS, PROP_TYPE_OPTIONS } from "@/lib/bettingConstants";
+import { getDisplayName } from "@/lib/displayName";
 
 /**
  * Ad-hoc slicing of the performance graph. Filters live in component state only —
@@ -26,14 +28,33 @@ export default function IndexAdvanced() {
   const { data: leagues } = useLeagues();
 
   const [leagueIds, setLeagueIds] = useState<string[]>([]);
+  const [memberUserIds, setMemberUserIds] = useState<string[]>([]);
   const [betTypes, setBetTypes] = useState<string[]>([]);
   const [propTypes, setPropTypes] = useState<string[]>([]);
   const [playerName, setPlayerName] = useState("");
   const [teamName, setTeamName] = useState("");
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
 
+  // Users filter is scoped to whichever leagues are selected — falling back to
+  // every league the requester belongs to when the Leagues filter is empty, so
+  // "all users across all leagues" is the default rather than an empty list.
+  const scopedLeagueIds =
+    leagueIds.length > 0 ? leagueIds.map(Number) : (leagues ?? []).map((l) => l.id);
+  const { members } = useLeagueMembers(scopedLeagueIds);
+
+  // Dropping a league must also drop members that came only from it.
+  useEffect(() => {
+    if (leagueIds.length === 0) return;
+    const validIds = new Set(members.map((m) => m.userId));
+    setMemberUserIds((prev) => {
+      const next = prev.filter((id) => validIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [leagueIds, members]);
+
   const { data, isLoading, error } = useDashboardAdvancedPerformance({
     leagueIds: leagueIds.map(Number),
+    memberUserIds,
     betTypes,
     propTypes,
     playerName,
@@ -49,10 +70,16 @@ export default function IndexAdvanced() {
   }, [playerFilterEnabled, playerName]);
 
   const hasFilters =
-    leagueIds.length > 0 || betTypes.length > 0 || propTypes.length > 0 || !!playerName || !!teamName;
+    leagueIds.length > 0 ||
+    memberUserIds.length > 0 ||
+    betTypes.length > 0 ||
+    propTypes.length > 0 ||
+    !!playerName ||
+    !!teamName;
 
   const reset = () => {
     setLeagueIds([]);
+    setMemberUserIds([]);
     setBetTypes([]);
     setPropTypes([]);
     setPlayerName("");
@@ -87,6 +114,21 @@ export default function IndexAdvanced() {
               options={(leagues ?? []).map((l) => ({ value: String(l.id), label: l.name }))}
               selected={leagueIds}
               onChange={setLeagueIds}
+              emptyMessage="You're not in any leagues yet."
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs uppercase tracking-wide text-muted-foreground">Users</Label>
+            <MultiSelect
+              testId="filter-users"
+              placeholder="All users"
+              options={members.map((m) => ({
+                value: m.userId,
+                label: getDisplayName(m.user, m.user.email ?? "Member"),
+              }))}
+              selected={memberUserIds}
+              onChange={setMemberUserIds}
               emptyMessage="You're not in any leagues yet."
             />
           </div>
@@ -197,6 +239,7 @@ export default function IndexAdvanced() {
         editing={null}
         initialValues={{
           leagueIds: leagueIds.map(Number),
+          memberUserIds,
           betTypes,
           propTypes,
           playerName,

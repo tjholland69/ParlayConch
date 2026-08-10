@@ -57,6 +57,7 @@ export function useDashboardPatterns() {
 
 export interface AdvancedPerformanceFilters {
   leagueIds?: number[];
+  memberUserIds?: string[];
   betTypes?: string[];
   propTypes?: string[];
   playerName?: string;
@@ -67,6 +68,7 @@ export interface AdvancedPerformanceFilters {
 export function useDashboardAdvancedPerformance(filters: AdvancedPerformanceFilters) {
   const params = new URLSearchParams();
   if (filters.leagueIds?.length) params.set("leagueIds", filters.leagueIds.join(","));
+  if (filters.memberUserIds?.length) params.set("memberUserIds", filters.memberUserIds.join(","));
   if (filters.betTypes?.length) params.set("betTypes", filters.betTypes.join(","));
   if (filters.propTypes?.length) params.set("propTypes", filters.propTypes.join(","));
   if (filters.playerName?.trim()) params.set("playerName", filters.playerName.trim());
