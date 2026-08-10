@@ -3,6 +3,15 @@ import { Resend } from "resend";
 let connectionSettings: any;
 
 async function getResendCredentials(): Promise<{ apiKey: string; fromEmail: string }> {
+  // Plain env vars take priority — required outside Replit (local dev, prod
+  // hosts, CI) and work fine on Replit too.
+  if (process.env.RESEND_API_KEY) {
+    return {
+      apiKey: process.env.RESEND_API_KEY,
+      fromEmail: process.env.RESEND_FROM_EMAIL || "invites@parlayconch.com",
+    };
+  }
+
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
   const xReplitToken = process.env.REPL_IDENTITY
     ? "repl " + process.env.REPL_IDENTITY
