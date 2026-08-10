@@ -13,6 +13,7 @@ import { useRealtimeSync } from "@/hooks/use-realtime-sync";
 import { PageLoader } from "@/components/PageLoader";
 
 import Landing from "@/pages/Landing";
+import SetPassword from "@/pages/SetPassword";
 import Dashboard from "@/pages/Dashboard";
 import Picks from "@/pages/Picks";
 import History from "@/pages/History";
@@ -94,6 +95,7 @@ function Router() {
     return (
       <Switch>
         <Route path="/" component={Landing} />
+        <Route path="/set-password" component={SetPassword} />
         <Route component={() => {
           window.location.href = "/";
           return null;
@@ -127,6 +129,7 @@ function Router() {
               <Route path="/leagues/:id/screenshot-import" component={ScreenshotImport} />
               <Route path="/leagues/:id" component={LeagueDetail} />
               <Route path="/settings" component={Settings} />
+              <Route path="/set-password" component={SetPassword} />
               {/* Unlisted — no nav link; support staff navigate here directly. */}
               <Route path="/exceptions" component={Exceptions} />
               <Route component={NotFound} />

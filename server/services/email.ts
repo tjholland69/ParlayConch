@@ -117,6 +117,38 @@ export async function sendMemberAddedEmail(opts: {
 }
 
 /**
+ * Sent during the Replit-auth -> email/password migration: asks an existing
+ * Replit-only user to set a password so they can keep signing in once
+ * Replit login is removed.
+ */
+export async function sendSetPasswordEmail(opts: {
+  toEmail: string;
+  toName: string | null;
+  setPasswordUrl: string;
+}): Promise<void> {
+  const { client, fromEmail } = await getUncachableResendClient();
+
+  const greeting = opts.toName ? `Hi ${opts.toName},` : "Hey there,";
+
+  const html = baseHtml(`
+    <h1>Set a password for your account</h1>
+    <p>${greeting}</p>
+    <p>We're retiring "Sign in with Replit." To keep using Parlay.Conch without interruption, set a password for your account — you'll then sign in with your email and that password.</p>
+    <a class="cta" href="${opts.setPasswordUrl}">Set Your Password →</a>
+    <hr class="divider" />
+    <p style="font-size:13px;">Or copy this link into your browser:<br/><span style="color:#71717a;">${opts.setPasswordUrl}</span></p>
+    <p style="font-size:13px;">This link expires in 14 days. If you don't set a password before then, just request a new link from the sign-in page.</p>
+  `);
+
+  await client.emails.send({
+    from: `Parlay.Conch <${fromEmail}>`,
+    to: opts.toEmail,
+    subject: "Action needed: set a password for your Parlay.Conch account",
+    html,
+  });
+}
+
+/**
  * Send an invitation email to someone who doesn't have an account yet.
  */
 export async function sendLeagueInviteEmail(opts: {

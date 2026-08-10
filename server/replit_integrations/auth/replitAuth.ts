@@ -22,6 +22,10 @@ const getOidcConfig = memoize(
   { maxAge: 3600 * 1000 }
 );
 
+// Shared with localAuth.ts so mobile session tokens can be signed to match
+// exactly what express-session would set as the `connect.sid` cookie.
+export const SESSION_SECRET = process.env.SESSION_SECRET ?? "dev-secret-local";
+
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
   const redisClient = getSessionRedis();
@@ -40,7 +44,7 @@ export function getSession() {
         });
       })();
   return session({
-    secret: process.env.SESSION_SECRET ?? "dev-secret-local",
+    secret: SESSION_SECRET,
     store: sessionStore,
     resave: false,
     saveUninitialized: false,
