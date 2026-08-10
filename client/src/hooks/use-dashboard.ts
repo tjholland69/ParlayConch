@@ -14,6 +14,7 @@ export interface UserSummary {
 }
 
 export interface UserPatterns {
+  totalLegs: number;
   wins: number;
   losses: number;
   pushes: number;
@@ -22,6 +23,8 @@ export interface UserPatterns {
   favoritePlayer: { name: string; count: number } | null;
   favoriteDay: { day: string; count: number } | null;
   favoriteTimeOfDay: { label: string; count: number } | null;
+  favoriteTeam: { team: string; count: number } | null;
+  overUnderPreference: { pick: "over" | "under"; overCount: number; underCount: number } | null;
 }
 
 export interface WinRateTimeSeriesPoint {

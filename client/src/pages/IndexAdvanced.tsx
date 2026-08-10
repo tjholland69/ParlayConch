@@ -5,8 +5,8 @@ import { useDashboardAdvancedPerformance } from "@/hooks/use-dashboard";
 import { useLeagueMembers } from "@/hooks/use-custom-indexes";
 import { MultiSelect } from "@/components/MultiSelect";
 import { PlayerCombobox } from "@/components/PlayerCombobox";
+import { TeamCombobox } from "@/components/TeamCombobox";
 import { EmptyState } from "@/components/SlidingCard";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -172,13 +172,10 @@ export default function IndexAdvanced() {
             <Label htmlFor="filter-team" className="text-xs uppercase tracking-wide text-muted-foreground">
               Team
             </Label>
-            <Input
-              id="filter-team"
-              data-testid="filter-team"
-              placeholder="Any team (e.g. KC)"
+            <TeamCombobox
+              testId="filter-team"
               value={teamName}
-              onChange={(e) => setTeamName(e.target.value)}
-              className="bg-background border-white/10"
+              onChange={setTeamName}
             />
           </div>
 

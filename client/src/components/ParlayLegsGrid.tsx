@@ -63,6 +63,12 @@ export function ParlayLegsGrid({ rows }: { rows: FlatParlayLegRow[] }) {
         pagination
         paginationPageSize={50}
         paginationPageSizeSelector={[25, 50, 100, 200]}
+        // Without this, filter/column-menu popups mount inside the grid's own
+        // root and get visually clipped/stacked under the app's fixed z-50
+        // sidebar/topbar. Mounting at document.body (AG Grid's documented fix
+        // for grids inside constrained layouts) plus the z-index override in
+        // index.css keeps them above that chrome.
+        popupParent={document.body}
       />
     </div>
   );

@@ -2,7 +2,8 @@ import { db } from "./db";
 import { logger } from "./logger";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
-  players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes,
+  players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes, teams,
+  type Team,
   type ParlayLegDispute, type InsertParlayLegDispute,
   type CustomIndex, type CustomIndexWithAccess, type InsertCustomIndex, type UpdateCustomIndex,
   type StoryReport, type StoryReportWithSections, type InsertStoryReport, type UpdateStoryReport,
@@ -35,6 +36,18 @@ function emitLeague(leagueId: number, weekId: number | undefined, kind: string) 
 
 function emitUser(userId: string, kind: string) {
   void publishUserEvent(userId, kind).catch((e) => logger.error({ e }, "[realtime]"));
+}
+
+// Lowercase, strip common suffixes (Jr, Sr, II–IV) and punctuation, collapse
+// whitespace, so "D.K. Metcalf" ≈ "DK Metcalf" and "Odell Beckham Jr." ≈
+// "Odell Beckham". Shared by name-matching lookups across data sources
+// (nflverse player names vs. ESPN display names) that don't share a stable id.
+function normalizePlayerName(s: string): string {
+  return s.toLowerCase()
+    .replace(/\b(jr\.?|sr\.?|ii|iii|iv|v)\b/gi, "")
+    .replace(/[^a-z0-9 ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function generateInviteCode(): string {
@@ -202,7 +215,9 @@ export interface IStorage {
   getWeekBySeasonAndNumber(season: number, weekNumber: number): Promise<Week | null>;
   getGamesForSeasonWeek(season: number, weekNumber: number): Promise<Game[]>;
   upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player>;
+  upsertPlayerByEspn(data: Omit<InsertPlayer, 'updatedAt' | 'nflverseId'> & { espnId: string }): Promise<Player>;
   searchPlayers(query: string, limit?: number): Promise<Player[]>;
+  getAllTeams(): Promise<Team[]>;
   upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
   getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]>;
   getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null>;
@@ -2092,6 +2107,52 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  /**
+   * Upsert a player discovered via ESPN's boxscore API, which has no GSIS
+   * (nflverseId) — only its own athlete id. Resolution order:
+   *   1. Existing row with this espnId (fast path once backfilled).
+   *   2. Existing nflverse-created row matching by normalized name — the
+   *      espnId is backfilled onto it so future calls hit path 1, and this
+   *      avoids creating a duplicate player for someone nflverse already
+   *      populated via passing/rushing/receiving stats.
+   *   3. Otherwise insert a brand-new row (e.g. a pure defender nflverse's
+   *      legacy fallback file never had a column for).
+   */
+  async upsertPlayerByEspn(
+    data: Omit<InsertPlayer, 'updatedAt' | 'nflverseId'> & { espnId: string },
+  ): Promise<Player> {
+    const [byEspnId] = await db.select().from(players).where(eq(players.espnId, data.espnId));
+    if (byEspnId) {
+      const [updated] = await db.update(players)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(players.id, byEspnId.id))
+        .returning();
+      return updated;
+    }
+
+    const norm = normalizePlayerName(data.displayName || data.name);
+    const candidates = await db.select().from(players)
+      .where(ilike(players.displayName, `%${data.displayName || data.name}%`));
+    const nameMatch = candidates.find((c) => normalizePlayerName(c.displayName ?? c.name) === norm);
+    if (nameMatch) {
+      const [updated] = await db.update(players)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(players.id, nameMatch.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(players)
+      .values({ ...data, updatedAt: new Date() })
+      .returning();
+    return created;
+  }
+
+  /** Full team reference list, for typeahead pickers (e.g. Advanced Filters' team field). Only 32 rows — no search param needed. */
+  async getAllTeams(): Promise<Team[]> {
+    return db.select().from(teams).orderBy(teams.nickname);
+  }
+
   async searchPlayers(query: string, limit = 20): Promise<Player[]> {
     const trimmed = query.trim();
     if (!trimmed) {
@@ -2148,16 +2209,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null> {
-    // Normalize a name: lowercase, strip common suffixes (Jr, Sr, II–IV),
-    // remove punctuation so "D.K. Metcalf" ≈ "DK Metcalf" and
-    // "Odell Beckham Jr." ≈ "Odell Beckham"
-    const normalize = (s: string) =>
-      s.toLowerCase()
-        .replace(/\b(jr\.?|sr\.?|ii|iii|iv|v)\b/gi, "")
-        .replace(/[^a-z0-9 ]/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-
+    const normalize = normalizePlayerName;
     const norm = normalize(playerName);
 
     // Try exact ilike match on both name columns first (fast DB query)

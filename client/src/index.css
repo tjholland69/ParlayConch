@@ -129,6 +129,13 @@
   }
 }
 
+/* AG Grid filter/column-menu popups are mounted at document.body (see
+   ParlayLegsGrid's popupParent) so they aren't clipped by the grid's own
+   scroll container; this keeps them above the app's fixed z-50 sidebar/topbar. */
+.ag-popup, .ag-popup-editor, .ag-menu, .ag-select-list {
+  z-index: 60 !important;
+}
+
 @keyframes slide-progress {
   from { width: 0%; }
   to { width: 100%; }

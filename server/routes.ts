@@ -25,7 +25,7 @@ import { discoverStories } from "./services/storyStudio/storyDiscovery";
 import { generateSection } from "./services/storyStudio/editorialGeneration";
 import { insertStoryReportSchema, updateStoryReportSchema, STORY_SECTION_KINDS, type StorySectionKind } from "@shared/schema";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
-import { auditLog } from "./services/audit";
+import { auditLog, recordAuditEvent } from "./services/audit";
 import { uploadDisputeScreenshot, getDisputeScreenshotUrl, deleteDisputeScreenshot } from "./disputeStorage";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
@@ -166,19 +166,39 @@ export async function registerRoutes(
         .where(eq(users.id, userId));
       if (!targetUser) return res.status(404).json({ message: "User not found" });
       (req.session as any).actingAsUserId = userId;
+      await recordAuditEvent({
+        eventType: "superuser.act_as.start",
+        actorUserId: realUserId,
+        targetType: "user",
+        targetId: userId,
+        ip: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+        metadata: { targetEmail: targetUser.email },
+      });
       res.json({ actingAs: targetUser });
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
   });
 
-  app.delete("/api/superuser/act-as", isAuthenticated, auditLog("superuser.act_as.end"), async (req, res) => {
+  app.delete("/api/superuser/act-as", isAuthenticated, async (req, res) => {
     try {
       const realUserId = (req.user as any).claims.sub;
       if (!(await storage.isSuperUser(realUserId))) {
         return res.status(403).json({ message: "Super user access required" });
       }
+      // Captured before deletion — auditLog's res.on('finish') pattern reads
+      // the session too late to see this, so it's recorded explicitly here.
+      const endedActingAsUserId = (req.session as any).actingAsUserId ?? null;
       delete (req.session as any).actingAsUserId;
+      await recordAuditEvent({
+        eventType: "superuser.act_as.end",
+        actorUserId: realUserId,
+        targetType: "user",
+        targetId: endedActingAsUserId,
+        ip: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+      });
       res.json({ actingAs: null });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1114,6 +1134,11 @@ export async function registerRoutes(
   // Enqueues a background job (202) when Redis is available; otherwise runs inline.
   app.post("/api/admin/sync-nflverse", isAuthenticated, auditLog("admin.sync_nflverse"), async (req, res) => {
     try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+
       const { season, week, mode = "all" } = req.body;
 
       if (!season || isNaN(Number(season))) {
@@ -1154,6 +1179,11 @@ export async function registerRoutes(
 
   app.get("/api/admin/sync-nflverse/:jobId", isAuthenticated, async (req, res) => {
     try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+
       const status = await getNflverseSyncJobStatus(req.params.jobId);
       if (!status) return res.status(404).json({ message: "Job not found" });
       res.json(status);
@@ -1167,6 +1197,11 @@ export async function registerRoutes(
   // No body required — scans every prop leg across all leagues.
   app.post("/api/admin/resolve-props", isAuthenticated, auditLog("admin.resolve_props"), async (req, res) => {
     try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+
       const result: Record<string, unknown> = { ...(await resolvePropsFromStats()) };
 
       try {
@@ -1190,6 +1225,14 @@ export async function registerRoutes(
       const { leagueId, weekId } = req.body;
       if (!leagueId || !weekId) {
         return res.status(400).json({ message: "leagueId and weekId are required" });
+      }
+      // Scoped to the target league (like /enrich and /sync-scores above) rather
+      // than requiring global super-user access, since this only affects that
+      // league's prop lines and league admins already trigger similar syncs.
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(Number(leagueId), userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Parlay Maestro access required" });
       }
       const result = await fetchPropLinesFromOddsApi(Number(leagueId), Number(weekId));
       res.json({ message: "Prop lines fetch complete", ...result });
@@ -1215,6 +1258,16 @@ export async function registerRoutes(
     }
   });
 
+  // GET /api/teams — full team reference list, for team-picker dropdowns (e.g. Advanced Filters).
+  app.get("/api/teams", isAuthenticated, async (_req, res) => {
+    try {
+      const results = await storage.getAllTeams();
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // GET /api/players?q=<search> — for player-picker dropdowns (e.g. Advanced Filters).
   app.get("/api/players", isAuthenticated, async (req, res) => {
     try {
@@ -1229,6 +1282,16 @@ export async function registerRoutes(
   app.post("/api/admin/rollup-parlay-statuses", isAuthenticated, auditLog("admin.rollup_parlay_statuses"), async (req, res) => {
     try {
       const { leagueId, recomputeTerminal } = req.body;
+      const userId = (req.user as any).claims.sub;
+      // leagueId is optional (omitted = rolls up every league), so this can't
+      // be scoped to a single league's admin the way /enrich and /sync-scores
+      // are — require super-user access instead.
+      if (leagueId) {
+        const isAdmin = await storage.isLeagueAdmin(Number(leagueId), userId);
+        if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+      } else if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
       const result = await storage.rollupLeagueParlayStatuses(leagueId ? Number(leagueId) : undefined, !!recomputeTerminal);
       res.json({ message: "Rollup complete", ...result });
     } catch (err: any) {
