@@ -217,6 +217,26 @@ function PerformanceChartSlide({
     return <EmptyState icon={BarChart3} message="No decided parlay legs yet — check back once some weeks are settled." />;
   }
 
+  // Week-over-week is a single bar per week — the combined win rate across every
+  // decided leg in scope (you + everyone else), not a per-user/index comparison.
+  if (mode === "weekly") {
+    const points: PerformancePoint[] = data.points.map((p) => ({
+      weekLabel: p.weekLabel,
+      all: p.allWeekWinRate,
+    }));
+    const series: PerformanceSeries[] = [{ key: "all", name: "League Average", color: seriesColor(0) }];
+
+    return (
+      <div>
+        <h2 className="text-xl font-bold flex items-center gap-2 mb-5">
+          <BarChart3 className="w-5 h-5 text-accent" />
+          Week-over-Week Performance
+        </h2>
+        <PerformanceBarChart points={points} series={series} />
+      </div>
+    );
+  }
+
   // Build the ordered list of active comparison scopes. Slot order is stable —
   // the default index always holds slot 0, and each custom index keeps its slot
   // as others are toggled, so colors never repaint on a filter change.
@@ -270,8 +290,8 @@ function PerformanceChartSlide({
 
     for (const point of scope.points) {
       const row = ensureRow(point.weekLabel);
-      row[myKey] = mode === "weekly" ? point.myWeekWinRate : point.myWinRate;
-      row[indexKey] = mode === "weekly" ? point.indexWeekWinRate : point.indexWinRate;
+      row[myKey] = point.myWinRate;
+      row[indexKey] = point.indexWinRate;
     }
 
     // With a single scope the labels stay exactly as they read today.
@@ -290,18 +310,14 @@ function PerformanceChartSlide({
 
   const points = weekOrder.map((label) => rowsByWeek.get(label)!);
 
-  const title = mode === "weekly" ? "Week-over-Week Performance" : "Performance Over Time";
-
   return (
     <div>
       <h2 className="text-xl font-bold flex items-center gap-2 mb-5">
         <BarChart3 className="w-5 h-5 text-accent" />
-        {title}
+        Performance Over Time
       </h2>
       {series.length === 0 ? (
         <EmptyState icon={BarChart3} message="Pick at least one index to compare against." />
-      ) : mode === "weekly" ? (
-        <PerformanceBarChart points={points} series={series} />
       ) : (
         <PerformanceLineChart points={points} series={series} />
       )}

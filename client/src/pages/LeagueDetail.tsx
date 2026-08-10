@@ -183,6 +183,12 @@ function StandingsList({ list }: { list: UserStat[] }) {
               </p>
             </div>
             <div className="text-right min-w-[44px]">
+              <p className="text-xs text-muted-foreground">Part%</p>
+              <p className="font-mono font-bold text-sm text-foreground">
+                {((stat.participationRate ?? 0) * 100).toFixed(0)}%
+              </p>
+            </div>
+            <div className="text-right min-w-[44px]">
               <p className="text-xs text-muted-foreground">Power</p>
               <p className="font-mono font-bold text-sm text-foreground">
                 {(stat.powerScore ?? 0).toFixed(2)}
@@ -1030,11 +1036,11 @@ export default function LeagueDetail() {
           <Card className="bg-card/50 border-white/5">
             <CardContent className="pt-6">
               {loadingDataStats ? (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  {[1, 2, 3, 4].map(i => <div key={i} className="h-16 bg-white/5 rounded-xl animate-pulse" />)}
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
+                  {[1, 2, 3, 4, 5].map(i => <div key={i} className="h-16 bg-white/5 rounded-xl animate-pulse" />)}
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-center">
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4 text-center">
                   <div>
                     <p className="text-2xl font-bold">{dataStats?.totalParlays ?? 0}</p>
                     <p className="text-xs text-muted-foreground">Total Parlays</p>
@@ -1050,6 +1056,12 @@ export default function LeagueDetail() {
                   <div>
                     <p className="text-2xl font-bold">{(dataStats?.avgLegsPerParlay ?? 0).toFixed(1)}</p>
                     <p className="text-xs text-muted-foreground">Avg Legs / Parlay</p>
+                  </div>
+                  <div>
+                    <p className="text-lg sm:text-xl font-bold whitespace-nowrap">
+                      {league.createdAt ? format(new Date(league.createdAt), "MMM d, yyyy") : "—"}
+                    </p>
+                    <p className="text-xs text-muted-foreground">League Created</p>
                   </div>
                 </div>
               )}

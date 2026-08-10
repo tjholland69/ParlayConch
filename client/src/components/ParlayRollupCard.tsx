@@ -253,7 +253,7 @@ function LegLogPanel({ log, onClose }: { log: EnrichLog; onClose: () => void }) 
     )}>
       <div className="flex items-center justify-between gap-2">
         <span className="font-semibold text-muted-foreground">
-          Data fetch — {new Date(log.at).toLocaleString()}
+          Data fetch — {new Date(log.at).toLocaleString("en-US")}
         </span>
         <button onClick={onClose} className="text-muted-foreground hover:text-foreground text-xs underline shrink-0">
           Close
@@ -721,7 +721,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                           </td>
                           <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
                             {leg.game?.gameTime
-                              ? new Date(leg.game.gameTime).toLocaleDateString("en-GB", { timeZone: "America/New_York", weekday: "short", month: "2-digit", day: "2-digit" })
+                              ? new Date(leg.game.gameTime).toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short", month: "2-digit", day: "2-digit" })
                               : "—"}
                           </td>
                           <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
