@@ -183,6 +183,10 @@ export interface WinRateTimeSeriesPoint {
   /** That week's own (non-cumulative) win rate — powers the week-over-week view. */
   myWeekWinRate: number | null;
   indexWeekWinRate: number | null;
+  /** That week's combined win rate across every decided leg in scope (mine + everyone
+   * else's), regardless of the my/index split — powers the week-over-week bar chart's
+   * single "entire dataset" bar. */
+  allWeekWinRate: number | null;
 }
 
 export interface WinRateSeriesOptions {
@@ -303,6 +307,9 @@ export async function computeWinRateSeries(
 
   const myByWeek = new Map<number, { win: number; loss: number }>();
   const othersByWeek = new Map<number, { win: number; loss: number }>();
+  // Every decided leg in scope that week, regardless of the my/index split —
+  // the "entire dataset" tally behind allWeekWinRate.
+  const allByWeek = new Map<number, { win: number; loss: number }>();
 
   // When memberUserIds is supplied the index line is exactly those members
   // (the requesting user included, if they named themselves); otherwise it keeps
@@ -324,6 +331,7 @@ export async function computeWinRateSeries(
 
     if (isMine) tally(myByWeek);
     if (inIndex) tally(othersByWeek);
+    tally(allByWeek);
   }
 
   let myCumWin = 0;
@@ -349,12 +357,16 @@ export async function computeWinRateSeries(
     const myWeekTotal = mine ? mine.win + mine.loss : 0;
     const otherWeekTotal = others ? others.win + others.loss : 0;
 
+    const all = allByWeek.get(weekId);
+    const allWeekTotal = all ? all.win + all.loss : 0;
+
     return {
       weekLabel: weekOrder.get(weekId)!.label,
       myWinRate: myTotal > 0 ? (myCumWin / myTotal) * 100 : null,
       indexWinRate: otherTotal > 0 ? (otherCumWin / otherTotal) * 100 : null,
       myWeekWinRate: myWeekTotal > 0 ? (mine!.win / myWeekTotal) * 100 : null,
       indexWeekWinRate: otherWeekTotal > 0 ? (others!.win / otherWeekTotal) * 100 : null,
+      allWeekWinRate: allWeekTotal > 0 ? (all!.win / allWeekTotal) * 100 : null,
     };
   });
 
