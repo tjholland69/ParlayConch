@@ -1,0 +1,1 @@
+ALTER TABLE "parlay_leg_disputes" ADD COLUMN "archived_at" timestamp;

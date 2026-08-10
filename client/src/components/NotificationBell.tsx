@@ -19,6 +19,7 @@ const TYPE_STYLES: Record<string, { dot: string; icon: string }> = {
   parlay_rejected: { dot: "bg-red-500", icon: "❌" },
   reminder: { dot: "bg-yellow-500", icon: "⏰" },
   system: { dot: "bg-blue-500", icon: "ℹ️" },
+  dispute_resolved: { dot: "bg-primary", icon: "⚖️" },
 };
 
 function NotifItem({ notif, onRead }: { notif: Notification; onRead: (id: number) => void }) {

@@ -343,6 +343,10 @@ export const parlayLegDisputes = pgTable("parlay_leg_disputes", {
   resolvedByUserId: varchar("resolved_by_user_id").references(() => users.id, { onDelete: "set null" }),
   resolvedAt: timestamp("resolved_at"),
   resolutionNotes: text("resolution_notes"),
+  // Set when a resolved (upheld) dispute is archived for the record. Dismissed
+  // disputes have nothing worth keeping and are hard-deleted instead — see
+  // storage.resolveDispute.
+  archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   index("parlay_leg_disputes_leg_id_idx").on(table.parlayLegId),
@@ -375,7 +379,7 @@ export const notifications = pgTable("notifications", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   leagueId: integer("league_id").references(() => leagues.id, { onDelete: "cascade" }),
-  type: text("type").notNull(), // 'announcement', 'parlay_approved', 'parlay_rejected', 'reminder', 'system'
+  type: text("type").notNull(), // 'announcement', 'parlay_approved', 'parlay_rejected', 'reminder', 'system', 'dispute_resolved'
   title: text("title").notNull(),
   message: text("message"),
   isRead: boolean("is_read").notNull().default(false),

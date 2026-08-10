@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomUUID } from "crypto";
 
@@ -57,4 +57,12 @@ export async function getDisputeScreenshotUrl(key: string): Promise<string> {
     Key: key,
   });
   return getSignedUrl(getClient(), command, { expiresIn: 900 }); // 15 min
+}
+
+export async function deleteDisputeScreenshot(key: string): Promise<void> {
+  if (!isDisputeStorageConfigured()) return;
+  await getClient().send(new DeleteObjectCommand({
+    Bucket: process.env.DISPUTE_BUCKET_NAME!,
+    Key: key,
+  }));
 }

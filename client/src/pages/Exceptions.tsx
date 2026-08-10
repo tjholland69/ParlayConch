@@ -130,14 +130,16 @@ export default function Exceptions() {
           <AlertOctagon className="w-6 h-6 text-accent" />
           Exceptions Queue
         </h1>
-        <p className="text-sm text-muted-foreground">Member-filed disputes on parlay legs — review and clear them out.</p>
+        <p className="text-sm text-muted-foreground">
+          Member-filed disputes on parlay legs — review and clear them out. Resolved disputes are archived for the
+          record; dismissed disputes are removed once the raiser is notified.
+        </p>
       </div>
 
       <Tabs value={status} onValueChange={setStatus}>
         <TabsList>
           <TabsTrigger value="open">Open</TabsTrigger>
-          <TabsTrigger value="resolved">Resolved</TabsTrigger>
-          <TabsTrigger value="dismissed">Dismissed</TabsTrigger>
+          <TabsTrigger value="resolved">Resolved (archived)</TabsTrigger>
           <TabsTrigger value="all">All</TabsTrigger>
         </TabsList>
       </Tabs>
