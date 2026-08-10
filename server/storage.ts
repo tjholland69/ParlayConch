@@ -351,8 +351,21 @@ export class DatabaseStorage implements IStorage {
    * don't represent a real decided bet.
    *
    * Also computes Power Score (avg win×oddsFactor over decided legs) and BAR
-   * (cohort-adjusted PS × participation). Participation = distinct weeks with
-   * a submitted parlay / distinct weeks with any league activity in scope.
+   * (cohort-adjusted PS × participation).
+   *
+   * Participation = league parlays participated in / league parlays that
+   * occurred while this member was active. A "league parlay" here is counted
+   * per week, not per row — a member's weekly pick can be split or merged into
+   * more than one `parlays` row, and that must still only count as one
+   * participated (or one eligible) week. A push counts as participation
+   * (it's a real, decided submission); void does not. `weeks` carries no
+   * calendar date of its own, and void placeholders aren't reliably
+   * backfilled, so rather than counting void rows directly, a week's
+   * occurrence is inferred from the earliest real (non-void, non-rejected)
+   * submission timestamp anywhere in the league that week, and eligibility is
+   * that timestamp falling inside this member's [startDate, endDate ?? now]
+   * window. Absence of a valid submission in an eligible week — whether or
+   * not a void row actually exists for it — is what counts against them.
    */
   async getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]> {
     const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
@@ -378,10 +391,12 @@ export class DatabaseStorage implements IStorage {
         weekFilter,
       ));
 
-    // Participation uses parlay ownership (submitted a weekly pick), not leg contribution.
+    // Participation uses parlay ownership (submitted a weekly pick), not leg
+    // contribution — and only real, decided submissions (push included).
     const parlayRows = await db.select({
       userId: parlays.userId,
       weekId: parlays.weekId,
+      createdAt: parlays.createdAt,
     })
       .from(parlays)
       .where(and(
@@ -391,8 +406,16 @@ export class DatabaseStorage implements IStorage {
         weekFilter,
       ));
 
-    const eligibleWeeks = new Set(parlayRows.map((p) => p.weekId));
-    const weeksEligible = eligibleWeeks.size;
+    // Anchor each week that saw real league activity to its earliest submission
+    // — the closest thing to "when that week happened" available to us.
+    const weekAnchor = new Map<number, number>();
+    for (const row of parlayRows) {
+      if (!row.createdAt) continue;
+      const t = new Date(row.createdAt).getTime();
+      const existing = weekAnchor.get(row.weekId);
+      if (existing === undefined || t < existing) weekAnchor.set(row.weekId, t);
+    }
+    const activeWeekIds = [...weekAnchor.keys()];
 
     const submittedWeeksByUser = new Map<string, Set<number>>();
     for (const row of parlayRows) {
@@ -403,6 +426,8 @@ export class DatabaseStorage implements IStorage {
       }
       set.add(row.weekId);
     }
+
+    const memberById = new Map(members.map(m => [m.userId, m]));
 
     const base = memberUsers.map((user) => {
       const userLegs = legRows.filter((l) => l.userId === user.id);
@@ -418,7 +443,23 @@ export class DatabaseStorage implements IStorage {
         if (score != null) legScores.push(score);
       }
       const powerScore = averagePowerScore(legScores);
-      const weeksSubmitted = submittedWeeksByUser.get(user.id)?.size ?? 0;
+
+      // Eligible weeks: real league activity that fell inside this member's
+      // own membership window, not the league's activity as a whole.
+      const membership = memberById.get(user.id);
+      const windowStart = membership?.startDate ? new Date(membership.startDate).getTime() : -Infinity;
+      const windowEnd = membership?.endDate ? new Date(membership.endDate).getTime() : Date.now();
+      const eligibleWeekIds = activeWeekIds.filter(weekId => {
+        const t = weekAnchor.get(weekId)!;
+        return t >= windowStart && t <= windowEnd;
+      });
+      const weeksEligible = eligibleWeekIds.length;
+
+      const submitted = submittedWeeksByUser.get(user.id);
+      const weeksSubmitted = submitted
+        ? eligibleWeekIds.filter(weekId => submitted.has(weekId)).length
+        : 0;
+
       const part = participationRate(weeksSubmitted, weeksEligible);
 
       return {
