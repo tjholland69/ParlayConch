@@ -651,23 +651,20 @@ export default function History() {
     overscan: 4,
   });
 
-  const activeParlays = parlays?.filter(p => p.status !== "void") ?? [];
+  const activeParlays = filteredParlays.filter(p => p.status !== "void");
   const stats = {
     total: activeParlays.length,
     wins: activeParlays.filter(p => p.status === "win").length,
     losses: activeParlays.filter(p => p.status === "loss").length,
     pending: activeParlays.filter(p => ["pending", "approved"].includes(p.status || "")).length,
-    missed: parlays?.filter(p => p.status === "void").length || 0,
+    missed: filteredParlays.filter(p => p.status === "void").length,
   };
   const winRate =
     (stats.wins + stats.losses) > 0
       ? ((stats.wins / (stats.wins + stats.losses)) * 100).toFixed(1)
       : "0.0";
 
-  const allLegs = parlays?.flatMap(p => p.legs.map(l => ({
-    ...l,
-    parlay: { id: p.id, weekId: p.weekId, week: p.week, status: p.status, isOwnParlay: true, owner: null },
-  }))) ?? [];
+  const allLegs = filteredMyLegs;
   const gameLegs = allLegs.filter(l => l.betType !== "player_prop");
   const propLegs = allLegs.filter(l => l.betType === "player_prop");
   const totalLegs = allLegs.length;

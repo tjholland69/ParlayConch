@@ -168,7 +168,7 @@ function AnalyticsSlide() {
           <StatRow icon={CalendarDays} label="Most Active Day" value={`${data.favoriteDay.day} (${data.favoriteDay.count})`} />
         )}
         {data.favoriteTimeOfDay && (
-          <StatRow icon={Clock} label="Most Active Time" value={`${data.favoriteTimeOfDay.label} (${data.favoriteTimeOfDay.count})`} />
+          <StatRow icon={Clock} label="Most Active Slate" value={`${data.favoriteTimeOfDay.label} (${data.favoriteTimeOfDay.count})`} />
         )}
       </div>
     </div>
