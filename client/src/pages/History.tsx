@@ -1,4 +1,5 @@
-import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, flattenParlayPages } from "@/hooks/use-bets";
+import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages } from "@/hooks/use-bets";
+import { useAuth } from "@/hooks/use-auth";
 import { useState, useEffect, useMemo, useRef, Fragment, memo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -8,6 +9,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Button } from "@/components/ui/button";
+import { Calendar as CalendarWidget } from "@/components/ui/calendar";
+import type { DateRange } from "react-day-picker";
+import { MultiSelect } from "@/components/MultiSelect";
+import { BET_TYPE_OPTIONS } from "@/lib/bettingConstants";
 import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown, Search, HelpCircle } from "lucide-react";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
@@ -25,6 +32,87 @@ import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 type TileKey = "total" | "wins" | "losses" | "winRate" | "gameLegs" | "gameWinRate" | "propLegs" | "propWinRate";
+
+type HistoryDateRange = { startDate?: string; endDate?: string };
+type DateRangeMode = "all" | "year" | "month" | "custom";
+
+function toISODate(d: Date): string {
+  const tzOffsetMs = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 10);
+}
+
+// Same All Time / This Year / This Month / Custom pattern as the Dashboard >
+// Performance tile's time-range dropdown, applied here as a client-side filter.
+function HistoryDateRangeFilter({
+  value,
+  onChange,
+}: {
+  value: HistoryDateRange;
+  onChange: (mode: DateRangeMode, range: HistoryDateRange) => void;
+}) {
+  const [mode, setMode] = useState<DateRangeMode>("all");
+  const [customRange, setCustomRange] = useState<DateRange | undefined>(undefined);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+
+  const handleModeChange = (next: string) => {
+    const m = next as DateRangeMode;
+    setMode(m);
+    if (m === "all") {
+      onChange(m, {});
+    } else if (m === "year") {
+      const now = new Date();
+      onChange(m, { startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) });
+    } else if (m === "month") {
+      const now = new Date();
+      onChange(m, { startDate: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: toISODate(now) });
+    } else {
+      setPopoverOpen(true);
+      // Wait for explicit range selection before firing onChange.
+    }
+  };
+
+  const applyCustomRange = (range: DateRange | undefined) => {
+    setCustomRange(range);
+    if (range?.from && range?.to) {
+      onChange("custom", { startDate: toISODate(range.from), endDate: toISODate(range.to) });
+      setPopoverOpen(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Select value={mode} onValueChange={handleModeChange}>
+        <SelectTrigger className="w-36 bg-background border-white/10 h-9 text-xs" data-testid="select-history-date-range">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Time</SelectItem>
+          <SelectItem value="year">This Year</SelectItem>
+          <SelectItem value="month">This Month</SelectItem>
+          <SelectItem value="custom">Custom</SelectItem>
+        </SelectContent>
+      </Select>
+      {mode === "custom" && (
+        <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+          <PopoverTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 text-xs bg-background border-white/10 font-normal"
+              data-testid="button-history-custom-date-range"
+            >
+              <Calendar className="w-3.5 h-3.5 mr-1.5" />
+              {value.startDate && value.endDate ? `${value.startDate} – ${value.endDate}` : "Pick dates"}
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-auto p-0">
+            <CalendarWidget mode="range" selected={customRange} onSelect={applyCustomRange} numberOfMonths={2} defaultMonth={customRange?.from} />
+          </PopoverContent>
+        </Popover>
+      )}
+    </div>
+  );
+}
 
 // ── LegTable ─────────────────────────────────────────────────────────────────
 
@@ -426,6 +514,7 @@ const HistoryParlayCard = memo(function HistoryParlayCard({
 
 export default function History() {
   const { toast } = useToast();
+  const { user } = useAuth();
   const { data: leagues } = useLeagues();
   const [selectedLeagueId, setSelectedLeagueId] = useState<string>("all");
   const [copiedId, setCopiedId] = useState<number | null>(null);
@@ -433,6 +522,14 @@ export default function History() {
   const [legsCollapsed, setLegsCollapsed] = useState(true);
   const [legQuery, setLegQuery] = useState("");
   const [parlayQuery, setParlayQuery] = useState("");
+  const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
+
+  // Default view: only the current user's own picks. Uncheck to bring in
+  // every league member's picks (requires a specific league to be selected).
+  const [ownPicksOnly, setOwnPicksOnly] = useState(true);
+  const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
+  const [selectedBetTypes, setSelectedBetTypes] = useState<string[]>([]);
+  const [historyDateRange, setHistoryDateRange] = useState<HistoryDateRange>({});
 
   const handleCopySlip = async (parlay: Parameters<typeof buildSlipText>[0]) => {
     try {
@@ -450,14 +547,97 @@ export default function History() {
   const { data: myLegs } = useMyLegHistory(leagueId);
   const [activeTile, setActiveTile] = useState<TileKey | null>(null);
 
+  // Bringing in other members' picks needs one concrete league (there's no
+  // cross-league "all members" endpoint) — the league filter above provides it.
+  const canShowOthers = !ownPicksOnly && leagueId !== undefined;
+  const { data: members } = useLeagueMembersWithUsers(leagueId ?? 0);
+  const memberOptions = useMemo(
+    () => (members ?? []).map(m => ({ value: m.userId, label: getDisplayName(m.user, "Member") })),
+    [members],
+  );
+
+  const {
+    data: allLeaguePages,
+    hasNextPage: hasNextAllLeaguePage,
+    fetchNextPage: fetchNextAllLeaguePage,
+    isFetchingNextPage: fetchingNextAllLeaguePage,
+  } = useAllLeagueParlaysReadOnly(leagueId ?? 0, canShowOthers);
+
+  useEffect(() => {
+    if (canShowOthers && hasNextAllLeaguePage && !fetchingNextAllLeaguePage) {
+      void fetchNextAllLeaguePage();
+    }
+  }, [canShowOthers, hasNextAllLeaguePage, fetchingNextAllLeaguePage, fetchNextAllLeaguePage]);
+
+  const allLeagueParlays = flattenParlayPages(allLeaguePages);
+  const baseParlays = canShowOthers ? allLeagueParlays : (parlays ?? []);
+
+  const baseLegs: ParlayLegWithParlayContext[] = useMemo(() => {
+    if (!canShowOthers) return myLegs ?? [];
+    return allLeagueParlays.flatMap(p =>
+      p.legs.map(l => ({
+        ...l,
+        parlay: {
+          id: p.id,
+          weekId: p.weekId,
+          week: p.week,
+          status: p.status,
+          isOwnParlay: p.userId === user?.id,
+          owner: p.userId === user?.id ? null : { firstName: p.user?.firstName, email: p.user?.email },
+          userId: p.userId,
+        },
+      })),
+    );
+  }, [canShowOthers, allLeagueParlays, myLegs, user?.id]);
+
+  // Structured filters (league members / bet types / time range) — applied
+  // ahead of the hidden "Advanced Filter" raw query line.
+  const dateFilteredParlays = useMemo(() => {
+    if (!historyDateRange.startDate && !historyDateRange.endDate) return baseParlays;
+    return baseParlays.filter(p => {
+      if (!p.createdAt) return false;
+      const d = toISODate(new Date(p.createdAt));
+      if (historyDateRange.startDate && d < historyDateRange.startDate) return false;
+      if (historyDateRange.endDate && d > historyDateRange.endDate) return false;
+      return true;
+    });
+  }, [baseParlays, historyDateRange]);
+
+  const structurallyFilteredParlays = useMemo(() => {
+    let result = dateFilteredParlays;
+    if (canShowOthers && selectedMemberIds.length > 0) {
+      result = result.filter(p => selectedMemberIds.includes(p.userId));
+    }
+    if (selectedBetTypes.length > 0) {
+      result = result.filter(p => p.legs.some(l => selectedBetTypes.includes(l.betType)));
+    }
+    return result;
+  }, [dateFilteredParlays, canShowOthers, selectedMemberIds, selectedBetTypes]);
+
+  const allowedParlayIdsForDate = useMemo(
+    () => new Set(dateFilteredParlays.map(p => p.id)),
+    [dateFilteredParlays],
+  );
+
+  const structurallyFilteredLegs = useMemo(() => {
+    let result = baseLegs.filter(l => allowedParlayIdsForDate.has(l.parlay.id));
+    if (canShowOthers && selectedMemberIds.length > 0) {
+      result = result.filter(l => selectedMemberIds.includes((l.parlay as { userId?: string }).userId ?? ""));
+    }
+    if (selectedBetTypes.length > 0) {
+      result = result.filter(l => selectedBetTypes.includes(l.betType));
+    }
+    return result;
+  }, [baseLegs, allowedParlayIdsForDate, canShowOthers, selectedMemberIds, selectedBetTypes]);
+
   const filteredMyLegs = useMemo(
-    () => filterLegsByQuery(myLegs ?? [], legQuery),
-    [myLegs, legQuery],
+    () => filterLegsByQuery(structurallyFilteredLegs, legQuery),
+    [structurallyFilteredLegs, legQuery],
   );
 
   const filteredParlays = useMemo(
-    () => filterParlaysByQuery(parlays ?? [], parlayQuery),
-    [parlays, parlayQuery],
+    () => filterParlaysByQuery(structurallyFilteredParlays, parlayQuery),
+    [structurallyFilteredParlays, parlayQuery],
   );
 
   const parentRef = useRef<HTMLDivElement>(null);
@@ -527,7 +707,7 @@ export default function History() {
         <div>
           <h1 className="text-3xl font-display font-bold flex items-center gap-3" data-testid="text-history-title">
             <HistoryIcon className="w-8 h-8 text-primary" />
-            My Parlay History
+            History
           </h1>
           <p className="text-muted-foreground">Track your parlay performance over time</p>
         </div>
@@ -546,6 +726,60 @@ export default function History() {
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-card/30 p-4 rounded-2xl border border-white/5 backdrop-blur-sm space-y-3">
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+          <div className="flex items-center gap-2.5">
+            <Checkbox
+              id="own-picks-only"
+              checked={ownPicksOnly}
+              onCheckedChange={v => setOwnPicksOnly(!!v)}
+              data-testid="checkbox-own-picks-only"
+            />
+            <label htmlFor="own-picks-only" className="text-sm cursor-pointer select-none">
+              My picks only
+            </label>
+          </div>
+
+          {!ownPicksOnly && (
+            <div className="w-56">
+              {leagueId === undefined ? (
+                <p className="text-xs text-muted-foreground italic">Select a league above to include other members' picks.</p>
+              ) : (
+                <MultiSelect
+                  testId="filter-history-members"
+                  placeholder="All members"
+                  options={memberOptions}
+                  selected={selectedMemberIds}
+                  onChange={setSelectedMemberIds}
+                />
+              )}
+            </div>
+          )}
+
+          <div className="w-56">
+            <MultiSelect
+              testId="filter-history-bet-types"
+              placeholder="All bet types"
+              options={BET_TYPE_OPTIONS}
+              selected={selectedBetTypes}
+              onChange={setSelectedBetTypes}
+            />
+          </div>
+
+          <HistoryDateRangeFilter value={historyDateRange} onChange={(_mode, range) => setHistoryDateRange(range)} />
+
+          <button
+            type="button"
+            onClick={() => setShowAdvancedFilter(v => !v)}
+            className="text-sm text-primary hover:underline ml-auto"
+            data-testid="link-advanced-filter"
+          >
+            {showAdvancedFilter ? "Hide advanced filter" : "Advanced Filter"}
+          </button>
+        </div>
       </div>
 
       {/* Stats Summary */}
@@ -651,7 +885,7 @@ export default function History() {
       </div>
 
       {/* Parlay List */}
-      {!parlays?.length ? (
+      {!baseParlays.length ? (
         <div className="text-center py-16 bg-card/20 rounded-2xl border border-dashed border-white/10">
           <Trophy className="w-16 h-16 mx-auto text-muted-foreground mb-4" />
           <h2 className="text-xl font-bold mb-2">No Parlays Yet</h2>
@@ -661,8 +895,10 @@ export default function History() {
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-muted-foreground">
-              {filteredParlays.length} of {parlays.length} parlay{parlays.length !== 1 ? "s" : ""}
-              {parlayQuery.trim() ? " match" : " I have created"}
+              {filteredParlays.length} of {baseParlays.length} parlay{baseParlays.length !== 1 ? "s" : ""}
+              {parlayQuery.trim() || selectedBetTypes.length > 0 || selectedMemberIds.length > 0 || historyDateRange.startDate
+                ? " match"
+                : ownPicksOnly ? " I have created" : " in this league"}
             </p>
             <button
               onClick={() => setAllCollapsed(c => !c)}
@@ -673,29 +909,31 @@ export default function History() {
             </button>
           </div>
 
-          <div className="relative flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-              <Input
-                value={parlayQuery}
-                onChange={e => setParlayQuery(e.target.value)}
-                placeholder='Filter parlays: status:win week:"Week 5" type:player_prop -status:void'
-                className="pl-9 bg-background border-white/10 font-mono text-sm"
-                data-testid="input-parlay-query"
-              />
+          {showAdvancedFilter && (
+            <div className="relative flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                <Input
+                  value={parlayQuery}
+                  onChange={e => setParlayQuery(e.target.value)}
+                  placeholder='Filter parlays: status:win week:"Week 5" type:player_prop -status:void'
+                  className="pl-9 bg-background border-white/10 font-mono text-sm"
+                  data-testid="input-parlay-query"
+                />
+              </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0"
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs text-xs">{PARLAY_QUERY_HELP}</TooltipContent>
+              </Tooltip>
             </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0"
-                >
-                  <HelpCircle className="w-4 h-4" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent className="max-w-xs text-xs">{PARLAY_QUERY_HELP}</TooltipContent>
-            </Tooltip>
-          </div>
+          )}
 
           {filteredParlays.length === 0 ? (
             <p className="text-sm text-muted-foreground italic py-2 px-1">No parlays match this query.</p>
@@ -744,12 +982,14 @@ export default function History() {
       )}
 
       {/* My Parlay Legs */}
-      {!!myLegs?.length && (
+      {!!baseLegs.length && (
         <div className="space-y-4">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-muted-foreground">
-              {filteredMyLegs.length} of {myLegs.length} leg{myLegs.length !== 1 ? "s" : ""}
-              {legQuery.trim() ? " match" : " I have placed"}
+              {filteredMyLegs.length} of {baseLegs.length} leg{baseLegs.length !== 1 ? "s" : ""}
+              {legQuery.trim() || selectedBetTypes.length > 0 || selectedMemberIds.length > 0 || historyDateRange.startDate
+                ? " match"
+                : ownPicksOnly ? " I have placed" : " in this league"}
             </p>
             <button
               onClick={() => setLegsCollapsed(c => !c)}
@@ -762,29 +1002,31 @@ export default function History() {
 
           {!legsCollapsed && (
             <>
-              <div className="relative flex items-center gap-2">
-                <div className="relative flex-1">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                  <Input
-                    value={legQuery}
-                    onChange={e => setLegQuery(e.target.value)}
-                    placeholder='Filter legs: result:win type:player_prop player:"Josh Allen" -status:void'
-                    className="pl-9 bg-background border-white/10 font-mono text-sm"
-                    data-testid="input-leg-query"
-                  />
+              {showAdvancedFilter && (
+                <div className="relative flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      value={legQuery}
+                      onChange={e => setLegQuery(e.target.value)}
+                      placeholder='Filter legs: result:win type:player_prop player:"Josh Allen" -status:void'
+                      className="pl-9 bg-background border-white/10 font-mono text-sm"
+                      data-testid="input-leg-query"
+                    />
+                  </div>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0"
+                      >
+                        <HelpCircle className="w-4 h-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-xs text-xs">{LEG_QUERY_HELP}</TooltipContent>
+                  </Tooltip>
                 </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      className="p-2 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0"
-                    >
-                      <HelpCircle className="w-4 h-4" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent className="max-w-xs text-xs">{LEG_QUERY_HELP}</TooltipContent>
-                </Tooltip>
-              </div>
+              )}
 
               {filteredMyLegs.length === 0 ? (
                 <p className="text-sm text-muted-foreground italic py-2 px-1">No legs match this query.</p>
