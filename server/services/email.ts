@@ -51,6 +51,19 @@ async function getUncachableResendClient() {
   return { client: new Resend(apiKey), fromEmail };
 }
 
+// Resend's SDK returns { data, error } instead of throwing on API-level
+// rejections (unverified domain, invalid sender, etc.) — callers that just
+// `await client.emails.send(...)` silently swallow real failures.
+async function sendChecked(
+  client: Resend,
+  payload: Parameters<Resend["emails"]["send"]>[0]
+): Promise<void> {
+  const { error } = await client.emails.send(payload);
+  if (error) {
+    throw new Error(`Resend rejected email to ${String(payload.to)}: ${error.message}`);
+  }
+}
+
 // ─── Email templates ────────────────────────────────────────────────────────
 
 function baseHtml(body: string) {
@@ -117,7 +130,7 @@ export async function sendMemberAddedEmail(opts: {
     <p style="font-size:13px;">Or copy this link into your browser:<br/><span style="color:#71717a;">${appUrl}</span></p>
   `);
 
-  await client.emails.send({
+  await sendChecked(client, {
     from: `Parlay.Conch <${fromEmail}>`,
     to: opts.toEmail,
     subject: `You've been added to ${opts.leagueName} on Parlay.Conch`,
@@ -149,7 +162,7 @@ export async function sendSetPasswordEmail(opts: {
     <p style="font-size:13px;">This link expires in 14 days. If you don't set a password before then, just request a new link from the sign-in page.</p>
   `);
 
-  await client.emails.send({
+  await sendChecked(client, {
     from: `Parlay.Conch <${fromEmail}>`,
     to: opts.toEmail,
     subject: "Action needed: set a password for your Parlay.Conch account",
@@ -182,7 +195,7 @@ export async function sendLeagueInviteEmail(opts: {
     <p style="font-size:13px;color:#71717a;">Your invite code is: <strong style="color:#fafafa;">${opts.inviteCode}</strong></p>
   `);
 
-  await client.emails.send({
+  await sendChecked(client, {
     from: `Parlay.Conch <${fromEmail}>`,
     to: opts.toEmail,
     subject: `${opts.inviterName} invited you to ${opts.leagueName} on Parlay.Conch`,
