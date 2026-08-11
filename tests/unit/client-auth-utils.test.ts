@@ -40,7 +40,7 @@ describe("client/lib/auth-utils", () => {
       expect(location.href).toBe("");
 
       vi.advanceTimersByTime(1);
-      expect(location.href).toBe("/api/login");
+      expect(location.href).toBe("/");
     });
 
     test("still navigates without toast callback", () => {
@@ -51,7 +51,7 @@ describe("client/lib/auth-utils", () => {
       redirectToLogin();
 
       vi.advanceTimersByTime(500);
-      expect(location.href).toBe("/api/login");
+      expect(location.href).toBe("/");
     });
   });
 });
