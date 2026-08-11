@@ -47,6 +47,7 @@ async function main() {
   let skippedNoEmail = 0;
   let skippedPendingToken = 0;
   let migrated = 0;
+  let failed = 0;
 
   for (const user of replitOnlyUsers) {
     if (!user.email) {
@@ -82,16 +83,24 @@ async function main() {
       continue;
     }
 
+    // Send before persisting the token: if the send fails we want a clean
+    // retry next run, not an orphaned token that blocks it as "pending".
+    try {
+      await sendSetPasswordEmail({
+        toEmail: user.email,
+        toName: user.firstName,
+        setPasswordUrl,
+      });
+    } catch (err: any) {
+      failed++;
+      console.log(`  FAILED to email ${user.email}: ${err?.message ?? err}`);
+      continue;
+    }
+
     await db.insert(passwordResetTokens).values({
       userId: user.id,
       tokenHash: hashResetToken(rawToken),
       expiresAt: new Date(Date.now() + TOKEN_TTL_MS),
-    });
-
-    await sendSetPasswordEmail({
-      toEmail: user.email,
-      toName: user.firstName,
-      setPasswordUrl,
     });
 
     console.log(`  Emailed ${user.email}`);
@@ -100,7 +109,8 @@ async function main() {
 
   console.log(
     `\nDone. ${migrated} ${APPLY ? "emailed" : "would be emailed"}, ` +
-      `${skippedPendingToken} skipped (pending token), ${skippedNoEmail} skipped (no email).`
+      `${skippedPendingToken} skipped (pending token), ${skippedNoEmail} skipped (no email), ` +
+      `${failed} failed to send.`
   );
   if (!APPLY) {
     console.log("This was a dry run — pass --apply to actually send emails.");
