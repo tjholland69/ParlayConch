@@ -334,7 +334,7 @@ export default function Settings() {
                 />
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    Profile photo is synced from your Replit account
+                    Profile photos can't be changed here yet
                   </p>
                 </div>
               </div>
@@ -435,7 +435,7 @@ export default function Settings() {
                   data-testid="input-email-readonly"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Email is managed by your Replit account
+                  Email can't be changed here — contact support if you need it updated
                 </p>
               </div>
             </CardContent>

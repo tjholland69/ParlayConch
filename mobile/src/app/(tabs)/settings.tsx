@@ -165,7 +165,7 @@ export default function SettingsScreen() {
           icon="shield-checkmark-outline"
           iconColor="#2563eb"
           label="Sign-in method"
-          value="Replit OAuth"
+          value="Email & password"
         />
       </View>
 
