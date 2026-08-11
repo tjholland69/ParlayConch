@@ -11,7 +11,7 @@ import type { Express, Request, RequestHandler } from "express";
 import { z } from "zod";
 import { auditLog } from "../../services/audit";
 import { logger } from "../../logger";
-import { SESSION_SECRET } from "./replitAuth";
+import { SESSION_SECRET } from "./session";
 
 const SALT_ROUNDS = 12;
 
@@ -120,9 +120,9 @@ export function setupLocalStrategy() {
   );
 }
 
-// ── isAuthenticated that accepts both Replit OIDC and local sessions ───────
+// ── isAuthenticated ─────────────────────────────────────────────────────────
 
-export const isAuthenticatedLocal: RequestHandler = (req, res, next) => {
+export const isAuthenticated: RequestHandler = (req, res, next) => {
   const user = req.user as any;
   if (!req.isAuthenticated() || !user?.claims?.sub) {
     return res.status(401).json({ message: "Unauthorized" });

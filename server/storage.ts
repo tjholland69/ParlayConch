@@ -546,10 +546,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserLeagues(userId: string): Promise<LeagueWithMembers[]> {
-    const memberships = await db.select().from(leagueMembers).where(eq(leagueMembers.userId, userId));
-    if (memberships.length === 0) return [];
+    // Super users see every league, not just ones they've joined — they
+    // aren't a real member of most of them, so isAdmin is synthesized true
+    // (same "acts like an admin everywhere" bypass isLeagueAdmin already
+    // grants them) rather than derived from a league_members row.
+    const isSuper = await this.isSuperUser(userId);
 
-    const leagueIds = memberships.map(m => m.leagueId);
+    const memberships = await db.select().from(leagueMembers).where(eq(leagueMembers.userId, userId));
+    if (!isSuper && memberships.length === 0) return [];
+
+    const leagueIds = isSuper
+      ? (await db.select({ id: leagues.id }).from(leagues)).map(l => l.id)
+      : memberships.map(m => m.leagueId);
+    if (leagueIds.length === 0) return [];
+
     const [userLeagues, allMembers] = await Promise.all([
       db.select().from(leagues).where(inArray(leagues.id, leagueIds)),
       db.select({ member: leagueMembers, user: users })
@@ -582,8 +592,8 @@ export class DatabaseStorage implements IStorage {
           }
         })),
         memberCount: members.length,
-        isAdmin: userMembership?.role === 'admin',
-        isLieutenant: userMembership?.role === 'lieutenant',
+        isAdmin: isSuper || userMembership?.role === 'admin',
+        isLieutenant: !isSuper && userMembership?.role === 'lieutenant',
       };
     });
   }

@@ -1,11 +1,11 @@
 import type { Express } from "express";
 import { authStorage } from "./storage";
 import { logger } from "../../logger";
-import { isAuthenticated } from "./combinedAuth";
+import { isAuthenticated } from "./localAuth";
 
 // Register auth-specific routes
 export function registerAuthRoutes(app: Express): void {
-  // Get current authenticated user — works for both Replit OIDC and local sessions
+  // Get current authenticated user
   app.get("/api/auth/user", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
