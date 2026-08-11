@@ -1357,9 +1357,30 @@ export class DatabaseStorage implements IStorage {
 
   async createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay> {
     const newParlay = await db.transaction(async (tx) => {
-      const [created] = await tx.insert(parlays).values({
-        userId, leagueId, weekId, status: "approved", source: "imported",
-      }).returning();
+      // Replace rather than blind-insert: a second call for the same
+      // user/league/week (e.g. re-running the demo-data tool) must not
+      // create a duplicate parlay — matches createParlay's behavior and the
+      // parlays_user_league_week_uidx invariant.
+      const existing = await tx
+        .select()
+        .from(parlays)
+        .where(and(eq(parlays.userId, userId), eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
+
+      let created: Parlay;
+      if (existing.length > 0) {
+        await tx.delete(parlayLegs).where(eq(parlayLegs.parlayId, existing[0].id));
+        const [updated] = await tx
+          .update(parlays)
+          .set({ status: "approved", source: "imported", createdAt: new Date(), approvedBy: null, approvedAt: null })
+          .where(eq(parlays.id, existing[0].id))
+          .returning();
+        created = updated;
+      } else {
+        const [inserted] = await tx.insert(parlays).values({
+          userId, leagueId, weekId, status: "approved", source: "imported",
+        }).returning();
+        created = inserted;
+      }
       if (legs.length > 0) {
         await tx.insert(parlayLegs).values(legs.map(leg => ({
           parlayId: created.id,
