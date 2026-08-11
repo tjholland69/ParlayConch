@@ -39,8 +39,32 @@ export function getSession() {
   });
 }
 
+/**
+ * Native iOS (NSURLSession, HTTPShouldSetCookies=YES) silently overrides any
+ * `Cookie` header a React Native fetch call tries to set manually, so the
+ * mobile app can't authenticate via a spoofed Cookie header. It instead sends
+ * the session token via `Authorization: Bearer <token>`, which we translate
+ * here into the `connect.sid` cookie express-session expects, before the
+ * session middleware runs.
+ */
+function mobileSessionHeaderMiddleware(
+  req: import("express").Request,
+  _res: import("express").Response,
+  next: import("express").NextFunction
+) {
+  if (!req.headers.cookie) {
+    const auth = req.headers.authorization;
+    if (auth?.startsWith("Bearer ")) {
+      const token = auth.slice("Bearer ".length).trim();
+      if (token) req.headers.cookie = `connect.sid=${token}`;
+    }
+  }
+  next();
+}
+
 export function setupAuth(app: Express) {
   app.set("trust proxy", 1);
+  app.use(mobileSessionHeaderMiddleware);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
