@@ -33,57 +33,59 @@ export function LeagueCard({ league }: LeagueCardProps) {
   return (
     <Pressable
       onPress={() => router.push(`/leagues/${league.id}`)}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.shadowWrap, pressed && styles.pressed]}
       testID={`card-league-${league.id}`}
     >
-      {/* Left accent bar */}
-      <View style={[styles.accentBar, { backgroundColor: roleColor }]} />
+      <View style={styles.card}>
+        {/* Left accent bar */}
+        <View style={[styles.accentBar, { backgroundColor: roleColor }]} />
 
-      <View style={styles.body}>
-        <View style={styles.topRow}>
-          <View style={styles.titleBlock}>
-            <Text style={styles.name} numberOfLines={1}>
-              {league.name}
+        <View style={styles.body}>
+          <View style={styles.topRow}>
+            <View style={styles.titleBlock}>
+              <Text style={styles.name} numberOfLines={1}>
+                {league.name}
+              </Text>
+              {league.isDemo && (
+                <View style={styles.demoPill}>
+                  <Text style={styles.demoPillText}>DEMO</Text>
+                </View>
+              )}
+            </View>
+            <Ionicons name="chevron-forward" size={16} color="#374151" style={styles.chevron} />
+          </View>
+
+          {league.description ? (
+            <Text style={styles.description} numberOfLines={2}>
+              {league.description}
             </Text>
-            {league.isDemo && (
-              <View style={styles.demoPill}>
-                <Text style={styles.demoPillText}>DEMO</Text>
+          ) : null}
+
+          <View style={styles.metaRow}>
+            <View style={styles.metaItem}>
+              <View style={[styles.roleDot, { backgroundColor: roleColor }]} />
+              <Text style={[styles.metaText, { color: roleColor }]} numberOfLines={1}>
+                {roleLabel}
+              </Text>
+            </View>
+
+            {league.memberCount !== undefined && (
+              <View style={styles.metaItem}>
+                <Ionicons name="people-outline" size={13} color="#475569" />
+                <Text style={styles.metaTextMuted} numberOfLines={1}>
+                  {league.memberCount}{" "}
+                  {league.memberCount === 1 ? "member" : "members"}
+                </Text>
+              </View>
+            )}
+
+            {league.isAdmin && (
+              <View style={styles.metaItem}>
+                <Ionicons name="key-outline" size={13} color="#475569" />
+                <Text style={styles.inviteCode}>{league.inviteCode}</Text>
               </View>
             )}
           </View>
-          <Ionicons name="chevron-forward" size={16} color="#374151" style={styles.chevron} />
-        </View>
-
-        {league.description ? (
-          <Text style={styles.description} numberOfLines={2}>
-            {league.description}
-          </Text>
-        ) : null}
-
-        <View style={styles.metaRow}>
-          <View style={styles.metaItem}>
-            <View style={[styles.roleDot, { backgroundColor: roleColor }]} />
-            <Text style={[styles.metaText, { color: roleColor }]} numberOfLines={1}>
-              {roleLabel}
-            </Text>
-          </View>
-
-          {league.memberCount !== undefined && (
-            <View style={styles.metaItem}>
-              <Ionicons name="people-outline" size={13} color="#475569" />
-              <Text style={styles.metaTextMuted} numberOfLines={1}>
-                {league.memberCount}{" "}
-                {league.memberCount === 1 ? "member" : "members"}
-              </Text>
-            </View>
-          )}
-
-          {league.isAdmin && (
-            <View style={styles.metaItem}>
-              <Ionicons name="key-outline" size={13} color="#475569" />
-              <Text style={styles.inviteCode}>{league.inviteCode}</Text>
-            </View>
-          )}
         </View>
       </View>
     </Pressable>
@@ -91,28 +93,38 @@ export function LeagueCard({ league }: LeagueCardProps) {
 }
 
 const styles = StyleSheet.create({
+  /* Shadow lives on this outer, non-clipping wrapper — combining shadow*
+   * props with overflow:"hidden" on the same view breaks rendering on iOS. */
+  shadowWrap: {
+    marginBottom: 14,
+    borderRadius: 18,
+    alignSelf: "stretch",
+    minWidth: 0,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 4,
+  },
   card: {
     flexDirection: "row",
     backgroundColor: "#1c2538",
-    borderRadius: 14,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: "#2a3447",
-    marginBottom: 10,
     overflow: "hidden",
-    /* Prevent card from overflowing its container */
-    alignSelf: "stretch",
     minWidth: 0,
   },
-  pressed: { opacity: 0.8, transform: [{ scale: 0.99 }] },
+  pressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
   accentBar: {
-    width: 4,
-    borderTopLeftRadius: 14,
-    borderBottomLeftRadius: 14,
+    width: 5,
+    borderTopLeftRadius: 18,
+    borderBottomLeftRadius: 18,
     flexShrink: 0,
   },
   body: {
     flex: 1,
-    padding: 14,
+    padding: 16,
     minWidth: 0,
   },
   topRow: {

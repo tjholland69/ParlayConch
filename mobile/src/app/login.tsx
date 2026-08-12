@@ -296,10 +296,13 @@ const styles = StyleSheet.create({
   },
 
   primaryButton: {
-    width: "100%",
+    alignSelf: "center",
     backgroundColor: "#2563eb",
     borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#93c5fd",
     paddingVertical: 16,
+    paddingHorizontal: 56,
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#2563eb",

@@ -791,8 +791,8 @@ ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/usr/bin/actool --
 
 ExecuteExternalTool /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/ld -version_details
 
-Build description signature: 4828f478a89dc66eb707d83717973cd1
-Build description path: /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/XCBuildData/4828f478a89dc66eb707d83717973cd1.xcbuilddata
+Build description signature: cf5c47129e6f19bbd14123d39445d6f6
+Build description path: /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/XCBuildData/cf5c47129e6f19bbd14123d39445d6f6.xcbuilddata
 ClangStatCache /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk /Users/timholland/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache
     cd /Users/timholland/IdeaProjects/ParlayConch/mobile/ios
     /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/clang-stat-cache /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk -o /Users/timholland/Library/Developer/Xcode/DerivedData/SDKStatCaches.noindex/iphonesimulator26.5-23F81a-6cfe768891a92b912361537c460fe42b.sdkstatcache
@@ -2460,6 +2460,10 @@ Node found at: /opt/homebrew/Cellar/node/26.5.1/bin/node
 
 note: Run script build phase '[Expo] Configure project' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ParlayConch' from project 'ParlayConch')
 note: Run script build phase 'Bundle React Native code and images' will be run during every build because the option to run the script phase "Based on dependency analysis" is unchecked. (in target 'ParlayConch' from project 'ParlayConch')
+PhaseScriptExecution [CP]\ Check\ Pods\ Manifest.lock /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/Script-08A4A3CD28434E44B6B9DE2E.sh (in target 'ParlayConch' from project 'ParlayConch')
+    cd /Users/timholland/IdeaProjects/ParlayConch/mobile/ios
+    /bin/sh -c /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/Script-08A4A3CD28434E44B6B9DE2E.sh
+
 PhaseScriptExecution [Expo]\ Configure\ project /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/Script-1CE0CF279DD3207760FA9331.sh (in target 'ParlayConch' from project 'ParlayConch')
     cd /Users/timholland/IdeaProjects/ParlayConch/mobile/ios
     export ACTION\=build
@@ -3736,14 +3740,14 @@ PhaseScriptExecution [CP]\ Copy\ Pods\ Resources /Users/timholland/Library/Devel
 Transfer starting: 438 files
 EXConstants.bundle/app.config
 
-sent 43586 bytes  received 42 bytes  1888658 bytes/sec
+sent 43586 bytes  received 42 bytes  1974117 bytes/sec
 total size is 5913310  speedup is 135.54
 
 ExtractAppIntentsMetadata (in target 'ParlayConch' from project 'ParlayConch')
     cd /Users/timholland/IdeaProjects/ParlayConch/mobile/ios
     /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor --toolchain-dir /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain --module-name ParlayConch --sdk-root /Applications/Xcode.app/Contents/Developer/Platforms/iPhoneSimulator.platform/Developer/SDKs/iPhoneSimulator26.5.sdk --xcode-version 17F113 --platform-family iOS --deployment-target 13.4 --bundle-identifier com.parlayclub.app --output /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Products/Debug-iphonesimulator/ParlayConch.app --target-triple arm64-apple-ios13.4-simulator --binary-file /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Products/Debug-iphonesimulator/ParlayConch.app/ParlayConch --dependency-file /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/Objects-normal/arm64/ParlayConch_dependency_info.dat --stringsdata-file /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/Objects-normal/arm64/ExtractedAppShortcutsMetadata.stringsdata --source-file-list /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/Objects-normal/arm64/ParlayConch.SwiftFileList --metadata-file-list /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/ParlayConch.DependencyMetadataFileList --static-metadata-file-list /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/ParlayConch.DependencyStaticMetadataFileList --swift-const-vals-list /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Intermediates.noindex/ParlayConch.build/Debug-iphonesimulator/ParlayConch.build/Objects-normal/arm64/ParlayConch.SwiftConstValuesFileList --compile-time-extraction --deployment-aware-processing --validate-assistant-intents --no-app-shortcuts-localization
-2026-08-11 20:13:29.129 appintentsmetadataprocessor[81942:2924156] Starting appintentsmetadataprocessor export
-2026-08-11 20:13:29.137 appintentsmetadataprocessor[81942:2924156] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
+2026-08-11 21:26:30.242 appintentsmetadataprocessor[86434:3002311] Starting appintentsmetadataprocessor export
+2026-08-11 21:26:30.251 appintentsmetadataprocessor[86434:3002311] warning: Metadata extraction skipped. No AppIntents.framework dependency found.
 
 ProcessInfoPlistFile /Users/timholland/Library/Developer/Xcode/DerivedData/ParlayConch-aqdtozrxisomodcwwawzgqhepkut/Build/Products/Debug-iphonesimulator/ParlayConch.app/Info.plist /Users/timholland/IdeaProjects/ParlayConch/mobile/ios/ParlayConch/Info.plist (in target 'ParlayConch' from project 'ParlayConch')
     cd /Users/timholland/IdeaProjects/ParlayConch/mobile/ios

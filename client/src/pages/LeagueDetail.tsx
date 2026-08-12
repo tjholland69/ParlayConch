@@ -149,9 +149,10 @@ function StandingsList({ list }: { list: UserStat[] }) {
   if (!list.length) {
     return <p className="text-muted-foreground text-center py-8 text-sm">No stats yet.</p>;
   }
+  const sorted = [...list].sort((a, b) => (b.bar ?? 0) - (a.bar ?? 0));
   return (
     <div className="space-y-2">
-      {list.map((stat, i) => (
+      {sorted.map((stat, i) => (
         <div
           key={stat.userId}
           className={cn(
