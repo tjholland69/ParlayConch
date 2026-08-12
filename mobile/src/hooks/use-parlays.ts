@@ -23,6 +23,13 @@ export function buildLeagueParlaysQuery(params?: LeagueParlaysPageParams): strin
   return s ? `?${s}` : "";
 }
 
+/** All of the current user's parlays across every league/week, newest week first. */
+export function useMyParlayHistory() {
+  return useQuery<ParlayWithLegs[]>({
+    queryKey: ["/api/parlays/my"],
+  });
+}
+
 export function useMyParlay(leagueId: number, weekId: number) {
   return useQuery<ParlayWithLegs | null>({
     queryKey: ["/api/leagues", leagueId, "weeks", weekId, "my-parlay"],

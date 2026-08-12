@@ -88,7 +88,8 @@ app.use(httpLogger);
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
+      // SO_REUSEPORT is Linux-only; macOS (local dev) throws ENOTSUP if set.
+      reusePort: process.platform === "linux",
     },
     () => {
       log(`serving on port ${port}`);

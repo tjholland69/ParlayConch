@@ -289,12 +289,14 @@ function StatCard({ stat }: { stat: {
   losses: number;
   winRate: number;
   powerScore?: number;
+  participationRate?: number;
   bar?: number;
 } }) {
   const name = stat.username || "Unknown";
   // API winRate is already 0–100
   const winRate = stat.winRate != null ? `${Math.round(stat.winRate)}%` : "—";
   const power = (stat.powerScore ?? 0).toFixed(2);
+  const participation = `${Math.round((stat.participationRate ?? 0) * 100)}%`;
   const barVal = stat.bar ?? 0;
   const barText = `${barVal > 0 ? "+" : ""}${barVal.toFixed(2)}`;
   const barColor = barVal > 0 ? "#22c55e" : barVal < 0 ? "#ef4444" : "#f1f5f9";
@@ -307,27 +309,27 @@ function StatCard({ stat }: { stat: {
       </View>
       <View style={styles.statRow}>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{stat.wins ?? 0}</Text>
-          <Text style={styles.statLabel}>Wins</Text>
+          <Text style={styles.statValue} numberOfLines={1}>{stat.wins ?? 0}-{stat.losses ?? 0}</Text>
+          <Text style={styles.statLabel}>Record</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{stat.losses ?? 0}</Text>
-          <Text style={styles.statLabel}>Losses</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, styles.statValuePrimary]}>{winRate}</Text>
+          <Text style={[styles.statValue, styles.statValuePrimary]} numberOfLines={1}>{winRate}</Text>
           <Text style={styles.statLabel}>Win%</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>{power}</Text>
+          <Text style={styles.statValue} numberOfLines={1}>{power}</Text>
           <Text style={styles.statLabel}>Power</Text>
         </View>
         <View style={styles.statDivider} />
         <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: barColor }]}>{barText}</Text>
+          <Text style={styles.statValue} numberOfLines={1}>{participation}</Text>
+          <Text style={styles.statLabel}>Part%</Text>
+        </View>
+        <View style={styles.statDivider} />
+        <View style={styles.statItem}>
+          <Text style={[styles.statValue, { color: barColor }]} numberOfLines={1}>{barText}</Text>
           <Text style={styles.statLabel}>BAR</Text>
         </View>
       </View>
@@ -576,7 +578,7 @@ export default function LeagueDetailScreen() {
 
         {/* Tabs */}
         <View style={styles.tabBar}>
-          {(["parlays", "members", "stats"] as Tab[]).map((tab) => {
+          {(["parlays", "stats", "members"] as Tab[]).map((tab) => {
             const active = activeTab === tab;
             return (
               <Pressable
@@ -730,9 +732,9 @@ export default function LeagueDetailScreen() {
                   </Text>
                 </View>
               ) : (
-                stats.map((stat: any) => (
-                  <StatCard key={stat.userId} stat={stat} />
-                ))
+                [...stats]
+                  .sort((a: any, b: any) => (b.bar ?? 0) - (a.bar ?? 0))
+                  .map((stat: any) => <StatCard key={stat.userId} stat={stat} />)
               )}
             </>
           )}
@@ -1130,24 +1132,24 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#2a3447",
-    padding: 14,
+    padding: 12,
     marginBottom: 10,
   },
   statCardHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 14,
+    marginBottom: 10,
   },
   statName: { fontSize: 15, fontWeight: "700", color: "#f1f5f9", flex: 1 },
   statRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-around",
+    justifyContent: "space-between",
   },
-  statItem: { alignItems: "center", flex: 1 },
-  statValue: { fontSize: 15, fontWeight: "800", color: "#f1f5f9" },
+  statItem: { alignItems: "center", flex: 1, minWidth: 0 },
+  statValue: { fontSize: 12, fontWeight: "800", color: "#f1f5f9" },
   statValuePrimary: { color: "#2563eb" },
-  statLabel: { fontSize: 10, color: "#475569", marginTop: 2, fontWeight: "500" },
-  statDivider: { width: 1, height: 28, backgroundColor: "#2a3447" },
+  statLabel: { fontSize: 8.5, color: "#475569", marginTop: 2, fontWeight: "500" },
+  statDivider: { width: 1, height: 24, backgroundColor: "#2a3447" },
 });

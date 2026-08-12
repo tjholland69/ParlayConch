@@ -1,15 +1,29 @@
-import { Tabs } from "expo-router";
+import { Tabs, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Platform, View, Text, StyleSheet } from "react-native";
+import { Platform, View, Text, Pressable, StyleSheet } from "react-native";
 import { Shell } from "lucide-react-native";
+import { HeaderAvatarButton } from "@/components/HeaderAvatarButton";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 const FOCUSED_ICONS: Partial<Record<IconName, IconName>> = {
-  "trophy-outline": "trophy",
+  "grid-outline": "grid",
   "checkmark-circle-outline": "checkmark-circle",
-  "person-circle-outline": "person-circle",
+  "trophy-outline": "trophy",
 };
+
+function BackButton() {
+  const router = useRouter();
+  return (
+    <Pressable
+      onPress={() => (router.canGoBack() ? router.back() : router.replace("/(tabs)/dash"))}
+      hitSlop={10}
+      style={{ marginLeft: 8, padding: 4 }}
+    >
+      <Ionicons name="chevron-back" size={26} color="#f1f5f9" />
+    </Pressable>
+  );
+}
 
 function TabIcon({
   name,
@@ -55,12 +69,13 @@ export default function TabLayout() {
         },
         headerShadowVisible: false,
         headerTitleAlign: "center",
+        headerRight: () => <HeaderAvatarButton />,
       }}
     >
       <Tabs.Screen
-        name="leagues"
+        name="dash"
         options={{
-          title: "Leagues",
+          title: "Dash",
           headerTitle: () => (
             <View style={styles.headerTitle}>
               <Shell size={22} color="#2563eb" />
@@ -68,7 +83,7 @@ export default function TabLayout() {
             </View>
           ),
           tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon name="trophy-outline" focused={focused} color={color} size={size} />
+            <TabIcon name="grid-outline" focused={focused} color={color} size={size} />
           ),
         }}
       />
@@ -82,12 +97,22 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="leagues"
+        options={{
+          title: "Leagues",
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon name="trophy-outline" focused={focused} color={color} size={size} />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: "Profile",
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon name="person-circle-outline" focused={focused} color={color} size={size} />
-          ),
+          href: null,
+          headerRight: () => null,
+          headerLeft: () => <BackButton />,
+          tabBarStyle: { display: "none" },
         }}
       />
     </Tabs>
