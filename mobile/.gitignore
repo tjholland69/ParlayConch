@@ -4,3 +4,6 @@
 
 expo-env.d.ts
 # @end expo-cli
+
+# App Store Connect API key — never commit this secret
+AuthKey*.p8
