@@ -19,8 +19,6 @@
         "NSCameraUsageDescription": "Used for profile photo upload",
         "LSApplicationQueriesSchemes": [
           "fanduel",
-          "draftkings",
-          "fanduel",
           "draftkings"
         ]
       },
@@ -44,8 +42,19 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "./plugins/withSportsbookQueries.js"
+      "./plugins/withSportsbookQueries.js",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ]
     ],
+    "newArchEnabled": true,
     "experiments": {
       "typedRoutes": true
     },
