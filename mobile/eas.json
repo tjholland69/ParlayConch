@@ -23,7 +23,7 @@
   "submit": {
     "production": {
       "ios": {
-        "ascApiKeyPath": "./AuthKey.p8",
+        "ascApiKeyPath": "./AuthKey_53FGTNHK5N.p8",
         "ascApiKeyId": "53FGTNHK5N",
         "ascApiKeyIssuerId": "c694b7f5-b706-4f1a-9a0a-37a34bbf1027"
       }
