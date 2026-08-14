@@ -1,10 +1,10 @@
 import { useMyParlayHistory, useLeagues, useAllLeagueParlays } from "@/hooks/use-bets";
-import { useState, useEffect, Fragment } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown } from "lucide-react";
+import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, ChevronsUpDown } from "lucide-react";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -13,12 +13,6 @@ import { format } from "date-fns";
 import type { ParlayWithLegs } from "@shared/schema";
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-const resultColor = (r: string | null | undefined) =>
-  r === "win" ? "text-green-400" :
-  r === "loss" ? "text-red-400" :
-  r === "push" ? "text-blue-400" :
-  "text-muted-foreground";
 
 const getStatusVariant = (status: string | null): "default" | "destructive" | "secondary" | "outline" => {
   switch (status) {
@@ -42,76 +36,40 @@ function legMatchup(leg: any) {
   return `${leg.game?.awayTeam ?? "?"} @ ${leg.game?.homeTeam ?? "?"}`;
 }
 
-// ── LegTable ─────────────────────────────────────────────────────────────────
+// ── LegRows ──────────────────────────────────────────────────────────────────
+// Flat per-leg tile rows, matching the "League Parlays" card format in LeagueDetail.
 
-function LegTable({ legs, compact = false }: { legs: any[]; compact?: boolean }) {
+function LegRows({ legs }: { legs: any[] }) {
   if (legs.length === 0) {
     return <p className="text-sm text-muted-foreground italic py-2 px-1">No legs.</p>;
   }
   return (
-    <div className="rounded-lg overflow-hidden border border-white/5">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-muted/30 text-muted-foreground text-xs">
-            <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
-            <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
-            <th className="text-left px-3 py-2 font-medium">Pick</th>
-            {!compact && <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>}
-            {!compact && <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>}
-            <th className="text-left px-3 py-2 font-medium">Result</th>
-          </tr>
-        </thead>
-        <tbody>
-          {legs.map((leg: any, i: number) => (
-            <Fragment key={leg.id ?? i}>
-              <tr
-                className={cn(
-                  "border-t border-white/5",
-                  i % 2 === 1 && "bg-muted/10",
-                  leg.result === "win" && "bg-primary/10",
-                  leg.result === "loss" && "bg-destructive/5"
-                )}
-              >
-                <td className="px-3 py-2 font-medium">
-                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                    {leg.gameSegment && (
-                      <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 leading-none shrink-0">
-                        {leg.gameSegment}
-                      </span>
-                    )}
-                    <span className="truncate max-w-[130px] text-xs">{legMatchup(leg)}</span>
-                  </div>
-                </td>
-                <td className="px-3 py-2 hidden sm:table-cell">
-                  <Badge variant="outline" className="text-xs px-1.5 py-0">
-                    {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
-                  </Badge>
-                </td>
-                <td className="px-3 py-2 text-muted-foreground text-xs">{formatPickLabel(leg)}</td>
-                {!compact && (
-                  <td className="px-3 py-2 text-muted-foreground hidden md:table-cell text-xs">{leg.line || "—"}</td>
-                )}
-                {!compact && (
-                  <td className="px-3 py-2 text-muted-foreground hidden md:table-cell text-xs">{leg.odds || "—"}</td>
-                )}
-                <td className={cn("px-3 py-2 font-medium text-xs", resultColor(leg.result))}>
-                  {leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—"}
-                </td>
-              </tr>
-              {leg.notes && (
-                <tr className="border-t border-white/5">
-                  <td
-                    colSpan={compact ? 3 : 5}
-                    className="px-4 py-1.5 text-xs text-muted-foreground italic border-l-2 border-white/10"
+    <div className="space-y-1">
+      {legs.map((leg: any, i: number) => {
+        const isProp = leg.betType === "player_prop";
+        return (
+          <div key={leg.id ?? i} className="flex flex-col gap-1 text-sm p-2 bg-white/5 rounded">
+            <div className="flex items-center justify-between">
+              <span>{legMatchup(leg)}</span>
+              <div className="flex items-center gap-2">
+                {leg.result && (
+                  <Badge
+                    variant={leg.result === "win" ? "default" : leg.result === "loss" ? "destructive" : "secondary"}
+                    className="text-xs"
                   >
-                    {leg.notes}
-                  </td>
-                </tr>
-              )}
-            </Fragment>
-          ))}
-        </tbody>
-      </table>
+                    {leg.result}
+                  </Badge>
+                )}
+                <Badge variant="outline" className="text-xs uppercase">{isProp ? "PROP" : leg.betType}</Badge>
+                <Badge variant="outline" className="text-xs">{formatPickLabel(leg)}</Badge>
+              </div>
+            </div>
+            {leg.notes && (
+              <p className="text-xs text-muted-foreground italic pl-1 border-l border-white/10">{leg.notes}</p>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -155,43 +113,11 @@ function HistoryParlayCard({
 
   return (
     <Card
-      className={cn(
-        "border transition-all duration-500",
-        perfect
-          ? "border-green-400/60 bg-card/50"
-          : "border-white/10 bg-card/50",
-        parlay.status === "void" && "opacity-60"
-      )}
-      style={
-        perfect
-          ? { boxShadow: "0 0 18px 2px rgba(74,222,128,0.22), 0 0 4px 1px rgba(74,222,128,0.18)" }
-          : undefined
-      }
+      className={cn("border-white/5", parlay.status === "void" ? "bg-card/20 opacity-60" : "bg-card/50")}
       data-testid={`card-parlay-history-${parlay.id}`}
     >
-      <CardHeader className="relative overflow-hidden pb-3">
-        {/* Progress bar background */}
-        {pct > 0 && (
-          <div
-            aria-hidden="true"
-            className={cn(
-              "absolute inset-y-0 left-0 pointer-events-none transition-all duration-700 ease-out",
-              perfect && "animate-pulse"
-            )}
-            style={{
-              width: `${pct}%`,
-              background: perfect
-                ? "linear-gradient(to right, rgba(74,222,128,0.35), rgba(74,222,128,0.10))"
-                : "linear-gradient(to right, rgba(74,222,128,0.18), rgba(74,222,128,0.03))",
-              boxShadow: perfect
-                ? "inset -4px 0 12px rgba(74,222,128,0.25)"
-                : "inset -2px 0 6px rgba(74,222,128,0.08)",
-            }}
-          />
-        )}
-
-        {/* Header row */}
-        <div className="relative z-10 flex flex-wrap items-center gap-2 sm:gap-3">
+      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
+        <div className="flex items-center gap-3 min-w-0">
           {/* Collapse toggle */}
           <button
             className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
@@ -203,30 +129,45 @@ function HistoryParlayCard({
             />
           </button>
 
-          {/* Week + date */}
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
-            <span className="font-semibold truncate">
-              {parlay.week?.label ?? `Week ${parlay.weekId}`}
-            </span>
-            {parlay.createdAt && (
-              <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
-                {format(new Date(parlay.createdAt), "MMM d, yyyy")}
-              </span>
+          {/* Avatar */}
+          <div
+            className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center text-primary-foreground shrink-0",
+              parlay.status === "void" ? "bg-muted" : perfect ? "bg-gradient-to-tr from-green-400 to-primary" : "bg-gradient-to-tr from-primary to-accent"
             )}
-            <span className="text-xs text-muted-foreground/50">#{parlay.id}</span>
-            {collapsed && parlay.legs.length > 0 && (
-              <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal text-muted-foreground border-white/15">
-                {parlay.legs.length} leg{parlay.legs.length !== 1 ? "s" : ""}
-              </Badge>
-            )}
+          >
+            <Calendar className="w-4 h-4" />
           </div>
 
+          {/* Week + date */}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className={cn("font-bold truncate", parlay.status === "void" && "text-muted-foreground")}>
+                {parlay.week?.label ?? `Week ${parlay.weekId}`}
+              </p>
+              {perfect && (
+                <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px] px-1 py-0 h-4">
+                  Perfect
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground truncate">
+              {parlay.status === "void" ? "No submission" : `${parlay.legs.length} leg parlay`}
+              {parlay.createdAt && (
+                <span className="ml-2 text-muted-foreground/60">
+                  {format(new Date(parlay.createdAt), "MMM d, yyyy")}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
           {/* Win stats */}
           {resolved > 0 && (
             <span
               className={cn(
-                "text-xs font-semibold tabular-nums shrink-0",
+                "text-xs font-semibold tabular-nums",
                 pct >= 60 ? "text-green-400" : pct >= 40 ? "text-yellow-400" : "text-red-400"
               )}
             >
@@ -236,40 +177,38 @@ function HistoryParlayCard({
             </span>
           )}
           {pending > 0 && resolved === 0 && (
-            <span className="text-xs text-muted-foreground/50 shrink-0">{pending} pending</span>
+            <span className="text-xs text-muted-foreground/50">{pending} pending</span>
           )}
 
-          {/* Status badge + copy */}
-          <div className="flex items-center gap-2 shrink-0">
-            <Badge
-              variant={getStatusVariant(parlay.status)}
-              className={parlay.status === "void" ? "text-muted-foreground border-white/10" : ""}
+          <Badge
+            variant={getStatusVariant(parlay.status)}
+            className={parlay.status === "void" ? "text-muted-foreground border-white/10" : ""}
+          >
+            {parlay.status === "void" ? "Void" : parlay.status}
+          </Badge>
+
+          {parlay.status !== "void" && (
+            <button
+              onClick={() => onCopySlip(parlay)}
+              title="Copy bet slip"
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
             >
-              {parlay.status === "void" ? "Void" : parlay.status}
-            </Badge>
-            {parlay.status !== "void" && (
-              <button
-                onClick={() => onCopySlip(parlay)}
-                title="Copy bet slip"
-                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
-              >
-                {copiedId === parlay.id
-                  ? <Check className="w-3.5 h-3.5 text-green-400" />
-                  : <Copy className="w-3.5 h-3.5" />}
-              </button>
-            )}
-          </div>
+              {copiedId === parlay.id
+                ? <Check className="w-3.5 h-3.5 text-green-400" />
+                : <Copy className="w-3.5 h-3.5" />}
+            </button>
+          )}
         </div>
       </CardHeader>
 
       {!collapsed && (
-        <CardContent className="pt-0">
+        <CardContent>
           {parlay.status === "void" ? (
-            <p className="text-sm text-muted-foreground italic py-2">No submission — missed this week</p>
+            <p className="text-sm text-muted-foreground italic">No submission — missed this week</p>
           ) : (
             <>
               {/* My legs */}
-              <LegTable legs={parlay.legs} />
+              <LegRows legs={parlay.legs} />
 
               {/* Show full parlay toggle */}
               <div className="mt-4 flex items-center gap-2.5">
@@ -316,7 +255,9 @@ function HistoryParlayCard({
                       <div key={other.id} className="rounded-lg border border-white/5 bg-muted/10 overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-white/5">
                           <span className="text-sm font-semibold flex items-center gap-2">
-                            <User className="w-3.5 h-3.5 text-muted-foreground" />
+                            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground text-xs font-bold shrink-0">
+                              {displayName[0]}
+                            </div>
                             {displayName}
                           </span>
                           <div className="flex items-center gap-2">
@@ -338,7 +279,9 @@ function HistoryParlayCard({
                             </Badge>
                           </div>
                         </div>
-                        <LegTable legs={other.legs} compact />
+                        <div className="p-2">
+                          <LegRows legs={other.legs} />
+                        </div>
                       </div>
                     );
                   })}
