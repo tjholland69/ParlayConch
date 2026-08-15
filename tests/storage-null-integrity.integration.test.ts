@@ -19,13 +19,16 @@ import {
 describe("storage null integrity", () => {
   setupTestDatabase();
 
+  let nextWeekNumber = 1;
+
   async function seedImportContext(userId: string) {
     const { db } = await import("../../server/db");
     await db.insert(users).values({ id: userId, email: `${userId}@example.com` });
 
+    const weekNumber = nextWeekNumber++;
     const [week] = await db
       .insert(weeks)
-      .values({ season: 2025, weekNumber: 10, label: "Week 10" })
+      .values({ season: 2025, weekNumber, label: `Week ${weekNumber}` })
       .returning();
 
     const [league] = await db
