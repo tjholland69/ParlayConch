@@ -43,7 +43,7 @@ export function Button({
       style={({ pressed }) => [
         containerStyle,
         pressed && !isDisabled && styles.pressed,
-        typeof style === "function" ? style({ pressed }) : style,
+        typeof style === "function" ? style({ pressed, hovered: false }) : style,
       ]}
       {...props}
     >

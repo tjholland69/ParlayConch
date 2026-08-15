@@ -33,6 +33,7 @@ vi.mock("../../server/redis-clients", () => ({
   connectSessionRedis: vi.fn().mockResolvedValue(undefined),
   isRedisConfigured: () => false,
   getSessionRedis: () => null,
+  redisKeyPrefix: () => "test:",
 }));
 
 vi.mock("../../server/realtime-ws", () => ({
@@ -203,10 +204,12 @@ describe("HTTP route validation and auth", () => {
         pick: "home",
         line: null,
         odds: null,
+        oddsSource: null,
         playerName: null,
         propType: null,
         notes: null,
         gameSegment: null,
+        userId: HTTP_TEST_USER,
       });
     });
   });

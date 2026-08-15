@@ -4,25 +4,31 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
-import { Loader2 } from "lucide-react";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ActForBar } from "@/components/ActForBar";
-import { useEffect } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import { useRoute } from "wouter";
 import { useRealtimeSync } from "@/hooks/use-realtime-sync";
+import { PageLoader } from "@/components/PageLoader";
 
 import Landing from "@/pages/Landing";
+import SetPassword from "@/pages/SetPassword";
 import Dashboard from "@/pages/Dashboard";
 import Picks from "@/pages/Picks";
 import History from "@/pages/History";
 import Leagues from "@/pages/Leagues";
 import LeagueDetail from "@/pages/LeagueDetail";
-import LeagueSettings from "@/pages/LeagueSettings";
-import DemoDataEditor from "@/pages/DemoDataEditor";
-import ScreenshotImport from "@/pages/ScreenshotImport";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
+
+const StoryStudio = lazy(() => import("@/pages/StoryStudio"));
+const LeagueSettings = lazy(() => import("@/pages/LeagueSettings"));
+const DemoDataEditor = lazy(() => import("@/pages/DemoDataEditor"));
+const ScreenshotImport = lazy(() => import("@/pages/ScreenshotImport"));
+const IndexAdvanced = lazy(() => import("@/pages/IndexAdvanced"));
+const CustomIndexes = lazy(() => import("@/pages/CustomIndexes"));
+const Exceptions = lazy(() => import("@/pages/Exceptions"));
 
 function useApplyPrimaryColor(primaryColor: string | undefined) {
   useEffect(() => {
@@ -82,17 +88,14 @@ function Router() {
   useApplyTheme((user?.settings as any)?.theme);
 
   if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-background">
-        <Loader2 className="w-12 h-12 text-primary animate-spin" />
-      </div>
-    );
+    return <PageLoader className="min-h-screen" sizeClassName="w-12 h-12" />;
   }
 
   if (!user) {
     return (
       <Switch>
         <Route path="/" component={Landing} />
+        <Route path="/set-password" component={SetPassword} />
         <Route component={() => {
           window.location.href = "/";
           return null;
@@ -112,18 +115,26 @@ function Router() {
           <NotificationBell />
         </div>
         <main className="flex-1 p-4 md:px-8 md:py-6 pt-20 md:pt-6 overflow-y-auto">
-          <Switch>
-            <Route path="/" component={Dashboard} />
-            <Route path="/picks" component={Picks} />
-            <Route path="/history" component={History} />
-            <Route path="/leagues" component={Leagues} />
-            <Route path="/leagues/:id/settings" component={LeagueSettings} />
-            <Route path="/leagues/:id/demo-data" component={DemoDataEditor} />
-            <Route path="/leagues/:id/screenshot-import" component={ScreenshotImport} />
-            <Route path="/leagues/:id" component={LeagueDetail} />
-            <Route path="/settings" component={Settings} />
-            <Route component={NotFound} />
-          </Switch>
+          <Suspense fallback={<PageLoader />}>
+            <Switch>
+              <Route path="/" component={Dashboard} />
+              <Route path="/picks" component={Picks} />
+              <Route path="/history" component={History} />
+              <Route path="/story-studio" component={StoryStudio} />
+              <Route path="/index/advanced" component={IndexAdvanced} />
+              <Route path="/index/custom" component={CustomIndexes} />
+              <Route path="/leagues" component={Leagues} />
+              <Route path="/leagues/:id/settings" component={LeagueSettings} />
+              <Route path="/leagues/:id/demo-data" component={DemoDataEditor} />
+              <Route path="/leagues/:id/screenshot-import" component={ScreenshotImport} />
+              <Route path="/leagues/:id" component={LeagueDetail} />
+              <Route path="/settings" component={Settings} />
+              <Route path="/set-password" component={SetPassword} />
+              {/* Unlisted — no nav link; support staff navigate here directly. */}
+              <Route path="/exceptions" component={Exceptions} />
+              <Route component={NotFound} />
+            </Switch>
+          </Suspense>
         </main>
       </div>
     </div>

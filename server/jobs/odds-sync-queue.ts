@@ -1,6 +1,7 @@
 import { Queue, QueueEvents, Worker, type Job } from "bullmq";
 import { createBullMqConnection, isRedisConfigured } from "../redis-clients";
 import { syncGamesFromOddsApi } from "../services/oddsApi";
+import { logger } from "../logger";
 
 const QUEUE_NAME = "odds-sync";
 
@@ -20,7 +21,7 @@ export function startOddsSyncWorker(): void {
     { connection: createBullMqConnection(), concurrency: 2 },
   );
   worker.on("failed", (job, err) => {
-    console.error("[odds-sync worker] job failed", job?.id, err);
+    logger.error({ err, jobId: job?.id }, "[odds-sync worker] job failed");
   });
 }
 
@@ -42,14 +43,41 @@ export function getOddsSyncQueueEvents(): QueueEvents | null {
   return queueEvents;
 }
 
-export async function runOddsSyncQueued(weekId: number): Promise<{ added: number; updated: number }> {
+/**
+ * Queue odds sync and return immediately when Redis queue is enabled.
+ * Falls back to inline sync when queue is unavailable.
+ */
+export async function runOddsSyncQueued(
+  weekId: number,
+): Promise<
+  | { queued: true; jobId: string }
+  | { queued: false; added: number; updated: number }
+> {
   const q = getOddsSyncQueue();
-  const ev = getOddsSyncQueueEvents();
-  if (!q || !ev || process.env.USE_ODDS_SYNC_QUEUE !== "1") {
-    return syncGamesFromOddsApi(weekId);
+  if (!q || process.env.USE_ODDS_SYNC_QUEUE !== "1") {
+    const result = await syncGamesFromOddsApi(weekId);
+    return { queued: false, ...result };
   }
 
   const job = await q.add("sync", { weekId }, { removeOnComplete: 100, removeOnFail: 50 });
-  const result = await job.waitUntilFinished(ev, 120_000);
-  return result as { added: number; updated: number };
+  return { queued: true, jobId: String(job.id) };
+}
+
+export async function getOddsSyncJobStatus(jobId: string): Promise<{
+  id: string;
+  state: string;
+  result?: { added: number; updated: number };
+  failedReason?: string;
+} | null> {
+  const q = getOddsSyncQueue();
+  if (!q) return null;
+  const job = await q.getJob(jobId);
+  if (!job) return null;
+  const state = await job.getState();
+  return {
+    id: String(job.id),
+    state,
+    result: state === "completed" ? (job.returnvalue as { added: number; updated: number }) : undefined,
+    failedReason: job.failedReason,
+  };
 }

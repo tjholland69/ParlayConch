@@ -1,12 +1,36 @@
 import { useState, useEffect, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useWeeks, useGames, useLeagues, useLeaguesActiveStatus } from "@/hooks/use-bets";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, Calendar, Users, ArrowRight, Info } from "lucide-react";
+import { Calendar, Users, ArrowRight, Info, Newspaper } from "lucide-react";
 import { Link } from "wouter";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { getBuildingVerb } from "@/lib/parlaySlang";
+import { PageLoader } from "@/components/PageLoader";
+
+interface InjuryNewsItem {
+  id: string;
+  title: string;
+  description: string;
+  tag?: string;
+  team?: string;
+  position?: string;
+}
+
+const NOT_RULED_OUT_TAGS = new Set(["Questionable", "Doubtful", "Day-To-Day"]);
+
+function normalizeTeam(s: string) {
+  return s.toLowerCase().trim();
+}
+
+function teamMatches(shortName: string, injuryTeam: string) {
+  const a = normalizeTeam(shortName);
+  const b = normalizeTeam(injuryTeam);
+  return a.includes(b) || b.includes(a);
+}
 
 export default function Picks() {
   const { data: weeks, isLoading: isLoadingWeeks } = useWeeks();
@@ -35,13 +59,29 @@ export default function Picks() {
 
   const { data: games, isLoading: isLoadingGames } = useGames(Number(selectedWeekId));
   const { data: activeStatus } = useLeaguesActiveStatus();
+  const { data: injuries } = useQuery<InjuryNewsItem[]>({
+    queryKey: ["/api/news", "injuries", 60],
+    queryFn: async () => {
+      const res = await fetch("/api/news?feed=injuries&limit=60");
+      if (!res.ok) throw new Error("Failed to load injuries");
+      return res.json();
+    },
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const gameNotes = useMemo(() => {
+    if (!games?.length) return [];
+    return games.map(game => {
+      const watchList = (injuries ?? [])
+        .filter(inj => inj.tag && NOT_RULED_OUT_TAGS.has(inj.tag))
+        .filter(inj => inj.team && (teamMatches(game.homeTeam, inj.team) || teamMatches(game.awayTeam, inj.team)))
+        .slice(0, 2);
+      return { game, watchList };
+    });
+  }, [games, injuries]);
 
   if (isLoadingWeeks || isLoadingLeagues) {
-    return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="w-10 h-10 text-primary animate-spin" />
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (!leagues?.length) {
@@ -68,7 +108,7 @@ export default function Picks() {
     <div className="max-w-4xl mx-auto space-y-8 pb-12">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-card/30 p-6 rounded-2xl border border-white/5 backdrop-blur-sm">
         <div>
-          <h1 className="text-3xl font-display font-bold" data-testid="text-picks-title">Quick View</h1>
+          <h1 className="text-3xl font-display font-bold" data-testid="text-picks-title">Quick Picks</h1>
           <p className="text-muted-foreground">Browse games for the week. Make picks in your league.</p>
         </div>
 
@@ -115,44 +155,68 @@ export default function Picks() {
         {leagues.map((league) => {
           const status = activeStatus?.[league.id];
           const hasOpenParlay = !!(status && status.submittedCount > 0 && !status.isLocked);
+          // Rule 1: open but not (fully) approved yet -> brewing, pulse yellow.
+          // Rule 2: open and approved -> green, settled in.
+          // Rule 3: no parlay this week -> leave base styling untouched.
+          const isBrewing = hasOpenParlay && !!status?.hasPendingParlay;
+          const isApproved = hasOpenParlay && !isBrewing && !!status?.hasApprovedParlay;
           const pct = hasOpenParlay
             ? Math.round((status!.submittedCount / Math.max(league.memberCount, 1)) * 100)
             : 0;
+          const buildingVerb = getBuildingVerb(league.id);
 
           return (
             <Link key={league.id} href={`/leagues/${league.id}`}>
               <Card
                 className={cn(
                   "relative overflow-hidden border cursor-pointer transition-all duration-300",
-                  hasOpenParlay
-                    ? "border-red-500/50 bg-card/50 hover:bg-red-950/20"
-                    : "border-white/5 bg-card/50 hover:bg-white/5"
+                  isBrewing && "border-yellow-500/50 bg-card/50 hover:bg-yellow-950/20 animate-pulse",
+                  isApproved && "border-green-500/50 bg-card/50 hover:bg-green-950/20",
+                  !isBrewing && !isApproved && "border-white/5 bg-card/50 hover:bg-white/5"
                 )}
-                style={hasOpenParlay ? {
-                  boxShadow: "0 0 18px 3px rgba(239,68,68,0.22), 0 0 5px 1px rgba(239,68,68,0.16)"
-                } : undefined}
+                style={
+                  isBrewing
+                    ? { boxShadow: "0 0 18px 3px rgba(234,179,8,0.22), 0 0 5px 1px rgba(234,179,8,0.16)" }
+                    : isApproved
+                    ? { boxShadow: "0 0 18px 3px rgba(34,197,94,0.22), 0 0 5px 1px rgba(34,197,94,0.16)" }
+                    : undefined
+                }
                 data-testid={`card-league-quick-${league.id}`}
               >
-                {/* Red progress bar background */}
+                {/* Progress bar background */}
                 {hasOpenParlay && (
                   <div
                     aria-hidden="true"
                     className="absolute inset-y-0 left-0 pointer-events-none transition-all duration-700 ease-out"
                     style={{
                       width: `${pct}%`,
-                      background: "linear-gradient(to right, rgba(239,68,68,0.28), rgba(239,68,68,0.07))",
-                      boxShadow: "inset -2px 0 8px rgba(239,68,68,0.14)",
+                      background: isBrewing
+                        ? "linear-gradient(to right, rgba(234,179,8,0.28), rgba(234,179,8,0.07))"
+                        : "linear-gradient(to right, rgba(34,197,94,0.28), rgba(34,197,94,0.07))",
+                      boxShadow: isBrewing
+                        ? "inset -2px 0 8px rgba(234,179,8,0.14)"
+                        : "inset -2px 0 8px rgba(34,197,94,0.14)",
                     }}
                   />
                 )}
                 <CardContent className="p-4 flex items-center justify-between relative z-10">
                   <div>
                     <p className="font-bold">{league.name}</p>
-                    {hasOpenParlay ? (
+                    {isBrewing ? (
                       <>
-                        <p className="text-xs text-red-400 font-medium flex items-center gap-1.5 mt-0.5">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shrink-0" />
-                          Parlay Loading...
+                        <p className="text-xs text-yellow-400 font-medium flex items-center gap-1.5 mt-0.5">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse shrink-0" />
+                          {buildingVerb}...
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {status!.submittedCount}/{league.memberCount} members in
+                        </p>
+                      </>
+                    ) : isApproved ? (
+                      <>
+                        <p className="text-xs text-green-400 font-medium flex items-center gap-1.5 mt-0.5">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                          Parlay Approved
                         </p>
                         <p className="text-xs text-muted-foreground mt-0.5">
                           {status!.submittedCount}/{league.memberCount} members in
@@ -165,9 +229,13 @@ export default function Picks() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    className={hasOpenParlay ? "text-red-400 hover:text-red-300 shrink-0" : "shrink-0"}
+                    className={cn(
+                      "shrink-0",
+                      isBrewing && "text-yellow-400 hover:text-yellow-300",
+                      isApproved && "text-green-400 hover:text-green-300"
+                    )}
                   >
-                    {hasOpenParlay ? "Join Parlay" : "Make Picks"}
+                    {isBrewing ? "Join Parlay" : isApproved ? "View Parlay" : "Make Picks"}
                     <ArrowRight className="w-3 h-3 ml-1" />
                   </Button>
                 </CardContent>
@@ -248,6 +316,45 @@ export default function Picks() {
           </>
         )}
       </div>
+
+      {/* Week Synopsis */}
+      {!!gameNotes.length && (
+        <div>
+          <h2 className="text-xl font-bold mb-1 flex items-center gap-2">
+            <Newspaper className="w-5 h-5 text-primary/70" />
+            Week Synopsis
+          </h2>
+          <p className="text-sm text-muted-foreground mb-4">
+            A quick rundown of what's on tap, plus a few names still in the mix worth watching for prop bets.
+          </p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {gameNotes.map(({ game, watchList }) => (
+              <Card key={game.id} className="bg-card/30 border-white/5" data-testid={`card-week-synopsis-${game.id}`}>
+                <CardContent className="p-4 space-y-2">
+                  <p className="font-bold text-sm">
+                    {game.awayTeam} @ {game.homeTeam}
+                  </p>
+                  {watchList.length > 0 ? (
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Worth watching (not ruled out):</p>
+                      <ul className="space-y-0.5">
+                        {watchList.map(inj => (
+                          <li key={inj.id} className="text-xs flex items-center gap-1.5">
+                            <span className="font-medium">{inj.title.split(" — ")[0]}</span>
+                            <span className="text-muted-foreground">{inj.tag}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No notable injury concerns reported.</p>
+                  )}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

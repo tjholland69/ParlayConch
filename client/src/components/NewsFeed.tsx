@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ExternalLink, Newspaper, ActivitySquare, Trophy } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -14,7 +16,16 @@ interface NewsItem {
   imageUrl?: string;
   publishedAt: string;
   tag?: string;
+  team?: string;
+  position?: string;
+  conferences?: string[];
+  divisions?: string[];
 }
+
+const NFL_DIVISIONS = [
+  "AFC East", "AFC North", "AFC South", "AFC West",
+  "NFC East", "NFC North", "NFC South", "NFC West",
+];
 
 const INJURY_TAG_COLORS: Record<string, string> = {
   Out: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
@@ -46,35 +57,45 @@ function LoadingSkeletons() {
   );
 }
 
-function NewsList({
-  feed,
-  tagColors,
-}: {
-  feed: "headlines" | "injuries" | "scores";
-  tagColors: Record<string, string>;
-}) {
-  const { data: items, isLoading, isError } = useQuery<NewsItem[]>({
-    queryKey: ["/api/news", feed],
+function useNewsFeed(feed: "headlines" | "injuries" | "scores", limit = 16) {
+  return useQuery<NewsItem[]>({
+    queryKey: ["/api/news", feed, limit],
     queryFn: async () => {
-      const res = await fetch(`/api/news?feed=${feed}&limit=16`);
+      const res = await fetch(`/api/news?feed=${feed}&limit=${limit}`);
       if (!res.ok) throw new Error("Failed to load");
       return res.json();
     },
     staleTime: 5 * 60 * 1000,
   });
+}
 
+function NewsItemsView({
+  items,
+  isLoading,
+  isError,
+  tagColors,
+  emptyMessage = "No data available right now.",
+  limit,
+}: {
+  items: NewsItem[] | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  tagColors: Record<string, string>;
+  emptyMessage?: string;
+  limit?: number;
+}) {
   if (isLoading) return <LoadingSkeletons />;
   if (isError || !items?.length) {
     return (
       <p className="text-sm text-muted-foreground text-center py-6">
-        No data available right now.
+        {emptyMessage}
       </p>
     );
   }
 
   return (
     <div className="space-y-1">
-      {items.slice(0, 14).map((item) => {
+      {(limit ? items.slice(0, limit) : items).map((item) => {
         const tagClass =
           item.tag ? (tagColors[item.tag] ?? "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300") : "";
         const isLinked = !!item.url;
@@ -132,6 +153,127 @@ function NewsList({
   );
 }
 
+function FilterBar({ children }: { children: React.ReactNode }) {
+  return <div className="flex flex-wrap items-center gap-2 mb-3">{children}</div>;
+}
+
+const INJURY_PAGE_SIZE_OPTIONS = [
+  { label: "10", value: 10 },
+  { label: "25", value: 25 },
+  { label: "50", value: 50 },
+  { label: "All", value: 60 },
+];
+
+function InjuriesPanel() {
+  const [pageSize, setPageSize] = useState(10);
+  const { data: items, isLoading, isError } = useNewsFeed("injuries", pageSize);
+  const [position, setPosition] = useState("all");
+  const [team, setTeam] = useState("all");
+
+  const positions = [...new Set((items ?? []).map(i => i.position).filter((p): p is string => !!p))].sort();
+  const teams = [...new Set((items ?? []).map(i => i.team).filter((t): t is string => !!t))].sort();
+
+  const filtered = (items ?? []).filter(i =>
+    (position === "all" || i.position === position) &&
+    (team === "all" || i.team === team)
+  );
+
+  return (
+    <div>
+      <FilterBar>
+        <Select value={position} onValueChange={setPosition}>
+          <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-injury-position">
+            <SelectValue placeholder="Position" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Positions</SelectItem>
+            {positions.map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={team} onValueChange={setTeam}>
+          <SelectTrigger className="h-8 w-40 text-xs" data-testid="select-injury-team">
+            <SelectValue placeholder="Team" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Teams</SelectItem>
+            {teams.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </FilterBar>
+      <NewsItemsView
+        items={filtered}
+        isLoading={isLoading}
+        isError={isError}
+        tagColors={INJURY_TAG_COLORS}
+        emptyMessage={items?.length ? "No injuries match those filters." : "No data available right now."}
+      />
+      <div className="flex items-center justify-end gap-2 mt-3">
+        <span className="text-xs text-muted-foreground">Show</span>
+        <Select value={String(pageSize)} onValueChange={(v) => setPageSize(Number(v))}>
+          <SelectTrigger className="h-8 w-20 text-xs" data-testid="select-injury-page-size">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {INJURY_PAGE_SIZE_OPTIONS.map(o => (
+              <SelectItem key={o.value} value={String(o.value)}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  );
+}
+
+function ScoresPanel() {
+  const { data: items, isLoading, isError } = useNewsFeed("scores");
+  const [conference, setConference] = useState("all");
+  const [division, setDivision] = useState("all");
+
+  const filtered = (items ?? []).filter(i =>
+    (conference === "all" || (i.conferences ?? []).includes(conference)) &&
+    (division === "all" || (i.divisions ?? []).includes(division))
+  );
+
+  return (
+    <div>
+      <FilterBar>
+        <Select value={conference} onValueChange={setConference}>
+          <SelectTrigger className="h-8 w-32 text-xs" data-testid="select-score-conference">
+            <SelectValue placeholder="Conference" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Conferences</SelectItem>
+            <SelectItem value="AFC">AFC</SelectItem>
+            <SelectItem value="NFC">NFC</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={division} onValueChange={setDivision}>
+          <SelectTrigger className="h-8 w-36 text-xs" data-testid="select-score-division">
+            <SelectValue placeholder="Division" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Divisions</SelectItem>
+            {NFL_DIVISIONS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </FilterBar>
+      <NewsItemsView
+        items={filtered}
+        isLoading={isLoading}
+        isError={isError}
+        tagColors={SCORE_TAG_COLORS}
+        emptyMessage={items?.length ? "No games match those filters." : "No data available right now."}
+        limit={14}
+      />
+    </div>
+  );
+}
+
+function HeadlinesPanel() {
+  const { data: items, isLoading, isError } = useNewsFeed("headlines");
+  return <NewsItemsView items={items} isLoading={isLoading} isError={isError} tagColors={{}} limit={14} />;
+}
+
 export function NewsFeed() {
   return (
     <Card>
@@ -142,12 +284,8 @@ export function NewsFeed() {
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
-        <Tabs defaultValue="headlines">
+        <Tabs defaultValue="injuries">
           <TabsList className="w-full mb-4">
-            <TabsTrigger value="headlines" className="flex-1 gap-1.5 text-xs">
-              <Newspaper className="w-3.5 h-3.5" />
-              Headlines
-            </TabsTrigger>
             <TabsTrigger value="injuries" className="flex-1 gap-1.5 text-xs">
               <ActivitySquare className="w-3.5 h-3.5" />
               Injuries
@@ -156,18 +294,22 @@ export function NewsFeed() {
               <Trophy className="w-3.5 h-3.5" />
               Scores
             </TabsTrigger>
+            <TabsTrigger value="headlines" className="flex-1 gap-1.5 text-xs">
+              <Newspaper className="w-3.5 h-3.5" />
+              Headlines
+            </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="headlines">
-            <NewsList feed="headlines" tagColors={{}} />
-          </TabsContent>
-
           <TabsContent value="injuries">
-            <NewsList feed="injuries" tagColors={INJURY_TAG_COLORS} />
+            <InjuriesPanel />
           </TabsContent>
 
           <TabsContent value="scores">
-            <NewsList feed="scores" tagColors={SCORE_TAG_COLORS} />
+            <ScoresPanel />
+          </TabsContent>
+
+          <TabsContent value="headlines">
+            <HeadlinesPanel />
           </TabsContent>
         </Tabs>
       </CardContent>

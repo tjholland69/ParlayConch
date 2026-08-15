@@ -6,7 +6,7 @@ const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const BASE_URL = "https://api.the-odds-api.com/v4";
 const SPORT = "americanfootball_nfl";
 
-interface OddsGame {
+export interface OddsGame {
   id: string;
   sport_key: string;
   commence_time: string;
@@ -67,8 +67,98 @@ const teamNameMap: Record<string, string> = {
   "Washington Commanders": "Commanders",
 };
 
-function shortenTeamName(fullName: string): string {
+export function shortenTeamName(fullName: string): string {
   return teamNameMap[fullName] || fullName;
+}
+
+export interface ParsedGameLines {
+  spread: string | null;
+  spreadOdds: string | null;
+  overUnder: string | null;
+  overOdds: string | null;
+  underOdds: string | null;
+  moneylineHome: string | null;
+  moneylineAway: string | null;
+  bookmaker: string | null;
+}
+
+export function parseGameLines(oddsGame: OddsGame): ParsedGameLines {
+  const lines: ParsedGameLines = {
+    spread: null,
+    spreadOdds: null,
+    overUnder: null,
+    overOdds: null,
+    underOdds: null,
+    moneylineHome: null,
+    moneylineAway: null,
+    bookmaker: null,
+  };
+
+  const bookmaker = oddsGame.bookmakers.find(b =>
+    b.key === "draftkings" || b.key === "fanduel" || b.key === "betmgm"
+  ) || oddsGame.bookmakers[0];
+
+  if (!bookmaker) return lines;
+
+  lines.bookmaker = bookmaker.title || bookmaker.key;
+
+  for (const market of bookmaker.markets) {
+    if (market.key === "spreads") {
+      const homeSpread = market.outcomes.find(o => o.name === oddsGame.home_team);
+      if (homeSpread?.point !== undefined) {
+        lines.spread = homeSpread.point > 0 ? `+${homeSpread.point}` : `${homeSpread.point}`;
+        lines.spreadOdds = homeSpread.price > 0 ? `+${homeSpread.price}` : `${homeSpread.price}`;
+      }
+    }
+    if (market.key === "totals") {
+      const over = market.outcomes.find(o => o.name === "Over");
+      const under = market.outcomes.find(o => o.name === "Under");
+      if (over?.point) {
+        lines.overUnder = `${over.point}`;
+        lines.overOdds = over.price > 0 ? `+${over.price}` : `${over.price}`;
+      }
+      if (under) {
+        lines.underOdds = under.price > 0 ? `+${under.price}` : `${under.price}`;
+      }
+    }
+    if (market.key === "h2h") {
+      const home = market.outcomes.find(o => o.name === oddsGame.home_team);
+      const away = market.outcomes.find(o => o.name === oddsGame.away_team);
+      if (home) {
+        lines.moneylineHome = home.price > 0 ? `+${home.price}` : `${home.price}`;
+      }
+      if (away) {
+        lines.moneylineAway = away.price > 0 ? `+${away.price}` : `${away.price}`;
+      }
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Historical (point-in-time) equivalent of fetchUpcomingGames. Costs 10x the
+ * credits of a live /odds call, so callers should cache the result — see
+ * server/services/historicalOddsCache.ts, which caches per (season, week,
+ * bucket) rather than per game since one call already returns the whole slate.
+ */
+export async function fetchHistoricalGames(asOf: Date): Promise<OddsGame[]> {
+  if (!ODDS_API_KEY) {
+    throw new Error("ODDS_API_KEY not configured");
+  }
+
+  const url = `${BASE_URL}/historical/sports/${SPORT}/odds` +
+    `?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,h2h,totals&oddsFormat=american` +
+    `&date=${asOf.toISOString()}`;
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Historical odds API error: ${response.status} - ${text}`);
+  }
+
+  const body = await response.json();
+  return body.data as OddsGame[];
 }
 
 export async function fetchUpcomingGames(): Promise<OddsGame[]> {
@@ -103,57 +193,13 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
     const homeTeam = shortenTeamName(oddsGame.home_team);
     const awayTeam = shortenTeamName(oddsGame.away_team);
     const gameTime = new Date(oddsGame.commence_time);
-
-    let spread: string | null = null;
-    let spreadOdds: string | null = null;
-    let overUnder: string | null = null;
-    let overOdds: string | null = null;
-    let underOdds: string | null = null;
-    let moneylineHome: string | null = null;
-    let moneylineAway: string | null = null;
-
-    const bookmaker = oddsGame.bookmakers.find(b => 
-      b.key === "draftkings" || b.key === "fanduel" || b.key === "betmgm"
-    ) || oddsGame.bookmakers[0];
-
-    if (bookmaker) {
-      for (const market of bookmaker.markets) {
-        if (market.key === "spreads") {
-          const homeSpread = market.outcomes.find(o => o.name === oddsGame.home_team);
-          if (homeSpread?.point !== undefined) {
-            spread = homeSpread.point > 0 ? `+${homeSpread.point}` : `${homeSpread.point}`;
-            spreadOdds = homeSpread.price > 0 ? `+${homeSpread.price}` : `${homeSpread.price}`;
-          }
-        }
-        if (market.key === "totals") {
-          const over = market.outcomes.find(o => o.name === "Over");
-          const under = market.outcomes.find(o => o.name === "Under");
-          if (over?.point) {
-            overUnder = `${over.point}`;
-            overOdds = over.price > 0 ? `+${over.price}` : `${over.price}`;
-          }
-          if (under) {
-            underOdds = under.price > 0 ? `+${under.price}` : `${under.price}`;
-          }
-        }
-        if (market.key === "h2h") {
-          const home = market.outcomes.find(o => o.name === oddsGame.home_team);
-          const away = market.outcomes.find(o => o.name === oddsGame.away_team);
-          if (home) {
-            moneylineHome = home.price > 0 ? `+${home.price}` : `${home.price}`;
-          }
-          if (away) {
-            moneylineAway = away.price > 0 ? `+${away.price}` : `${away.price}`;
-          }
-        }
-      }
-    }
+    const lines = parseGameLines(oddsGame);
 
     const existing = existingByTeams.get(`${homeTeam}|${awayTeam}`);
 
     if (existing) {
       await db.update(games)
-        .set({ spread, spreadOdds, overUnder, overOdds, underOdds, moneylineHome, moneylineAway, gameTime })
+        .set({ ...lines, gameTime })
         .where(eq(games.id, existing.id));
       updated++;
     } else {
@@ -161,13 +207,7 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
         weekId,
         homeTeam,
         awayTeam,
-        spread,
-        spreadOdds,
-        overUnder,
-        overOdds,
-        underOdds,
-        moneylineHome,
-        moneylineAway,
+        ...lines,
         gameTime,
         isFinished: false,
       });

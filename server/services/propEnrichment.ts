@@ -14,6 +14,7 @@ import { db } from "../db";
 import { parlayLegs, parlays, weeks } from "@shared/schema";
 import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import { storage } from "../storage";
+import { buildResultDetail } from "@shared/legJustification";
 
 const BASE_URL = "https://api.the-odds-api.com/v4";
 const SPORT    = "americanfootball_nfl";
@@ -24,11 +25,14 @@ type StatKey =
   | "rushingYards" | "rushingTds" | "carries"
   | "receivingYards" | "receivingTds" | "receptions"
   | "passingYards" | "passingTds" | "attempts" | "completions" | "interceptions"
+  | "defSacks"
   | "fantasyPoints";
 
 /**
  * For numeric over/under props: which stat column to read.
  * TD-scorer props (anytime_td etc.) use a separate yes/no path.
+ * "tackles" isn't here — it's solo + assist combined, resolved separately
+ * below rather than as a single-column lookup.
  */
 const PROP_TYPE_TO_STAT: Partial<Record<string, StatKey>> = {
   rush_yards:       "rushingYards",
@@ -40,6 +44,7 @@ const PROP_TYPE_TO_STAT: Partial<Record<string, StatKey>> = {
   pass_attempts:    "attempts",
   pass_completions: "completions",
   interceptions:    "interceptions",
+  sacks:            "defSacks",
   kicking_pts:      "fantasyPoints",   // best available proxy
 };
 
@@ -120,6 +125,40 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
         result.details.push(`Skipped fg_made for "${leg.playerName}" — no FG column in stats`);
         continue;
 
+      // ── All-purpose yards (rushing + receiving combined) ─────────────────
+      } else if (propType === "all_purpose_yards") {
+        if (isNaN(lineRaw)) {
+          result.skipped++;
+          result.details.push(`No numeric line for "${leg.playerName}" ${propType} — skipped`);
+          continue;
+        }
+        if (stat.rushingYards == null && stat.receivingYards == null) {
+          result.noStats++;
+          result.details.push(`Neither rushing nor receiving yards tracked for "${leg.playerName}" week ${weekRow.weekNumber}`);
+          continue;
+        }
+        const actual = (stat.rushingYards ?? 0) + (stat.receivingYards ?? 0);
+        if (actual > lineRaw)        legResult = pick === "over"  ? "win" : "loss";
+        else if (actual < lineRaw)   legResult = pick === "under" ? "win" : "loss";
+        else                         legResult = "push";
+
+      // ── Tackles (solo + assist combined — the standard sportsbook line) ──
+      } else if (propType === "tackles") {
+        if (isNaN(lineRaw)) {
+          result.skipped++;
+          result.details.push(`No numeric line for "${leg.playerName}" ${propType} — skipped`);
+          continue;
+        }
+        if (stat.defTacklesSolo == null && stat.defTacklesWithAssist == null) {
+          result.noStats++;
+          result.details.push(`No defensive tackle stats tracked for "${leg.playerName}" week ${weekRow.weekNumber}`);
+          continue;
+        }
+        const actual = (stat.defTacklesSolo ?? 0) + (stat.defTacklesWithAssist ?? 0);
+        if (actual > lineRaw)        legResult = pick === "over"  ? "win" : "loss";
+        else if (actual < lineRaw)   legResult = pick === "under" ? "win" : "loss";
+        else                         legResult = "push";
+
       // ── Numeric over/under props ──────────────────────────────────────────
       } else {
         const statKey = PROP_TYPE_TO_STAT[propType];
@@ -148,7 +187,8 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
       }
 
       if (legResult) {
-        await storage.enrichParlayLeg(leg.id, { result: legResult, oddsEnriched: true });
+        const resultDetail = buildResultDetail({ leg, stat });
+        await storage.enrichParlayLeg(leg.id, { result: legResult, oddsEnriched: true, resultDetail });
         result.resolved++;
         result.details.push(
           `Resolved "${leg.playerName}" ${propType} ${pick} ${leg.line ?? ""} → ${legResult}`
@@ -190,6 +230,7 @@ const PROP_TYPE_TO_ODDS_MARKET: Partial<Record<string, string>> = {
   kicking_pts:      "player_kicking_points",
   fg_made:          "player_field_goals",
   sacks:            "player_sacks",
+  all_purpose_yards: "player_rush_reception_yds",
 };
 
 export interface PropLineResult {

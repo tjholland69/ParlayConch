@@ -14,11 +14,18 @@ if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL, ensure the database is provisioned");
 }
 
+const sslEnv = process.env.PG_SSL;
+const ssl =
+  sslEnv === "true" || sslEnv === "1"
+    ? { rejectUnauthorized: process.env.PG_SSL_REJECT_UNAUTHORIZED !== "false" }
+    : undefined;
+
 export default defineConfig({
   out: "./migrations",
   schema: "./shared/schema.ts",
   dialect: "postgresql",
   dbCredentials: {
-    url: process.env.DATABASE_URL,
-  },
+    url: process.env.DATABASE_URL!,
+    ssl,
+  }
 });

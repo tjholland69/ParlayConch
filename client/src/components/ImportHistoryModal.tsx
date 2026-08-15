@@ -10,6 +10,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useLeagueMembersWithUsers } from "@/hooks/use-bets";
 import { Upload, FileSpreadsheet, Download, AlertCircle, Check, Sparkles, ClipboardPaste, History, Trash2, AlertTriangle } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { getDisplayName } from "@/lib/displayName";
 
 interface Props {
   open: boolean;
@@ -113,7 +114,7 @@ export function ImportHistoryModal({ open, onOpenChange, leagueId, onNavigate }:
   const memberNameByEmail = new Map(
     (members ?? []).map(m => [
       m.user?.email?.toLowerCase() ?? "",
-      m.user?.firstName ?? m.user?.email ?? "Unknown",
+      getDisplayName(m.user, "Unknown"),
     ])
   );
 

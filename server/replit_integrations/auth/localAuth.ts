@@ -1,12 +1,17 @@
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import { sign as signCookie } from "cookie-signature";
 import rateLimit from "express-rate-limit";
 import { db } from "../../db";
-import { users, userPasswords } from "@shared/models/auth";
+import { users, userPasswords, passwordResetTokens } from "@shared/models/auth";
 import { eq } from "drizzle-orm";
-import type { Express, RequestHandler } from "express";
+import type { Express, Request, RequestHandler } from "express";
 import { z } from "zod";
+import { auditLog } from "../../services/audit";
+import { logger } from "../../logger";
+import { SESSION_SECRET } from "./session";
 
 const SALT_ROUNDS = 12;
 
@@ -18,6 +23,17 @@ export async function hashPassword(password: string): Promise<string> {
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   return bcrypt.compare(password, hash);
+}
+
+// Signs the current session id exactly the way express-session signs the
+// `connect.sid` cookie, so mobile clients can store it and replay it as a
+// `Cookie: connect.sid=<token>` header (see mobile/src/lib/api.ts).
+export function signMobileSessionToken(req: Request): string {
+  return "s:" + signCookie(req.sessionID, SESSION_SECRET);
+}
+
+export function hashResetToken(rawToken: string): string {
+  return crypto.createHash("sha256").update(rawToken).digest("hex");
 }
 
 // ── Validation schemas ─────────────────────────────────────────────────────
@@ -35,6 +51,14 @@ export const registerSchema = z.object({
 export const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
   password: z.string().min(1, "Password is required"),
+});
+
+export const setPasswordSchema = z.object({
+  token: z.string().min(1, "Token is required"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .max(128, "Password too long"),
 });
 
 // ── Rate limiter for login / register endpoints ────────────────────────────
@@ -96,9 +120,9 @@ export function setupLocalStrategy() {
   );
 }
 
-// ── isAuthenticated that accepts both Replit OIDC and local sessions ───────
+// ── isAuthenticated ─────────────────────────────────────────────────────────
 
-export const isAuthenticatedLocal: RequestHandler = (req, res, next) => {
+export const isAuthenticated: RequestHandler = (req, res, next) => {
   const user = req.user as any;
   if (!req.isAuthenticated() || !user?.claims?.sub) {
     return res.status(401).json({ message: "Unauthorized" });
@@ -112,7 +136,7 @@ export function registerLocalAuthRoutes(app: Express) {
   setupLocalStrategy();
 
   // POST /api/auth/register
-  app.post("/api/auth/register", authRateLimiter, async (req, res) => {
+  app.post("/api/auth/register", authRateLimiter, auditLog("auth.register", { actorFromBodyField: "email" }), async (req, res) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       return res
@@ -153,7 +177,10 @@ export function registerLocalAuthRoutes(app: Express) {
         };
         req.login(sessionUser, (err) => {
           if (err) return res.status(500).json({ message: "Login failed after register" });
-          return res.json({ message: "Password added to existing account" });
+          return res.json({
+            message: "Password added to existing account",
+            sessionToken: signMobileSessionToken(req),
+          });
         });
         return;
       }
@@ -180,16 +207,19 @@ export function registerLocalAuthRoutes(app: Express) {
       };
       req.login(sessionUser, (err) => {
         if (err) return res.status(500).json({ message: "Login failed after register" });
-        return res.status(201).json({ message: "Account created" });
+        return res.status(201).json({
+          message: "Account created",
+          sessionToken: signMobileSessionToken(req),
+        });
       });
     } catch (err: any) {
-      console.error("[local auth] register error:", err);
+      logger.error({ err }, "[local auth] register error");
       return res.status(500).json({ message: "Registration failed" });
     }
   });
 
   // POST /api/auth/login-local
-  app.post("/api/auth/login-local", authRateLimiter, (req, res, next) => {
+  app.post("/api/auth/login-local", authRateLimiter, auditLog("auth.login", { actorFromBodyField: "email" }), (req, res, next) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       return res
@@ -208,9 +238,67 @@ export function registerLocalAuthRoutes(app: Express) {
         }
         req.login(user, (loginErr) => {
           if (loginErr) return next(loginErr);
-          return res.json({ message: "Logged in" });
+          return res.json({ message: "Logged in", sessionToken: signMobileSessionToken(req) });
         });
       }
     )(req, res, next);
+  });
+
+  // POST /api/auth/set-password
+  // Consumes a one-time token (issued by the Replit-auth migration backfill,
+  // see scripts/backfill-local-auth.ts) to give an existing Replit-only
+  // account a local password, then logs the user in.
+  app.post("/api/auth/set-password", authRateLimiter, auditLog("auth.set_password"), async (req, res) => {
+    const parsed = setPasswordSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res
+        .status(400)
+        .json({ message: parsed.error.errors[0]?.message ?? "Invalid input" });
+    }
+
+    const { token, password } = parsed.data;
+    const tokenHash = hashResetToken(token);
+
+    try {
+      const [tokenRow] = await db
+        .select()
+        .from(passwordResetTokens)
+        .where(eq(passwordResetTokens.tokenHash, tokenHash));
+
+      if (!tokenRow || tokenRow.usedAt || tokenRow.expiresAt < new Date()) {
+        return res.status(400).json({ message: "This link is invalid or has expired." });
+      }
+
+      const [user] = await db.select().from(users).where(eq(users.id, tokenRow.userId));
+      if (!user) {
+        return res.status(400).json({ message: "This link is invalid or has expired." });
+      }
+
+      const hash = await hashPassword(password);
+      await db
+        .insert(userPasswords)
+        .values({ userId: user.id, passwordHash: hash })
+        .onConflictDoUpdate({
+          target: userPasswords.userId,
+          set: { passwordHash: hash, updatedAt: new Date() },
+        });
+
+      await db
+        .update(passwordResetTokens)
+        .set({ usedAt: new Date() })
+        .where(eq(passwordResetTokens.id, tokenRow.id));
+
+      const sessionUser = {
+        claims: { sub: user.id, email: user.email },
+        localAuth: true,
+      };
+      req.login(sessionUser, (err) => {
+        if (err) return res.status(500).json({ message: "Login failed after setting password" });
+        return res.json({ message: "Password set", sessionToken: signMobileSessionToken(req) });
+      });
+    } catch (err: any) {
+      logger.error({ err }, "[local auth] set-password error");
+      return res.status(500).json({ message: "Failed to set password" });
+    }
   });
 }

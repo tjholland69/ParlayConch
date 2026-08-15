@@ -12,6 +12,10 @@ import {
   useSetLeagueDemoWeekData,
   useSendLeagueAnnouncement,
   useUpdateLeagueNotificationSettings,
+  useRemoveLeagueMember,
+  useOrphanedLegs,
+  useResolveOrphanedLegs,
+  OrphanConflictError,
 } from "@/hooks/use-bets";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -20,8 +24,12 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { getDisplayName } from "@/lib/displayName";
+import { PageLoader } from "@/components/PageLoader";
 import {
   Settings,
   Users,
@@ -36,10 +44,14 @@ import {
   Megaphone,
   Clock,
   Sparkles,
+  UserX,
+  Trash2,
+  AlertTriangle,
+  Trophy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
-import type { LieutenantPermissions, LeagueMemberWithUser, LeagueNotificationSettings } from "@shared/schema";
+import type { LieutenantPermissions, LeagueMemberWithUser, LeagueNotificationSettings, ParlayLeg } from "@shared/schema";
 import { DEFAULT_LIEUTENANT_PERMISSIONS, DEFAULT_LEAGUE_NOTIFICATION_SETTINGS } from "@shared/schema";
 
 const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: string; description: string; group: string }[] = [
@@ -55,37 +67,46 @@ const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: string; desc
   { key: "markLeagueDemo", label: "Mark League as Demo", description: "Can toggle the league's demo/QA flag", group: "Data & Admin" },
 ];
 
+function formatMemberDateRange(startDate: string | Date | null, endDate: string | Date | null): string {
+  const fmt = (d: string | Date) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  if (!startDate) return "";
+  return endDate ? `${fmt(startDate)} – ${fmt(endDate)}` : `Joined ${fmt(startDate)}`;
+}
+
 function MemberRow({
   member,
   isAdmin,
   lieutenantCount,
   onRoleChange,
   isPending,
+  onRemove,
 }: {
   member: LeagueMemberWithUser;
   isAdmin: boolean;
   lieutenantCount: number;
   onRoleChange: (userId: string, role: string) => void;
   isPending: boolean;
+  onRemove: (member: LeagueMemberWithUser) => void;
 }) {
   const isLt = member.role === "lieutenant";
   const isMemberAdmin = member.role === "admin";
+  const isInactive = member.isActive === false;
   const canPromote = !isMemberAdmin && !isLt && lieutenantCount < 2;
   const canDemote = isLt;
 
   return (
-    <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/8 transition-colors">
+    <div className={cn("flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/8 transition-colors", isInactive && "opacity-60")}>
       <div className="flex items-center gap-3">
         <Avatar className="w-9 h-9">
           <AvatarImage src={member.user.profileImageUrl || undefined} />
           <AvatarFallback className="bg-gradient-to-tr from-primary to-accent text-primary-foreground text-sm font-bold">
-            {((member.user.settings as any)?.displayName || member.user.firstName || member.user.email || "?")[0]}
+            {getDisplayName(member.user, "?")[0]}
           </AvatarFallback>
         </Avatar>
         <div>
           <div className="flex items-center gap-2">
             <p className="text-sm font-medium">
-              {(member.user.settings as any)?.displayName || member.user.firstName || member.user.email || "Unknown"}
+              {getDisplayName(member.user)}
             </p>
             {isMemberAdmin && (
               <Badge variant="secondary" className="text-xs h-4 px-1">
@@ -104,47 +125,284 @@ function MemberRow({
                 DEMO
               </Badge>
             )}
+            {isInactive ? (
+              <Badge variant="outline" className="text-[10px] px-1 h-4 text-muted-foreground border-white/20">
+                {member.purgedAt ? "Purged" : "Inactive"}
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-[10px] px-1 h-4 text-emerald-400 border-emerald-500/30">
+                Active
+              </Badge>
+            )}
           </div>
           <p className="text-xs text-muted-foreground">{member.user.email}</p>
+          <p className="text-[11px] text-muted-foreground/70">{formatMemberDateRange(member.startDate, member.endDate)}</p>
         </div>
       </div>
-      {isAdmin && !isMemberAdmin && (
-        <Button
-          size="sm"
-          variant="ghost"
-          className={cn(
-            "text-xs",
-            isLt
-              ? "text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
-              : canPromote
-              ? "text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10"
-              : "text-muted-foreground opacity-50 cursor-not-allowed"
-          )}
-          disabled={isPending || (!canPromote && !canDemote)}
-          onClick={() => onRoleChange(member.userId, isLt ? "member" : "lieutenant")}
-          title={
-            isLt
-              ? "Remove Parlay Lieutenant role"
-              : canPromote
-              ? "Promote to Parlay Lieutenant"
-              : "Maximum 2 Parlay Lieutenants reached"
-          }
-          data-testid={`button-role-toggle-${member.userId}`}
-        >
-          {isLt ? (
+      {isAdmin && !isMemberAdmin && !isInactive && (
+        <div className="flex items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            className={cn(
+              "text-xs",
+              isLt
+                ? "text-blue-400 hover:text-blue-300 hover:bg-blue-500/10"
+                : canPromote
+                ? "text-muted-foreground hover:text-blue-400 hover:bg-blue-500/10"
+                : "text-muted-foreground opacity-50 cursor-not-allowed"
+            )}
+            disabled={isPending || (!canPromote && !canDemote)}
+            onClick={() => onRoleChange(member.userId, isLt ? "member" : "lieutenant")}
+            title={
+              isLt
+                ? "Remove Parlay Lieutenant role"
+                : canPromote
+                ? "Promote to Parlay Lieutenant"
+                : "Maximum 2 Parlay Lieutenants reached"
+            }
+            data-testid={`button-role-toggle-${member.userId}`}
+          >
+            {isLt ? (
+              <>
+                <StarOff className="w-3.5 h-3.5 mr-1.5" />
+                Remove Lt.
+              </>
+            ) : (
+              <>
+                <Star className="w-3.5 h-3.5 mr-1.5" />
+                Make Lt.
+              </>
+            )}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-xs text-destructive/80 hover:text-destructive hover:bg-destructive/10"
+            onClick={() => onRemove(member)}
+            title="Remove this member from the league"
+            data-testid={`button-remove-member-${member.userId}`}
+          >
+            <UserX className="w-3.5 h-3.5 mr-1.5" />
+            Remove
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Remove Member Dialog ────────────────────────────────────────────────────
+// Blocks removal until orphaned parlay_legs are resolved (reassign or delete),
+// with a "resolve later" bypass that soft-purges the member and moves their
+// legs to the exceptions blotter.
+
+type LegResolution = { legId: number; action: "reassign" | "delete"; newUserId?: string };
+
+function RemoveMemberDialog({
+  open,
+  onOpenChange,
+  leagueId,
+  member,
+  activeMembers,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  leagueId: number;
+  member: LeagueMemberWithUser | null;
+  activeMembers: LeagueMemberWithUser[];
+}) {
+  const removeMember = useRemoveLeagueMember(leagueId);
+  const resolveOrphans = useResolveOrphanedLegs(leagueId);
+  const [orphanedLegs, setOrphanedLegs] = useState<ParlayLeg[] | null>(null);
+  const [resolutions, setResolutions] = useState<Record<number, LegResolution>>({});
+
+  const reset = () => { setOrphanedLegs(null); setResolutions({}); };
+
+  useEffect(() => { if (!open) reset(); }, [open]);
+
+  if (!member) return null;
+
+  const targetOptions = activeMembers.filter(m => m.userId !== member.userId);
+
+  const attemptRemove = () => {
+    removeMember.mutate(
+      { userId: member.userId },
+      {
+        onSuccess: (data) => {
+          if (data.orphanedLegs.length === 0) onOpenChange(false);
+        },
+        onError: (err) => {
+          if (err instanceof OrphanConflictError) setOrphanedLegs(err.orphanedLegs);
+        },
+      }
+    );
+  };
+
+  const allResolved = orphanedLegs?.every(l => resolutions[l.id]) ?? false;
+
+  const applyResolutions = () => {
+    if (!orphanedLegs) return;
+    resolveOrphans.mutate(Object.values(resolutions), {
+      onSuccess: () => onOpenChange(false),
+    });
+  };
+
+  const bypassToBlotter = () => {
+    removeMember.mutate(
+      { userId: member.userId, bypass: true },
+      { onSuccess: () => onOpenChange(false) }
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!removeMember.isPending && !resolveOrphans.isPending) onOpenChange(v); }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <UserX className="w-5 h-5 text-destructive" />
+            Remove {getDisplayName(member.user)}
+          </DialogTitle>
+          <DialogDescription>
+            {orphanedLegs === null
+              ? "This removes them from the league entirely. If they have picks tied to them, you'll be asked to resolve those first."
+              : `${orphanedLegs.length} parlay leg${orphanedLegs.length !== 1 ? "s" : ""} in this league still belong to this member. Reassign each to another member or delete it before removing them completely.`}
+          </DialogDescription>
+        </DialogHeader>
+
+        {orphanedLegs && (
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {orphanedLegs.map(leg => (
+              <div key={leg.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white/5 text-sm">
+                <span className="text-muted-foreground truncate">
+                  {leg.betType} · {leg.pick}{leg.line ? ` ${leg.line}` : ""}
+                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Select
+                    value={resolutions[leg.id]?.action === "delete" ? "__delete" : (resolutions[leg.id]?.newUserId ?? "")}
+                    onValueChange={(v) => {
+                      setResolutions(prev => ({
+                        ...prev,
+                        [leg.id]: v === "__delete" ? { legId: leg.id, action: "delete" } : { legId: leg.id, action: "reassign", newUserId: v },
+                      }));
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-44 text-xs"><SelectValue placeholder="Resolve…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__delete">
+                        <span className="flex items-center gap-1.5 text-destructive"><Trash2 className="w-3 h-3" /> Delete leg</span>
+                      </SelectItem>
+                      {targetOptions.map(m => (
+                        <SelectItem key={m.userId} value={m.userId}>Reassign to {getDisplayName(m.user, m.userId.slice(0, 8))}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <DialogFooter className="gap-2 sm:flex-col sm:items-stretch">
+          {orphanedLegs === null ? (
             <>
-              <StarOff className="w-3.5 h-3.5 mr-1.5" />
-              Remove Lt.
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={removeMember.isPending}>Cancel</Button>
+              <Button variant="destructive" onClick={attemptRemove} disabled={removeMember.isPending}>
+                {removeMember.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <UserX className="w-4 h-4 mr-2" />}
+                Remove Completely
+              </Button>
             </>
           ) : (
             <>
-              <Star className="w-3.5 h-3.5 mr-1.5" />
-              Make Lt.
+              <div className="flex gap-2 justify-end">
+                <Button variant="outline" onClick={() => onOpenChange(false)} disabled={removeMember.isPending || resolveOrphans.isPending}>Cancel</Button>
+                <Button onClick={applyResolutions} disabled={!allResolved || resolveOrphans.isPending}>
+                  {resolveOrphans.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+                  Resolve & Remove
+                </Button>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-xs text-muted-foreground self-end"
+                onClick={bypassToBlotter}
+                disabled={removeMember.isPending}
+              >
+                Resolve later — move to exceptions blotter
+              </Button>
             </>
           )}
-        </Button>
-      )}
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Exceptions Blotter ──────────────────────────────────────────────────────
+// Persistent, maestro-only surface for orphaned legs left behind by a bypassed
+// purge — deliberately not a one-time dismissible modal, since those get
+// forgotten.
+
+function ExceptionsBlotterCard({ leagueId, activeMembers }: { leagueId: number; activeMembers: LeagueMemberWithUser[] }) {
+  const { data: orphanedLegs } = useOrphanedLegs(leagueId);
+  const resolveOrphans = useResolveOrphanedLegs(leagueId);
+  const [resolutions, setResolutions] = useState<Record<number, LegResolution>>({});
+
+  if (!orphanedLegs || orphanedLegs.length === 0) return null;
+
+  const allResolved = orphanedLegs.every(l => resolutions[l.id]);
+
+  return (
+    <Card className="bg-amber-500/5 border-amber-500/30">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-amber-400">
+          <AlertTriangle className="w-5 h-5" />
+          Exceptions Blotter
+          <Badge className="bg-amber-500/20 text-amber-400 border-amber-500/30">{orphanedLegs.length}</Badge>
+        </CardTitle>
+        <CardDescription>
+          Parlay legs left behind by members who were removed before their picks were resolved. Reassign or delete each one below.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {orphanedLegs.map((leg: any) => (
+          <div key={leg.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white/5 text-sm">
+            <span className="text-muted-foreground truncate">
+              {leg.ownerFirstName || leg.ownerEmail || "Former member"} — {leg.betType} · {leg.pick}{leg.line ? ` ${leg.line}` : ""}
+            </span>
+            <Select
+              value={resolutions[leg.id]?.action === "delete" ? "__delete" : (resolutions[leg.id]?.newUserId ?? "")}
+              onValueChange={(v) => {
+                setResolutions(prev => ({
+                  ...prev,
+                  [leg.id]: v === "__delete" ? { legId: leg.id, action: "delete" } : { legId: leg.id, action: "reassign", newUserId: v },
+                }));
+              }}
+            >
+              <SelectTrigger className="h-8 w-44 text-xs shrink-0"><SelectValue placeholder="Resolve…" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__delete">
+                  <span className="flex items-center gap-1.5 text-destructive"><Trash2 className="w-3 h-3" /> Delete leg</span>
+                </SelectItem>
+                {activeMembers.map(m => (
+                  <SelectItem key={m.userId} value={m.userId}>Reassign to {getDisplayName(m.user, m.userId.slice(0, 8))}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        ))}
+        <div className="flex justify-end pt-2">
+          <Button
+            size="sm"
+            disabled={!allResolved || resolveOrphans.isPending}
+            onClick={() => resolveOrphans.mutate(Object.values(resolutions), { onSuccess: () => setResolutions({}) })}
+          >
+            {resolveOrphans.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Resolve Selected
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -156,7 +414,8 @@ export default function LeagueSettings() {
   const { data: leagues } = useLeagues();
   const league = leagues?.find((l) => l.id === leagueId);
 
-  const { data: members, isLoading: loadingMembers } = useLeagueMembersWithUsers(leagueId);
+  const { data: members, isLoading: loadingMembers } = useLeagueMembersWithUsers(leagueId, { includeInactive: true });
+  const [removeTarget, setRemoveTarget] = useState<LeagueMemberWithUser | null>(null);
 
   const updateSettings = useUpdateLeagueSettings(leagueId);
   const setMemberRole = useSetMemberRole(leagueId);
@@ -172,6 +431,8 @@ export default function LeagueSettings() {
   const [maxLegs, setMaxLegs] = useState(5);
   const [maxParlays, setMaxParlays] = useState(1);
   const [insightsEnabled, setInsightsEnabled] = useState(false);
+  const [loserLabel, setLoserLabel] = useState<string>("parlay_loser");
+  const [heroLabel, setHeroLabel] = useState<string>("parlay_hero");
   const [perms, setPerms] = useState<LieutenantPermissions>(DEFAULT_LIEUTENANT_PERMISSIONS);
   const [notifSettings, setNotifSettings] = useState<LeagueNotificationSettings>(DEFAULT_LEAGUE_NOTIFICATION_SETTINGS);
   const [announceTitle, setAnnounceTitle] = useState("");
@@ -185,6 +446,8 @@ export default function LeagueSettings() {
       setMaxLegs(league.maxLegsPerParlay || 5);
       setMaxParlays(league.maxParlaysPerWeek || 1);
       setInsightsEnabled(league.insightsEnabled ?? false);
+      setLoserLabel(league.loserLabel ?? "parlay_loser");
+      setHeroLabel(league.heroLabel ?? "parlay_hero");
       setPerms(
         (league.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS
       );
@@ -195,11 +458,7 @@ export default function LeagueSettings() {
   }, [league]);
 
   if (!league) {
-    return (
-      <div className="flex items-center justify-center h-[50vh]">
-        <Loader2 className="w-10 h-10 text-primary animate-spin" />
-      </div>
-    );
+    return <PageLoader />;
   }
 
   if (!league.isAdmin) {
@@ -215,19 +474,21 @@ export default function LeagueSettings() {
     );
   }
 
-  const lieutenants = members?.filter((m) => m.role === "lieutenant") || [];
+  const activeMembers = members?.filter((m) => m.isActive !== false) || [];
+  const lieutenants = activeMembers.filter((m) => m.role === "lieutenant");
 
   const roleOrder: Record<string, number> = { admin: 0, lieutenant: 1, member: 2 };
-  const getMemberDisplayName = (m: LeagueMemberWithUser) =>
-    (m.user.settings as any)?.displayName || m.user.firstName || m.user.email || "";
+  const getMemberDisplayName = (m: LeagueMemberWithUser) => getDisplayName(m.user, "");
   const sortedMembers = [...(members || [])].sort((a, b) => {
+    const activeDiff = (a.isActive === false ? 1 : 0) - (b.isActive === false ? 1 : 0);
+    if (activeDiff !== 0) return activeDiff;
     const roleDiff = (roleOrder[a.role ?? "member"] ?? 2) - (roleOrder[b.role ?? "member"] ?? 2);
     if (roleDiff !== 0) return roleDiff;
     return getMemberDisplayName(a).localeCompare(getMemberDisplayName(b));
   });
 
   const handleSaveGeneral = () => {
-    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled });
+    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled, loserLabel, heroLabel });
   };
 
   const handleSavePermissions = () => {
@@ -384,6 +645,35 @@ export default function LeagueSettings() {
               <p className="text-xs text-muted-foreground">
                 Members must include at least {minLegs} game picks per parlay. The default leg count is {maxLegs}, up to {maxParlays} parlay{maxParlays !== 1 ? "s" : ""} per week.
               </p>
+              <div className="space-y-2 pt-2 border-t border-white/5">
+                <Label htmlFor="loser-label">Whoever busts a loss first each week is called…</Label>
+                <Select value={loserLabel} onValueChange={setLoserLabel}>
+                  <SelectTrigger id="loser-label" className="w-56 bg-background border-white/10" data-testid="select-loser-label">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="parlay_loser">Parlay Loser</SelectItem>
+                    <SelectItem value="asshole">Asshole</SelectItem>
+                    <SelectItem value="jerry">Jerry</SelectItem>
+                    <SelectItem value="dud">Dud</SelectItem>
+                    <SelectItem value="doofus">Doofus</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="hero-label">Whoever's bet decides a winning parlay last is called…</Label>
+                <Select value={heroLabel} onValueChange={setHeroLabel}>
+                  <SelectTrigger id="hero-label" className="w-56 bg-background border-white/10" data-testid="select-hero-label">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="parlay_hero">Parlay Hero</SelectItem>
+                    <SelectItem value="mvp">MVP</SelectItem>
+                    <SelectItem value="legend">Legend</SelectItem>
+                    <SelectItem value="big_time">Big Time</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </CardContent>
           </Card>
 
@@ -466,12 +756,23 @@ export default function LeagueSettings() {
                       lieutenantCount={lieutenants.length}
                       onRoleChange={(userId, role) => setMemberRole.mutate({ userId, role })}
                       isPending={setMemberRole.isPending}
+                      onRemove={setRemoveTarget}
                     />
                   ))}
                 </div>
               )}
             </CardContent>
           </Card>
+
+          <ExceptionsBlotterCard leagueId={leagueId} activeMembers={activeMembers} />
+
+          <RemoveMemberDialog
+            open={!!removeTarget}
+            onOpenChange={(v) => { if (!v) setRemoveTarget(null); }}
+            leagueId={leagueId}
+            member={removeTarget}
+            activeMembers={activeMembers}
+          />
 
           <Card className="bg-card/50 border-white/5">
             <CardHeader>
@@ -710,7 +1011,7 @@ export default function LeagueSettings() {
                   Dummy Weekly Data
                 </CardTitle>
                 <CardDescription>
-                  When enabled, picks screens (like Quick Pick) will display a sample dataset from Week 14 of the 2024 season instead of live data
+                  When enabled, picks screens (like Quick Picks) will display a sample dataset from Week 14 of the 2024 season instead of live data
                 </CardDescription>
               </CardHeader>
               <CardContent>

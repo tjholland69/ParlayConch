@@ -38,6 +38,20 @@
   --ring: 221 83% 53%;
 
   --radius: 0.75rem;
+
+  /* ── Categorical chart series (dark steps) ──────────────────
+     Fixed slot order, never cycled — color follows the series
+     identity, not its rank. Validated as a set against the dark
+     card surface: lightness band, chroma floor, adjacent-pair CVD
+     separation, normal-vision separation, and >= 3:1 contrast. */
+  --viz-1: #3987e5; /* blue */
+  --viz-2: #d95926; /* orange */
+  --viz-3: #199e70; /* aqua */
+  --viz-4: #c98500; /* yellow */
+  --viz-5: #d55181; /* magenta */
+  --viz-6: #008300; /* green */
+  --viz-7: #9085e9; /* violet */
+  --viz-8: #e66767; /* red */
 }
 
 /* ── Light theme ─────────────────────────────────────────── */
@@ -67,6 +81,17 @@
   --border: 220 15% 82%;
   --input: 220 15% 82%;
   --ring: 221 83% 48%;
+
+  /* Categorical chart series — the same eight hues re-stepped for the
+     light card surface, not an automatic flip of the dark values. */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  --viz-6: #008300;
+  --viz-7: #4a3aa7;
+  --viz-8: #e34948;
 }
 
 /* ── Light theme: remap white-based overlays to dark overlays ── */
@@ -102,6 +127,13 @@
     font-family: var(--font-display);
     @apply tracking-tight font-bold text-foreground uppercase;
   }
+}
+
+/* AG Grid filter/column-menu popups are mounted at document.body (see
+   ParlayLegsGrid's popupParent) so they aren't clipped by the grid's own
+   scroll container; this keeps them above the app's fixed z-50 sidebar/topbar. */
+.ag-popup, .ag-popup-editor, .ag-menu, .ag-select-list {
+  z-index: 60 !important;
 }
 
 @keyframes slide-progress {

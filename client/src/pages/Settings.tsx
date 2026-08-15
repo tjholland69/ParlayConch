@@ -9,12 +9,192 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin, Moon, Sun, Monitor } from "lucide-react";
+import { User, Bell, Palette, FlaskConical, Shield, Mail, MessageSquare, Smartphone, Crown, Star, MapPin, Moon, Sun, Monitor, RefreshCw, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
-import type { UserNotificationPreferences } from "@shared/schema";
+import { getDisplayName } from "@/lib/displayName";
+import { UserAvatar } from "@/components/UserAvatar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { REGION_TILES } from "@/lib/geo";
+import type { UserNotificationPreferences, UserRegion } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
 
 const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
+
+function NflverseSyncCard() {
+  const { toast } = useToast();
+  const [season, setSeason] = useState(String(new Date().getFullYear()));
+  const [week, setWeek] = useState("");
+  const [mode, setMode] = useState<"scores" | "players" | "all">("scores");
+  const [busy, setBusy] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [jobState, setJobState] = useState<string | null>(null);
+  const [result, setResult] = useState<Record<string, any> | null>(null);
+
+  useEffect(() => {
+    if (!jobId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/admin/sync-nflverse/${jobId}`, { credentials: "include" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setJobState(data.state);
+        if (data.state === "completed") {
+          setBusy(false);
+          setJobId(null);
+          setResult(data.result ?? null);
+          toast({ title: "nflverse sync complete" });
+        } else if (data.state === "failed") {
+          setBusy(false);
+          setJobId(null);
+          toast({
+            title: "nflverse sync failed",
+            description: data.failedReason || "Unknown error",
+            variant: "destructive",
+          });
+        }
+      } catch {
+        /* ignore transient poll errors */
+      }
+    };
+    const id = setInterval(poll, 2000);
+    void poll();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [jobId, toast]);
+
+  async function runSync() {
+    setBusy(true);
+    setJobState(null);
+    setResult(null);
+    try {
+      const body: Record<string, unknown> = {
+        season: Number(season),
+        mode,
+      };
+      if (week.trim()) body.week = Number(week);
+      const res = await fetch("/api/admin/sync-nflverse", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Sync failed");
+      if (res.status === 202 && data.jobId) {
+        setJobId(data.jobId);
+        setJobState("waiting");
+        toast({ title: "Sync queued", description: `Job ${data.jobId}` });
+      } else {
+        setBusy(false);
+        setResult(data);
+        toast({ title: "nflverse sync complete" });
+      }
+    } catch (e: any) {
+      setBusy(false);
+      toast({ title: "Sync failed", description: e.message, variant: "destructive" });
+    }
+  }
+
+  return (
+    <Card className="bg-card/50 border-white/5">
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <RefreshCw className="w-4 h-4" />
+          nflverse Data Sync
+        </CardTitle>
+        <CardDescription>
+          Pull scores and player stats from nflverse. When Redis is configured the work runs in the
+          background and this page polls for completion.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="nflverse-season">Season</Label>
+            <Input
+              id="nflverse-season"
+              value={season}
+              onChange={(e) => setSeason(e.target.value)}
+              inputMode="numeric"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="nflverse-week">Week (optional for scores)</Label>
+            <Input
+              id="nflverse-week"
+              value={week}
+              onChange={(e) => setWeek(e.target.value)}
+              placeholder="e.g. 5"
+              inputMode="numeric"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label>Mode</Label>
+            <Select value={mode} onValueChange={(v) => setMode(v as typeof mode)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="scores">Scores</SelectItem>
+                <SelectItem value="players">Players</SelectItem>
+                <SelectItem value="all">All</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button onClick={runSync} disabled={busy} data-testid="button-nflverse-sync">
+            {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+            {busy ? (jobState ? `Sync ${jobState}…` : "Syncing…") : "Run Sync"}
+          </Button>
+          {jobId && (
+            <span className="text-xs text-muted-foreground">Job {jobId}</span>
+          )}
+        </div>
+        {result && (
+          <div className="rounded-md border border-white/10 bg-black/20 p-3 text-xs space-y-1.5 font-mono">
+            {result.scores && (
+              <div>
+                <span className="text-muted-foreground">scores:</span>{" "}
+                updated={result.scores.updated} noMatch={result.scores.noMatch} alreadyFinal={result.scores.alreadyFinal}
+              </div>
+            )}
+            {result.gameTimes && (
+              <div>
+                <span className="text-muted-foreground">gameTimes:</span>{" "}
+                updated={result.gameTimes.updated} noMatch={result.gameTimes.noMatch} noScheduleTime={result.gameTimes.noScheduleTime}
+              </div>
+            )}
+            {result.finishTimes && (
+              <div>
+                <span className="text-muted-foreground">finishTimes:</span>{" "}
+                updated={result.finishTimes.updated} noMatch={result.finishTimes.noMatch} notYetFinished={result.finishTimes.notYetFinished}
+              </div>
+            )}
+            {result.players && (
+              <div>
+                <span className="text-muted-foreground">players:</span>{" "}
+                {result.players.skipped
+                  ? `skipped (${result.players.reason})`
+                  : `players=${result.players.players} stats=${result.players.stats}`}
+              </div>
+            )}
+            {(result.scores?.noMatch > 0 || result.gameTimes?.noMatch > 0) && (
+              <div className="text-amber-400 pt-1">
+                noMatch &gt; 0 — those games weren't found by season/week/team; they were left unchanged.
+              </div>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 const COLOR_PRESETS = [
   { label: "Blue", value: "221 83% 53%" },
@@ -37,7 +217,9 @@ export default function Settings() {
   const [displayName, setDisplayName] = useState((user?.settings as any)?.displayName || user?.firstName || "");
   const [notifPrefs, setNotifPrefs] = useState<UserNotificationPreferences>(DEFAULT_PREFS);
   const [selectedColor, setSelectedColor] = useState<string>((user?.settings as any)?.primaryColor || "221 83% 53%");
-  const [selectedRegion, setSelectedRegion] = useState<string>((user?.settings as any)?.region || "");
+  const savedRegionInit = (user?.settings as any)?.region as UserRegion | null | undefined;
+  const [selectedContinent, setSelectedContinent] = useState<string>(savedRegionInit?.continent || "");
+  const [selectedPlace, setSelectedPlace] = useState<string>(savedRegionInit?.place || "");
   const [selectedTheme, setSelectedTheme] = useState<"dark" | "light" | "system">((user?.settings as any)?.theme || "dark");
 
   useEffect(() => {
@@ -51,8 +233,11 @@ export default function Settings() {
   }, [user]);
 
   useEffect(() => {
-    const savedRegion = (user?.settings as any)?.region;
-    if (savedRegion) setSelectedRegion(savedRegion);
+    const savedRegion = (user?.settings as any)?.region as UserRegion | null | undefined;
+    if (savedRegion) {
+      setSelectedContinent(savedRegion.continent || "");
+      setSelectedPlace(savedRegion.place || "");
+    }
   }, [user]);
 
   useEffect(() => {
@@ -74,8 +259,15 @@ export default function Settings() {
   };
 
   const handleSaveRegion = () => {
-    updateSettings.mutate({ region: selectedRegion || null });
+    const region: UserRegion | null =
+      selectedContinent && selectedPlace ? { continent: selectedContinent, place: selectedPlace } : null;
+    updateSettings.mutate({ region });
   };
+
+  const savedRegion = (user?.settings as any)?.region as UserRegion | null | undefined;
+  const regionUnchanged =
+    (savedRegion?.continent || "") === selectedContinent && (savedRegion?.place || "") === selectedPlace;
+  const selectedTile = REGION_TILES.find((t) => t.key === selectedContinent);
 
   // Determine the user's highest role across all their leagues
   const adminLeagues = leagues?.filter(l => l.isAdmin) ?? [];
@@ -133,20 +325,16 @@ export default function Settings() {
             <CardContent className="space-y-6">
               {/* Avatar */}
               <div className="flex items-center gap-4">
-                {user?.profileImageUrl ? (
-                  <img
-                    src={user.profileImageUrl}
-                    alt="Profile"
-                    className="w-16 h-16 rounded-full border-2 border-white/10"
-                  />
-                ) : (
-                  <div className="w-16 h-16 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground font-bold text-2xl">
-                    {((user?.settings as any)?.displayName || user?.firstName)?.[0] || <User className="w-8 h-8" />}
-                  </div>
-                )}
+                <UserAvatar
+                  profileImageUrl={user?.profileImageUrl}
+                  name={getDisplayName(user, "")}
+                  size="2xl"
+                  className="border-2 border-white/10"
+                  alt="Profile"
+                />
                 <div>
                   <p className="text-sm text-muted-foreground">
-                    Profile photo is synced from your Replit account
+                    Profile photos can't be changed here yet
                   </p>
                 </div>
               </div>
@@ -191,32 +379,44 @@ export default function Settings() {
                     Used to show you on regional leaderboards on the dashboard
                   </p>
                 </div>
-                <div className="flex gap-2">
-                  {[
-                    { key: "US", flag: "🇺🇸", label: "US" },
-                    { key: "EMEA", flag: "🌍", label: "EMEA" },
-                    { key: "APAC", flag: "🌏", label: "APAC" },
-                  ].map(({ key, flag, label }) => (
+                <div className="flex flex-wrap gap-2">
+                  {REGION_TILES.map(({ key, flag, label }) => (
                     <button
                       key={key}
-                      onClick={() => setSelectedRegion(selectedRegion === key ? "" : key)}
+                      onClick={() => {
+                        const next = selectedContinent === key ? "" : key;
+                        setSelectedContinent(next);
+                        setSelectedPlace("");
+                      }}
                       className={cn(
                         "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all",
-                        selectedRegion === key
+                        selectedContinent === key
                           ? "bg-primary text-primary-foreground border-primary"
                           : "bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10"
                       )}
-                      data-testid={`button-region-${key.toLowerCase()}`}
+                      data-testid={`button-region-${key.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
                     >
                       <span>{flag}</span>
                       <span>{label}</span>
                     </button>
                   ))}
                 </div>
+                {selectedTile && (
+                  <Select value={selectedPlace} onValueChange={setSelectedPlace}>
+                    <SelectTrigger className="w-full sm:w-64 bg-background border-white/10" data-testid="select-region-place">
+                      <SelectValue placeholder={selectedTile.key === "US" ? "Select a state" : "Select a country"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {selectedTile.places.map((place) => (
+                        <SelectItem key={place} value={place}>{place}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
                 <Button
                   size="sm"
                   onClick={handleSaveRegion}
-                  disabled={updateSettings.isPending || selectedRegion === ((user?.settings as any)?.region || "")}
+                  disabled={updateSettings.isPending || regionUnchanged}
                   data-testid="button-save-region"
                 >
                   {updateSettings.isPending ? "Saving…" : "Save Region"}
@@ -235,7 +435,7 @@ export default function Settings() {
                   data-testid="input-email-readonly"
                 />
                 <p className="text-xs text-muted-foreground">
-                  Email is managed by your Replit account
+                  Email can't be changed here — contact support if you need it updated
                 </p>
               </div>
             </CardContent>
@@ -527,6 +727,8 @@ export default function Settings() {
                       })}
                     </CardContent>
                   </Card>
+
+                  <NflverseSyncCard />
 
                   {/* Full permission framework reference */}
                   <Card className="bg-card/50 border-white/5">

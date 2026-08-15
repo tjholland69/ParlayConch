@@ -1,22 +1,37 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
+import type { Server } from "http";
 import { storage } from "./storage";
-import { pool, db } from "./db";
+import { logger } from "./logger";
+import { db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
 import { z } from "zod";
-import { insertLeagueSchema, insertParlaySchema, insertParlayLegSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs } from "@shared/schema";
-import { ilike, eq, and } from "drizzle-orm";
+import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs, parlays, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";
+import { ilike, eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
 import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
-import { runOddsSyncQueued, startOddsSyncWorker } from "./jobs/odds-sync-queue";
+import { runOddsSyncQueued, startOddsSyncWorker, getOddsSyncJobStatus } from "./jobs/odds-sync-queue";
+import {
+  enqueueNflverseSync,
+  getNflverseSyncJobStatus,
+  startNflverseSyncWorker,
+} from "./jobs/nflverse-sync-queue";
 import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
+import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries, getLeagueWeeklyWinRates } from "./services/dashboardAnalytics";
+import { cacheGetJson, cacheSetJson } from "./cache";
+import { getWeeklyAnalyticsReport } from "./services/storyStudio/analyticsEngine";
+import { discoverStories } from "./services/storyStudio/storyDiscovery";
+import { generateSection } from "./services/storyStudio/editorialGeneration";
+import { insertStoryReportSchema, updateStoryReportSchema, STORY_SECTION_KINDS, type StorySectionKind } from "@shared/schema";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
+import { auditLog, recordAuditEvent } from "./services/audit";
+import { uploadDisputeScreenshot, getDisputeScreenshotUrl, deleteDisputeScreenshot } from "./disputeStorage";
 import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
-import { syncGameScoresFromNflverse, syncPlayerStatsForGames } from "./services/nflverse";
+import { syncGameFinishTimesFromPlayByPlay } from "./services/playByPlay";
+import { detectExactDecisionMoments, detectHeuristicDecisionMoments } from "./services/decisionDetection";
 import { parseTicketImages } from "./services/screenshotParser";
 import { emptyToNull, normalizeAddParlayLegInput, normalizeImportLegFields, normalizeUpdateParlayInput } from "@shared/dataIntegrity";
 import {
@@ -38,7 +53,7 @@ async function hasLeaguePermission(leagueId: number, userId: string, permission:
   if (!isLt) return false;
   const league = await storage.getLeague(leagueId);
   const perms = (league?.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS;
-  return perms[permission] === true;
+  return perms[permission];
 }
 
 export async function registerRoutes(
@@ -54,12 +69,22 @@ export async function registerRoutes(
 
   if (isRedisConfigured()) {
     startOddsSyncWorker();
+    startNflverseSyncWorker();
   }
   registerRealtimeWebSocket(httpServer, app);
+
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok" });
+  });
 
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
   // The override is only applied when a super user has set an active act-as session.
+  //
+  // IMPORTANT: req.user is the same object reference as req.session.passport.user
+  // (passport's deserializeUser passes it through unchanged). Mutating it in place
+  // would permanently rewrite the real super user's identity in the persisted
+  // session — replace req.user with a shallow copy instead of mutating it.
   app.use((req, _res, next) => {
     const session = req.session as any;
     if (
@@ -68,7 +93,11 @@ export async function registerRoutes(
       !req.path.startsWith("/api/superuser") &&
       req.path !== "/api/auth/user"
     ) {
-      (req.user as any).claims.sub = session.actingAsUserId;
+      const realUser = req.user as any;
+      req.user = {
+        ...realUser,
+        claims: { ...realUser.claims, sub: session.actingAsUserId },
+      } as Express.User;
     }
     next();
   });
@@ -85,7 +114,7 @@ export async function registerRoutes(
       const actingAsUserId = (req.session as any).actingAsUserId as string | undefined;
       if (!actingAsUserId) return res.json({ actingAs: null });
       const [actingAsUser] = await db
-        .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName })
+        .select({ id: users.id, email: users.email, firstName: users.firstName, lastName: users.lastName, settings: users.settings })
         .from(users)
         .where(eq(users.id, actingAsUserId));
       res.json({ actingAs: actingAsUser || null });
@@ -113,7 +142,12 @@ export async function registerRoutes(
         results = await db
           .select(userFields)
           .from(users)
-          .where(ilike(users.email, `%${q}%`))
+          .where(or(
+            ilike(users.email, `%${q}%`),
+            ilike(users.firstName, `%${q}%`),
+            ilike(users.lastName, `%${q}%`),
+            ilike(drizzleSql`${users.settings}->>'displayName'`, `%${q}%`),
+          ))
           .limit(10);
       } else {
         // Default: return users who are admins in at least one league
@@ -142,6 +176,15 @@ export async function registerRoutes(
         .where(eq(users.id, userId));
       if (!targetUser) return res.status(404).json({ message: "User not found" });
       (req.session as any).actingAsUserId = userId;
+      await recordAuditEvent({
+        eventType: "superuser.act_as.start",
+        actorUserId: realUserId,
+        targetType: "user",
+        targetId: userId,
+        ip: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+        metadata: { targetEmail: targetUser.email },
+      });
       res.json({ actingAs: targetUser });
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
@@ -154,7 +197,18 @@ export async function registerRoutes(
       if (!(await storage.isSuperUser(realUserId))) {
         return res.status(403).json({ message: "Super user access required" });
       }
+      // Captured before deletion — auditLog's res.on('finish') pattern reads
+      // the session too late to see this, so it's recorded explicitly here.
+      const endedActingAsUserId = (req.session as any).actingAsUserId ?? null;
       delete (req.session as any).actingAsUserId;
+      await recordAuditEvent({
+        eventType: "superuser.act_as.end",
+        actorUserId: realUserId,
+        targetType: "user",
+        targetId: endedActingAsUserId,
+        ip: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+      });
       res.json({ actingAs: null });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -185,6 +239,229 @@ export async function registerRoutes(
   app.get("/api/stats", async (req, res) => {
     const stats = await storage.getStats();
     res.json(stats);
+  });
+
+  // ===== DASHBOARD =====
+  app.get("/api/dashboard/summary", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const cacheKey = `dashboard:summary:${userId}`;
+    const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserSummary>>>(cacheKey);
+    if (cached) return res.json(cached);
+    const summary = await getUserSummary(userId);
+    await cacheSetJson(cacheKey, summary, 60);
+    res.json(summary);
+  });
+
+  app.get("/api/dashboard/patterns", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const cacheKey = `dashboard:patterns:${userId}`;
+    const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserPatterns>>>(cacheKey);
+    if (cached) return res.json(cached);
+    const patterns = await getUserPatterns(userId);
+    await cacheSetJson(cacheKey, patterns, 60);
+    res.json(patterns);
+  });
+
+  app.get("/api/dashboard/performance", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+    const startDate = typeof req.query.startDate === "string" && req.query.startDate ? new Date(req.query.startDate) : undefined;
+    const endDate = typeof req.query.endDate === "string" && req.query.endDate ? new Date(req.query.endDate) : undefined;
+    const series = await getWinRateTimeSeries(userId, leagueId, { startDate, endDate });
+    res.json(series);
+  });
+
+  // Ad-hoc, nothing persisted — the "Advanced Filters" view.
+  app.get("/api/dashboard/performance/advanced", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+
+    const csvNumbers = (v: unknown): number[] | undefined => {
+      if (typeof v !== "string" || !v.trim()) return undefined;
+      const nums = v.split(",").map(s => Number(s.trim())).filter(n => Number.isFinite(n));
+      return nums.length > 0 ? nums : undefined;
+    };
+    const csvStrings = (v: unknown): string[] | undefined => {
+      if (typeof v !== "string" || !v.trim()) return undefined;
+      const parts = v.split(",").map(s => s.trim()).filter(Boolean);
+      return parts.length > 0 ? parts : undefined;
+    };
+    const str = (v: unknown): string | undefined =>
+      typeof v === "string" && v.trim() ? v.trim() : undefined;
+
+    const dateVal = (v: unknown): Date | undefined => {
+      const s = str(v);
+      return s ? new Date(s) : undefined;
+    };
+
+    const series = await computeWinRateSeries(userId, {
+      leagueIds: csvNumbers(req.query.leagueIds),
+      memberUserIds: csvStrings(req.query.memberUserIds),
+      betTypes: csvStrings(req.query.betTypes),
+      propTypes: csvStrings(req.query.propTypes),
+      playerName: str(req.query.playerName),
+      teamName: str(req.query.teamName),
+      startDate: dateVal(req.query.startDate),
+      endDate: dateVal(req.query.endDate),
+    });
+    res.json(series);
+  });
+
+  // ===== CUSTOM INDEXES =====
+
+  /** Visibility rule shared by list and per-index reads. */
+  async function canViewCustomIndex(index: { id: number; ownerId: string; scope: string | null; publishedLeagueId: number | null }, userId: string): Promise<boolean> {
+    if (index.ownerId === userId) return true;
+    const shares = await storage.getCustomIndexShares(index.id);
+    if (shares.includes(userId)) return true;
+    if (index.scope === 'league' && index.publishedLeagueId) {
+      const members = await storage.getLeagueMembers(index.publishedLeagueId);
+      return members.some(m => m.userId === userId);
+    }
+    return false;
+  }
+
+  app.get("/api/custom-indexes", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const indexes = await storage.listVisibleCustomIndexes(userId);
+    res.json(indexes);
+  });
+
+  app.post("/api/custom-indexes", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const input = insertCustomIndexSchema.parse(req.body);
+
+      if (input.scope === 'league') {
+        if (!input.publishedLeagueId) {
+          return res.status(400).json({ message: "A league must be selected to publish a league default index" });
+        }
+        const isAdmin = await storage.isLeagueAdmin(input.publishedLeagueId, userId);
+        if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can publish a league default index" });
+      }
+
+      // Block duplicates against anything already in the user's list (owned, shared,
+      // or league-published) — an identical filter set just clutters the dropdown.
+      const visible = await storage.listVisibleCustomIndexes(userId);
+      const dupe = visible.find((idx) => customIndexFiltersEqual(idx.filters, input.filters));
+      if (dupe) {
+        return res.status(409).json({
+          message: `You already have an index with these exact filters: "${dupe.displayName}"`,
+          existingId: dupe.id,
+        });
+      }
+
+      const created = await storage.createCustomIndex(userId, input);
+      res.status(201).json(created);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.errors?.[0]?.message ?? err.message });
+    }
+  });
+
+  app.patch("/api/custom-indexes/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const id = Number(req.params.id);
+
+      const existing = await storage.getCustomIndex(id);
+      if (!existing) return res.status(404).json({ message: "Custom index not found" });
+      if (existing.ownerId !== userId) return res.status(403).json({ message: "Only the owner can edit this index" });
+
+      const updates = updateCustomIndexSchema.parse(req.body);
+
+      if (updates.scope === 'league') {
+        const leagueId = updates.publishedLeagueId ?? existing.publishedLeagueId;
+        if (!leagueId) {
+          return res.status(400).json({ message: "A league must be selected to publish a league default index" });
+        }
+        const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+        if (!isAdmin) return res.status(403).json({ message: "Only the Parlay Maestro can publish a league default index" });
+        updates.publishedLeagueId = leagueId;
+      }
+
+      if (updates.filters) {
+        const visible = await storage.listVisibleCustomIndexes(userId);
+        const dupe = visible.find((idx) => idx.id !== id && customIndexFiltersEqual(idx.filters, updates.filters!));
+        if (dupe) {
+          return res.status(409).json({
+            message: `You already have an index with these exact filters: "${dupe.displayName}"`,
+            existingId: dupe.id,
+          });
+        }
+      }
+
+      const updated = await storage.updateCustomIndex(id, updates);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.errors?.[0]?.message ?? err.message });
+    }
+  });
+
+  app.delete("/api/custom-indexes/:id", isAuthenticated, auditLog("custom_index.delete", { targetParam: "id", targetType: "custom_index" }), async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const id = Number(req.params.id);
+
+    const existing = await storage.getCustomIndex(id);
+    if (!existing) return res.status(404).json({ message: "Custom index not found" });
+    if (existing.ownerId !== userId) return res.status(403).json({ message: "Only the owner can delete this index" });
+
+    await storage.deleteCustomIndex(id);
+    res.status(204).end();
+  });
+
+  app.post("/api/custom-indexes/:id/share", isAuthenticated, async (req, res) => {
+    try {
+      const ownerId = (req.user as any).claims.sub;
+      const id = Number(req.params.id);
+
+      const existing = await storage.getCustomIndex(id);
+      if (!existing) return res.status(404).json({ message: "Custom index not found" });
+      if (existing.ownerId !== ownerId) return res.status(403).json({ message: "Only the owner can share this index" });
+
+      const { userId: targetUserId } = z.object({ userId: z.string().min(1) }).parse(req.body);
+      if (targetUserId === ownerId) return res.status(400).json({ message: "You already own this index" });
+
+      const shareALeague = await storage.usersShareALeague(ownerId, targetUserId);
+      if (!shareALeague) return res.status(403).json({ message: "You can only share with members of your leagues" });
+
+      await storage.shareCustomIndex(id, targetUserId);
+      res.status(201).json({ customIndexId: id, sharedWithUserId: targetUserId });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.errors?.[0]?.message ?? err.message });
+    }
+  });
+
+  app.delete("/api/custom-indexes/:id/share/:userId", isAuthenticated, auditLog("custom_index.unshare", { targetParam: "id", targetType: "custom_index" }), async (req, res) => {
+    const ownerId = (req.user as any).claims.sub;
+    const id = Number(req.params.id);
+
+    const existing = await storage.getCustomIndex(id);
+    if (!existing) return res.status(404).json({ message: "Custom index not found" });
+    if (existing.ownerId !== ownerId) return res.status(403).json({ message: "Only the owner can unshare this index" });
+
+    await storage.unshareCustomIndex(id, req.params.userId);
+    res.status(204).end();
+  });
+
+  app.get("/api/custom-indexes/:id/performance", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const id = Number(req.params.id);
+
+    const index = await storage.getCustomIndex(id);
+    if (!index) return res.status(404).json({ message: "Custom index not found" });
+
+    const visible = await canViewCustomIndex(index, userId);
+    if (!visible) return res.status(403).json({ message: "You don't have access to this index" });
+
+    const filters = (index.filters ?? {}) as CustomIndexFilters;
+    const series = await computeWinRateSeries(userId, {
+      leagueIds: filters.leagueIds,
+      memberUserIds: filters.memberUserIds,
+      betTypes: filters.betTypes,
+      propTypes: filters.propTypes,
+      playerName: filters.playerName,
+      teamName: filters.teamName,
+    });
+    res.json(series);
   });
 
   // ===== LEAGUES =====
@@ -227,11 +504,20 @@ export async function registerRoutes(
     res.json(stats);
   });
 
+  // Must be before /api/leagues/:id to avoid route conflict
+  app.get("/api/leagues/weekly-win-rates", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const userLeagues = await storage.getUserLeagues(userId);
+    const leagueIds = userLeagues.map(l => l.id);
+    const series = await getLeagueWeeklyWinRates(leagueIds);
+    res.json(series);
+  });
+
   app.get("/api/leagues/active-week-status", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const userLeagues = await storage.getUserLeagues(userId);
     const leagueIds = userLeagues.map(l => l.id);
-    const status = await storage.getActiveWeekParlayStatus(leagueIds);
+    const status = await storage.getActiveWeekParlayStatus(leagueIds, userId);
     res.json(status);
   });
 
@@ -244,6 +530,40 @@ export async function registerRoutes(
   app.get("/api/leagues/:id/stats", isAuthenticated, async (req, res) => {
     const stats = await storage.getLeagueStats(Number(req.params.id));
     res.json(stats);
+  });
+
+  app.get("/api/leagues/:id/data-stats", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const stats = await storage.getLeagueDataStats(leagueId);
+    res.json(stats);
+  });
+
+  // Member-facing read-only view of all parlays across all weeks (no demo/admin gating)
+  app.get("/api/leagues/:id/parlays", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+    const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
+    const page = await storage.getAllLeagueParlays(leagueId, { limit, offset });
+    res.json(page);
+  });
+
+  app.get("/api/leagues/:leagueId/weeks/:weekId/popular-picks", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.leagueId);
+    const weekId = Number(req.params.weekId);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const picks = await storage.getPopularPicksForWeek(leagueId, weekId, userId);
+    res.json(picks);
   });
 
   // ===== PARLAYS =====
@@ -269,7 +589,7 @@ export async function registerRoutes(
         userId,
         { leagueId: input.leagueId, weekId: input.weekId },
         input.legs.map(l => ({
-          parlayId: 0, // Will be set by storage
+          userId,
           gameId: l.gameId,
           betType: l.betType,
           pick: l.pick,
@@ -292,6 +612,12 @@ export async function registerRoutes(
     res.json(history);
   });
 
+  app.get("/api/parlay-legs/my", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+    res.json(await storage.getUserLegHistory(userId, leagueId));
+  });
+
   app.get("/api/leagues/:leagueId/weeks/:weekId/parlays", isAuthenticated, async (req, res) => {
     const leagueId = Number(req.params.leagueId);
     const weekId = Number(req.params.weekId);
@@ -308,7 +634,7 @@ export async function registerRoutes(
   });
 
   // Admin: Approve/Reject parlays
-  app.post("/api/parlays/:id/approve", isAuthenticated, async (req, res) => {
+  app.post("/api/parlays/:id/approve", isAuthenticated, auditLog("parlay.approve", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
     const parlayId = Number(req.params.id);
     const userId = (req.user as any).claims.sub;
 
@@ -328,7 +654,7 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  app.post("/api/parlays/:id/reject", isAuthenticated, async (req, res) => {
+  app.post("/api/parlays/:id/reject", isAuthenticated, auditLog("parlay.reject", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
     const parlayId = Number(req.params.id);
     const userId = (req.user as any).claims.sub;
 
@@ -348,90 +674,81 @@ export async function registerRoutes(
     res.json(updated);
   });
 
-  // Seed Data Endpoint
-  app.post("/api/seed", async (req, res) => {
-    const existingWeeks = await storage.getWeeks();
-    if (existingWeeks.length === 0) {
-      const w1 = await storage.createWeek({ season: 2024, weekNumber: 1, label: "Week 1" });
-      const w2 = await storage.createWeek({ season: 2024, weekNumber: 2, label: "Week 2" });
-      const w3 = await storage.createWeek({ season: 2024, weekNumber: 3, label: "Week 3" });
-      
-      // Week 1 games
-      await storage.createGame({
-        weekId: w1.id, homeTeam: "Chiefs", awayTeam: "Ravens", spread: "-3.0",
-        overUnder: "47.5", moneylineHome: "-155", moneylineAway: "+135",
-        gameTime: new Date("2024-09-05T20:20:00Z"), isFinished: true,
-        homeScore: 27, awayScore: 20, winner: "home",
-        venue: "Arrowhead Stadium", homeRecord: "1-0", awayRecord: "0-1"
-      });
-      await storage.createGame({
-        weekId: w1.id, homeTeam: "Eagles", awayTeam: "Packers", spread: "-2.5",
-        overUnder: "49.0", moneylineHome: "-130", moneylineAway: "+110",
-        gameTime: new Date("2024-09-06T20:15:00Z"), isFinished: true,
-        homeScore: 34, awayScore: 29, winner: "home",
-        venue: "Lincoln Financial Field", homeRecord: "1-0", awayRecord: "0-1"
-      });
-      await storage.createGame({
-        weekId: w1.id, homeTeam: "Cowboys", awayTeam: "Browns", spread: "-6.5",
-        overUnder: "44.5", moneylineHome: "-280", moneylineAway: "+230",
-        gameTime: new Date("2024-09-08T13:00:00Z"), isFinished: true,
-        homeScore: 33, awayScore: 17, winner: "home",
-        venue: "AT&T Stadium", homeRecord: "1-0", awayRecord: "0-1"
-      });
-      await storage.createGame({
-        weekId: w1.id, homeTeam: "49ers", awayTeam: "Jets", spread: "-9.0",
-        overUnder: "43.0", moneylineHome: "-400", moneylineAway: "+320",
-        gameTime: new Date("2024-09-09T20:15:00Z"), isFinished: true,
-        homeScore: 30, awayScore: 17, winner: "home",
-        venue: "Levi's Stadium", homeRecord: "1-0", awayRecord: "0-1"
-      });
+  // Maestro confirms the deep link successfully launched their sportsbook app.
+  app.post("/api/parlays/:id/mark-sent", isAuthenticated, auditLog("parlay.mark_sent", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    const parlayId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
 
-      // Week 2 games
-      await storage.createGame({
-        weekId: w2.id, homeTeam: "Dolphins", awayTeam: "Bills", spread: "-1.5",
-        overUnder: "52.0", moneylineHome: "-115", moneylineAway: "-105",
-        gameTime: new Date("2024-09-12T20:15:00Z"), isFinished: true,
-        homeScore: 20, awayScore: 31, winner: "away",
-        venue: "Hard Rock Stadium", homeRecord: "1-1", awayRecord: "2-0"
-      });
-      await storage.createGame({
-        weekId: w2.id, homeTeam: "Steelers", awayTeam: "Broncos", spread: "-3.0",
-        overUnder: "36.5", moneylineHome: "-150", moneylineAway: "+130",
-        gameTime: new Date("2024-09-15T13:00:00Z"), isFinished: true,
-        homeScore: 13, awayScore: 6, winner: "home",
-        venue: "Acrisure Stadium", homeRecord: "2-0", awayRecord: "0-2"
-      });
-
-      // Week 3 games (current/future)
-      await storage.createGame({
-        weekId: w3.id, homeTeam: "Saints", awayTeam: "Eagles", spread: "+3.5",
-        overUnder: "48.5", moneylineHome: "+150", moneylineAway: "-175",
-        gameTime: new Date("2025-09-21T13:00:00Z"),
-        venue: "Caesars Superdome", homeRecord: "2-0", awayRecord: "1-1"
-      });
-      await storage.createGame({
-        weekId: w3.id, homeTeam: "Ravens", awayTeam: "Cowboys", spread: "-1.0",
-        overUnder: "51.5", moneylineHome: "-110", moneylineAway: "-110",
-        gameTime: new Date("2025-09-21T16:25:00Z"),
-        venue: "M&T Bank Stadium", homeRecord: "0-2", awayRecord: "1-1"
-      });
-      await storage.createGame({
-        weekId: w3.id, homeTeam: "Chiefs", awayTeam: "Falcons", spread: "-5.5",
-        overUnder: "46.0", moneylineHome: "-230", moneylineAway: "+190",
-        gameTime: new Date("2025-09-22T20:20:00Z"),
-        venue: "Arrowhead Stadium", homeRecord: "2-0", awayRecord: "1-1"
-      });
-      await storage.createGame({
-        weekId: w3.id, homeTeam: "Bengals", awayTeam: "Commanders", spread: "-6.0",
-        overUnder: "47.5", moneylineHome: "-250", moneylineAway: "+210",
-        gameTime: new Date("2025-09-23T20:15:00Z"),
-        venue: "Paycor Stadium", homeRecord: "0-2", awayRecord: "1-1"
-      });
-
-      res.json({ message: "Seeded with sample data" });
-    } else {
-      res.json({ message: "Already seeded" });
+    const parlay = await storage.getParlay(parlayId);
+    if (!parlay) {
+      return res.status(404).json({ message: "Parlay not found" });
     }
+
+    const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
+    if (!isAdmin) {
+      return res.status(403).json({ message: "Only the Parlay Maestro can send parlays to a sportsbook" });
+    }
+
+    try {
+      const updated = await storage.markParlaySent(parlayId, userId);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(409).json({ message: err.message });
+    }
+  });
+
+  // Maestro self-confirms they actually placed the bet with the sportsbook.
+  app.post("/api/parlays/:id/mark-placed", isAuthenticated, auditLog("parlay.mark_placed", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    const parlayId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+
+    const parlay = await storage.getParlay(parlayId);
+    if (!parlay) {
+      return res.status(404).json({ message: "Parlay not found" });
+    }
+
+    const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
+    if (!isAdmin) {
+      return res.status(403).json({ message: "Only the Parlay Maestro can confirm a placed bet" });
+    }
+
+    try {
+      const updated = await storage.markParlayPlaced(parlayId, userId);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(409).json({ message: err.message });
+    }
+  });
+
+  // "No, I didn't place it" — reverts a sent parlay back to approved so it can be re-sent.
+  app.post("/api/parlays/:id/revert-to-approved", isAuthenticated, auditLog("parlay.revert_to_approved", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    const parlayId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+
+    const parlay = await storage.getParlay(parlayId);
+    if (!parlay) {
+      return res.status(404).json({ message: "Parlay not found" });
+    }
+
+    const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
+    if (!isAdmin) {
+      return res.status(403).json({ message: "Only the Parlay Maestro can update a sent parlay" });
+    }
+
+    try {
+      const updated = await storage.revertParlayToApproved(parlayId, userId);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(409).json({ message: err.message });
+    }
+  });
+
+  // Parlays this user approved that are awaiting placement confirmation —
+  // used to prompt "did you place this bet?" when the app resumes.
+  app.get("/api/users/me/sent-parlays", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const sentParlays = await storage.getSentParlaysForUser(userId);
+    res.json(sentParlays);
   });
 
   // ===== ODDS API INTEGRATION =====
@@ -458,7 +775,29 @@ export async function registerRoutes(
       }
 
       const result = await runOddsSyncQueued(weekId);
-      res.json({ message: `Synced games: ${result.added} added, ${result.updated} updated` });
+      if (result.queued) {
+        return res.status(202).json({
+          message: "Odds sync queued",
+          jobId: result.jobId,
+          queued: true,
+        });
+      }
+      res.json({
+        message: `Synced games: ${result.added} added, ${result.updated} updated`,
+        queued: false,
+        added: result.added,
+        updated: result.updated,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/odds/sync/:jobId", isAuthenticated, async (req, res) => {
+    try {
+      const status = await getOddsSyncJobStatus(req.params.jobId);
+      if (!status) return res.status(404).json({ message: "Job not found" });
+      res.json(status);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -477,17 +816,21 @@ export async function registerRoutes(
   app.get("/api/news", async (req, res) => {
     try {
       const feed = (req.query.feed as string) || "headlines";
-      const limit = Math.min(Number(req.query.limit) || 12, 30);
+      const limit = Math.min(Number(req.query.limit) || 12, 60);
+      const cacheKey = `news:${feed}:${limit}`;
+      const cached = await cacheGetJson<unknown>(cacheKey);
+      if (cached) return res.json(cached);
 
       let news;
       if (feed === "injuries") {
-        news = await fetchNFLInjuries();
+        news = (await fetchNFLInjuries()).slice(0, limit);
       } else if (feed === "scores") {
         news = await fetchNFLScores();
       } else {
         news = await fetchNFLNews(limit);
       }
 
+      await cacheSetJson(cacheKey, news, 90);
       res.json(news);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -520,7 +863,7 @@ export async function registerRoutes(
       const result = await getUserInsights(user.id, displayName, focus, leagueId);
       res.json(result);
     } catch (err: any) {
-      console.error("[insights] user error:", err);
+      logger.error({ err }, "[insights] user error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -539,7 +882,7 @@ export async function registerRoutes(
       const result = await getLeagueInsights(leagueId, league.name, focus);
       res.json(result);
     } catch (err: any) {
-      console.error("[insights] league error:", err);
+      logger.error({ err }, "[insights] league error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -655,16 +998,16 @@ export async function registerRoutes(
           );
           imported++;
         } catch (e) {
-          console.error("Import record error:", e);
+          logger.error({ e }, "Import record error:");
           skippedRows.push(`Error processing a record: ${(e as Error).message}`);
         }
       }
 
       // Trigger enrichment in the background (don't block the response)
       enrichLeagueParlayLegs(leagueId).then(result => {
-        console.log(`[Enrichment] league ${leagueId}: enriched=${result.enriched} resultsFilled=${result.resultsFilled} linesFilled=${result.linesFilled} skipped=${result.skipped}`);
+        logger.info(`[Enrichment] league ${leagueId}: enriched=${result.enriched} resultsFilled=${result.resultsFilled} linesFilled=${result.linesFilled} skipped=${result.skipped}`);
       }).catch(err => {
-        console.error("[Enrichment] background error:", err);
+        logger.error({ err }, "[Enrichment] background error:");
       });
 
       res.json({
@@ -721,7 +1064,7 @@ export async function registerRoutes(
 
         res.json(tickets);
       } catch (err: any) {
-        console.error("[Screenshot Import] error:", err);
+        logger.error({ err }, "[Screenshot Import] error:");
         res.status(500).json({ message: err.message ?? "Screenshot parsing failed" });
       }
     }
@@ -781,14 +1124,14 @@ export async function registerRoutes(
 
   // POST /api/admin/sync-nflverse
   // Body: { season, week?, mode: 'scores' | 'players' | 'all' }
-  // Syncs game scores and/or player stats from nflverse open data for the given
-  // season (and optionally a specific week). Only touches games already in our DB.
-  app.post("/api/admin/sync-nflverse", isAuthenticated, async (req, res) => {
+  // Enqueues a background job (202) when Redis is available; otherwise runs inline.
+  app.post("/api/admin/sync-nflverse", isAuthenticated, auditLog("admin.sync_nflverse"), async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
 
-      // Require the user to be an admin in at least one league (rough guard)
-      // A dedicated global-admin check can be added later
       const { season, week, mode = "all" } = req.body;
 
       if (!season || isNaN(Number(season))) {
@@ -796,32 +1139,48 @@ export async function registerRoutes(
       }
 
       const seasonNum = Number(season);
-      const weekNums = week ? [Number(week)] : undefined;
+      const weekNum = week != null && week !== "" ? Number(week) : undefined;
+      const syncMode = (mode === "scores" || mode === "players" || mode === "all" ? mode : "all") as
+        | "scores"
+        | "players"
+        | "all";
 
-      const result: Record<string, unknown> = { season: seasonNum, week: week ?? "all" };
-
-      if (mode === "scores" || mode === "all") {
-        const scoreSync = await syncGameScoresFromNflverse(seasonNum, weekNums);
-        result.scores = scoreSync;
-        console.log(`[nflverse] scores sync:`, scoreSync);
-
-        // Re-run enrichment after scores are updated
-        const enrichResult = await enrichLeagueParlayLegs();
-        result.enrichment = enrichResult;
+      if (syncMode === "players" && weekNum == null) {
+        return res.status(400).json({ message: "week is required for player stats sync" });
       }
 
-      if (mode === "players" || mode === "all") {
-        if (!week) {
-          return res.status(400).json({ message: "week is required for player stats sync" });
-        }
-        const playerSync = await syncPlayerStatsForGames(seasonNum, Number(week));
-        result.players = playerSync;
-        console.log(`[nflverse] player stats sync:`, playerSync);
+      const enqueued = await enqueueNflverseSync({
+        season: seasonNum,
+        week: weekNum,
+        mode: syncMode,
+      });
+
+      if (enqueued.queued) {
+        return res.status(202).json({
+          message: "nflverse sync queued",
+          jobId: enqueued.jobId,
+          queued: true,
+        });
       }
 
-      res.json({ message: "nflverse sync complete", ...result });
+      res.json({ message: "nflverse sync complete", queued: false, ...enqueued.result });
     } catch (err: any) {
-      console.error("[nflverse] sync error:", err);
+      logger.error({ err }, "[nflverse] sync error:");
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/admin/sync-nflverse/:jobId", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+
+      const status = await getNflverseSyncJobStatus(req.params.jobId);
+      if (!status) return res.status(404).json({ message: "Job not found" });
+      res.json(status);
+    } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
@@ -829,12 +1188,24 @@ export async function registerRoutes(
   // POST /api/admin/resolve-props
   // Resolves all pending player-prop legs using already-synced nflverse player stats.
   // No body required — scans every prop leg across all leagues.
-  app.post("/api/admin/resolve-props", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/resolve-props", isAuthenticated, auditLog("admin.resolve_props"), async (req, res) => {
     try {
-      const result = await resolvePropsFromStats();
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+
+      const result: Record<string, unknown> = { ...(await resolvePropsFromStats()) };
+
+      try {
+        result.decisionMoments = await detectExactDecisionMoments();
+      } catch (err) {
+        logger.warn({ err }, "[decision-detection] prop sync failed; legs stay at 'final' confidence");
+      }
+
       res.json({ message: "Prop resolution complete", ...result });
     } catch (err: any) {
-      console.error("[prop-resolve] error:", err);
+      logger.error({ err }, "[prop-resolve] error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -842,16 +1213,24 @@ export async function registerRoutes(
   // POST /api/admin/fetch-prop-lines
   // Fetches player prop lines/odds from The Odds API for a specific league+week.
   // Body: { leagueId: number, weekId: number }
-  app.post("/api/admin/fetch-prop-lines", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/fetch-prop-lines", isAuthenticated, auditLog("admin.fetch_prop_lines"), async (req, res) => {
     try {
       const { leagueId, weekId } = req.body;
       if (!leagueId || !weekId) {
         return res.status(400).json({ message: "leagueId and weekId are required" });
       }
+      // Scoped to the target league (like /enrich and /sync-scores above) rather
+      // than requiring global super-user access, since this only affects that
+      // league's prop lines and league admins already trigger similar syncs.
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(Number(leagueId), userId);
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Parlay Maestro access required" });
+      }
       const result = await fetchPropLinesFromOddsApi(Number(leagueId), Number(weekId));
       res.json({ message: "Prop lines fetch complete", ...result });
     } catch (err: any) {
-      console.error("[prop-lines] error:", err);
+      logger.error({ err }, "[prop-lines] error:");
       res.status(500).json({ message: err.message });
     }
   });
@@ -859,11 +1238,88 @@ export async function registerRoutes(
   // GET /api/games/:gameId/player-stats
   // Returns player stats for all players on both teams in a given game
   // Backfill: promote all fully-resolved parlays from 'approved'/'pending' to win/loss/push
-  app.post("/api/admin/rollup-parlay-statuses", isAuthenticated, async (req, res) => {
+  app.post("/api/admin/weeks/:id/activate", isAuthenticated, auditLog("admin.week_activate", { targetParam: "id", targetType: "week" }), async (req, res) => {
     try {
-      const { leagueId } = req.body;
-      const result = await storage.rollupLeagueParlayStatuses(leagueId ? Number(leagueId) : undefined);
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      await storage.setActiveWeek(Number(req.params.id));
+      res.json({ message: "Active week updated" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/teams — full team reference list, for team-picker dropdowns (e.g. Advanced Filters).
+  app.get("/api/teams", isAuthenticated, async (_req, res) => {
+    try {
+      const results = await storage.getAllTeams();
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/players?q=<search> — for player-picker dropdowns (e.g. Advanced Filters).
+  app.get("/api/players", isAuthenticated, async (req, res) => {
+    try {
+      const q = typeof req.query.q === "string" ? req.query.q : "";
+      const results = await storage.searchPlayers(q);
+      res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/rollup-parlay-statuses", isAuthenticated, auditLog("admin.rollup_parlay_statuses"), async (req, res) => {
+    try {
+      const { leagueId, recomputeTerminal } = req.body;
+      const userId = (req.user as any).claims.sub;
+      // leagueId is optional (omitted = rolls up every league), so this can't
+      // be scoped to a single league's admin the way /enrich and /sync-scores
+      // are — require super-user access instead.
+      if (leagueId) {
+        const isAdmin = await storage.isLeagueAdmin(Number(leagueId), userId);
+        if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+      } else if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const result = await storage.rollupLeagueParlayStatuses(leagueId ? Number(leagueId) : undefined, !!recomputeTerminal);
       res.json({ message: "Rollup complete", ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/backfill-game-finished-at", isAuthenticated, auditLog("admin.backfill_game_finished_at"), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+
+      // Precision pass first: for every season we have games in, try to
+      // replace finishedAt with the real last-play timestamp from
+      // play-by-play data. Best-effort per season — a season nflverse
+      // doesn't have pbp for (very old, or not yet published) is skipped.
+      const seasons = await storage.getDistinctSeasons();
+      const finishTimeSync = { updated: 0, noMatch: 0, notYetFinished: 0 };
+      for (const season of seasons) {
+        try {
+          const r = await syncGameFinishTimesFromPlayByPlay(season);
+          finishTimeSync.updated += r.updated;
+          finishTimeSync.noMatch += r.noMatch;
+          finishTimeSync.notYetFinished += r.notYetFinished;
+        } catch (err) {
+          logger.warn({ err, season }, "[play-by-play] backfill pass failed for season; continuing");
+        }
+      }
+
+      // Fallback estimate (kickoff + 3.5h) for anything still missing
+      // finishedAt entirely — games pbp coverage didn't reach.
+      const result = await storage.backfillGameFinishedAt();
+      res.json({ message: "Backfill complete", finishTimeSync, ...result });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -897,7 +1353,7 @@ export async function registerRoutes(
   });
 
   // ===== ROLLBACK IMPORT BATCH (Admin only) =====
-  app.delete("/api/leagues/:leagueId/imports/:batchId", isAuthenticated, async (req, res) => {
+  app.delete("/api/leagues/:leagueId/imports/:batchId", isAuthenticated, auditLog("import_batch.delete", { targetParam: "batchId", targetType: "import_batch" }), async (req, res) => {
     try {
       const leagueId = Number(req.params.leagueId);
       const batchId = Number(req.params.batchId);
@@ -923,7 +1379,11 @@ export async function registerRoutes(
       const superUser = await storage.isSuperUser(userId);
       const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
       if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
-      const members = await storage.getLeagueMembersWithUsers(leagueId);
+      // Only a maestro can see inactive/departed members (needed for the
+      // League Members subtab's active/inactive toggle and purge flow).
+      const isAdmin = superUser || (await storage.isLeagueAdmin(leagueId, userId));
+      const includeInactive = isAdmin && req.query.includeInactive === "true";
+      const members = await storage.getLeagueMembersWithUsers(leagueId, { includeInactive });
       res.json(members);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -971,7 +1431,7 @@ export async function registerRoutes(
               });
               return { email, status: "invited" as const };
             } catch (emailErr) {
-              console.error(`Failed to send invite email to ${email}:`, emailErr);
+              logger.error({ emailErr }, `Failed to send invite email to ${email}:`);
               return { email, status: "invited" as const }; // still report invited even if email fails
             }
           }
@@ -992,7 +1452,7 @@ export async function registerRoutes(
               leagueId,
             });
           } catch (emailErr) {
-            console.error(`Failed to send added email to ${email}:`, emailErr);
+            logger.error({ emailErr }, `Failed to send added email to ${email}:`);
           }
 
           return {
@@ -1024,7 +1484,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/leagues/:id/members/:userId/role", isAuthenticated, async (req, res) => {
+  app.patch("/api/leagues/:id/members/:userId/role", isAuthenticated, auditLog("league_member.role_change", { targetParam: "userId", targetType: "league_member" }), async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
       const targetUserId = req.params.userId;
@@ -1051,7 +1511,7 @@ export async function registerRoutes(
     }
   });
 
-  app.patch("/api/leagues/:id/lieutenant-permissions", isAuthenticated, async (req, res) => {
+  app.patch("/api/leagues/:id/lieutenant-permissions", isAuthenticated, auditLog("league.lieutenant_permissions_change", { targetParam: "id", targetType: "league" }), async (req, res) => {
     try {
       const leagueId = Number(req.params.id);
       const userId = (req.user as any).claims.sub;
@@ -1235,14 +1695,68 @@ export async function registerRoutes(
       const leagueId = Number(req.params.id);
       const uid = await requireDemoAdmin(req, res, leagueId);
       if (!uid) return;
-      const allParlays = await storage.getAllLeagueParlays(leagueId);
-      res.json(allParlays);
+      const all = req.query.all === "1" || req.query.all === "true";
+      const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
+      const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
+      const page = await storage.getAllLeagueParlays(leagueId, { limit, offset, all });
+      res.json(page);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
 
-  app.delete("/api/parlays/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/leagues/:leagueId/weeks/:weekId/missing-parlay-members", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const weekId = Number(req.params.weekId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const missing = await storage.getMissingParlayMembers(leagueId, weekId);
+      res.json(missing);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/leagues/:leagueId/weeks/:weekId/backfill-missing-parlays", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const weekId = Number(req.params.weekId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const created = await storage.backfillMissingParlays(leagueId, weekId);
+      res.json({ message: `Backfilled ${created.length} missing parlay(s) as Void`, parlays: created });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  const CLONEABLE_PARLAY_STATUSES = ["approved", "win", "loss", "push"];
+
+  app.post("/api/parlays/:id/clone", isAuthenticated, auditLog("parlay.clone", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlayId = Number(req.params.id);
+      const source = await storage.getParlay(parlayId);
+      if (!source) return res.status(404).json({ message: "Parlay not found" });
+      if (source.userId !== userId) {
+        return res.status(403).json({ message: "You can only clone your own parlays" });
+      }
+      if (!CLONEABLE_PARLAY_STATUSES.includes(source.status ?? "")) {
+        return res.status(400).json({ message: "Only approved, won, lost, or pushed parlays can be cloned" });
+      }
+      const activeWeek = await storage.getActiveWeek();
+      if (!activeWeek) {
+        return res.status(400).json({ message: "No active week to clone into right now" });
+      }
+      const cloned = await storage.cloneParlay(parlayId, activeWeek.id);
+      res.status(201).json(cloned);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/parlays/:id", isAuthenticated, auditLog("parlay.delete", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
     try {
       const parlayId = Number(req.params.id);
       const parlay = await storage.getParlay(parlayId);
@@ -1256,7 +1770,7 @@ export async function registerRoutes(
     }
   });
 
-  app.delete("/api/parlay-legs/:legId", isAuthenticated, async (req, res) => {
+  app.delete("/api/parlay-legs/:legId", isAuthenticated, auditLog("parlay_leg.delete", { targetParam: "legId", targetType: "parlay_leg" }), async (req, res) => {
     try {
       const legId = Number(req.params.legId);
       const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
@@ -1272,6 +1786,155 @@ export async function registerRoutes(
     }
   });
 
+  // ===== LEG DISPUTES ("Dispute this bet" — member-facing) =====
+  const DISPUTE_REASON_TYPES = ["result_wrong", "entered_incorrectly"];
+
+  const disputeUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+    fileFilter: (_req, file, cb) => {
+      if (file.mimetype.startsWith("image/")) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}. Only image files are accepted.`));
+      }
+    },
+  });
+
+  app.get("/api/parlay-legs/:legId/disputes", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const legId = Number(req.params.legId);
+      const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+      if (!leg) return res.status(404).json({ message: "Leg not found" });
+      if (leg.userId !== userId) {
+        return res.status(403).json({ message: "You can only view disputes on your own legs" });
+      }
+      const disputes = await storage.getDisputesForLeg(legId);
+      res.json(disputes);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post(
+    "/api/parlay-legs/:legId/disputes",
+    isAuthenticated,
+    disputeUpload.single("screenshot"),
+    auditLog("parlay_leg.dispute", { targetParam: "legId", targetType: "parlay_leg" }),
+    async (req, res) => {
+      try {
+        const userId = (req.user as any).claims.sub;
+        const legId = Number(req.params.legId);
+        const { reasonType, justification } = req.body;
+
+        if (!DISPUTE_REASON_TYPES.includes(reasonType)) {
+          return res.status(400).json({ message: "Invalid reason type" });
+        }
+        if (!justification || !justification.trim()) {
+          return res.status(400).json({ message: "Justification is required" });
+        }
+
+        const [leg] = await db.select().from(parlayLegs).where(eq(parlayLegs.id, legId));
+        if (!leg) return res.status(404).json({ message: "Leg not found" });
+        if (leg.userId !== userId) {
+          return res.status(403).json({ message: "You can only dispute your own legs" });
+        }
+
+        const existing = await storage.getOpenDisputeForLeg(legId);
+        if (existing) {
+          return res.status(409).json({ message: "This leg already has an open dispute" });
+        }
+
+        const file = req.file as Express.Multer.File | undefined;
+        if (reasonType === "entered_incorrectly" && !file) {
+          return res.status(400).json({ message: "A screenshot is required when disputing an incorrectly entered bet" });
+        }
+
+        const screenshotKey = file ? await uploadDisputeScreenshot(file.buffer, file.mimetype) : null;
+
+        const dispute = await storage.createDispute({
+          parlayLegId: legId,
+          raisedByUserId: userId,
+          reasonType,
+          justification: justification.trim(),
+          screenshotKey,
+        });
+        res.status(201).json(dispute);
+      } catch (err: any) {
+        logger.error({ err }, "[disputes] create error");
+        res.status(500).json({ message: err.message ?? "Failed to file dispute" });
+      }
+    }
+  );
+
+  // ===== EXCEPTIONS QUEUE (support-only — superuser gated, unlisted route) =====
+  app.get("/api/exceptions/disputes", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Support access required" });
+      }
+      const status = typeof req.query.status === "string" ? req.query.status : undefined;
+      const disputes = await storage.listDisputes(status);
+      res.json(disputes);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/exceptions/disputes/:id/screenshot", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Support access required" });
+      }
+      const dispute = await storage.getDispute(Number(req.params.id));
+      if (!dispute || !dispute.screenshotKey) {
+        return res.status(404).json({ message: "No screenshot for this dispute" });
+      }
+      const url = await getDisputeScreenshotUrl(dispute.screenshotKey);
+      res.json({ url });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post(
+    "/api/exceptions/disputes/:id/resolve",
+    isAuthenticated,
+    auditLog("dispute.resolve", { targetParam: "id", targetType: "parlay_leg_dispute" }),
+    async (req, res) => {
+      try {
+        const userId = (req.user as any).claims.sub;
+        if (!(await storage.isSuperUser(userId))) {
+          return res.status(403).json({ message: "Support access required" });
+        }
+        const { status, notes } = req.body as { status: string; notes?: string };
+        if (status !== "resolved" && status !== "dismissed") {
+          return res.status(400).json({ message: "status must be 'resolved' or 'dismissed'" });
+        }
+        const disputeId = Number(req.params.id);
+        const dispute = await storage.getDispute(disputeId);
+        if (!dispute) return res.status(404).json({ message: "Dispute not found" });
+
+        const updated = await storage.resolveDispute(disputeId, userId, status, notes);
+
+        // Dismissed disputes are hard-deleted (see storage.resolveDispute) —
+        // clean up the screenshot evidence in the bucket along with the row.
+        if (status === "dismissed" && dispute.screenshotKey) {
+          await deleteDisputeScreenshot(dispute.screenshotKey).catch((err) => {
+            logger.error({ err }, "[disputes] failed to delete screenshot on dismiss");
+          });
+        }
+
+        res.json(updated);
+      } catch (err: any) {
+        res.status(500).json({ message: err.message });
+      }
+    }
+  );
+
   app.patch("/api/parlay-legs/:legId", isAuthenticated, async (req, res) => {
     try {
       const legId = Number(req.params.legId);
@@ -1282,7 +1945,69 @@ export async function registerRoutes(
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
       const input = updateParlayLegInputSchema.parse(req.body);
+
+      if (input.userId !== undefined && input.userId !== leg.userId) {
+        const members = await storage.getLeagueMembers(parlay.leagueId);
+        if (!members.some(m => m.userId === input.userId)) {
+          return res.status(400).json({ message: "Selected user is not a member of this league" });
+        }
+        const siblingLegs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, leg.parlayId));
+        if (siblingLegs.some(l => l.id !== legId && l.userId === input.userId)) {
+          return res.status(400).json({ message: "This member already has a leg in this parlay" });
+        }
+      }
+
       const updated = await storage.updateParlayLeg(legId, input);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  const BULK_EDITABLE_LEG_FIELDS = ['betType', 'pick', 'line', 'odds', 'oddsSource', 'result', 'playerName', 'propType', 'notes', 'gameSegment', 'userId'] as const;
+
+  app.post("/api/leagues/:leagueId/parlay-legs/bulk-update", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+
+      const { legIds, field, value } = req.body as { legIds: number[]; field: string; value: string | null };
+      if (!Array.isArray(legIds) || legIds.length === 0) {
+        return res.status(400).json({ message: "legIds[] is required" });
+      }
+      if (!(BULK_EDITABLE_LEG_FIELDS as readonly string[]).includes(field)) {
+        return res.status(400).json({ message: "Unsupported field" });
+      }
+
+      const targetLegs = await db.select().from(parlayLegs).where(inArray(parlayLegs.id, legIds));
+      if (targetLegs.length !== legIds.length) {
+        return res.status(404).json({ message: "One or more legs not found" });
+      }
+      const parlayIds = [...new Set(targetLegs.map(l => l.parlayId))];
+      const targetParlays = await db.select().from(parlays).where(inArray(parlays.id, parlayIds));
+      if (targetParlays.some(p => p.leagueId !== leagueId)) {
+        return res.status(403).json({ message: "Legs must all belong to this league" });
+      }
+
+      if (field === "userId") {
+        const members = await storage.getLeagueMembers(leagueId);
+        if (!members.some(m => m.userId === value)) {
+          return res.status(400).json({ message: "Selected user is not a member of this league" });
+        }
+        const selectedIdSet = new Set(legIds);
+        const allLegsInAffectedParlays = await db.select().from(parlayLegs).where(inArray(parlayLegs.parlayId, parlayIds));
+        for (const parlayId of parlayIds) {
+          const legsInThisParlay = allLegsInAffectedParlays.filter(l => l.parlayId === parlayId);
+          const selectedInThisParlay = legsInThisParlay.filter(l => selectedIdSet.has(l.id));
+          const alreadyOwnedByTarget = legsInThisParlay.some(l => !selectedIdSet.has(l.id) && l.userId === value);
+          if (selectedInThisParlay.length > 1 || alreadyOwnedByTarget) {
+            return res.status(400).json({ message: "This member already has a leg in at least one of the affected parlays" });
+          }
+        }
+      }
+
+      const updated = await storage.bulkUpdateParlayLegs(legIds, field as any, value);
       res.json(updated);
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
@@ -1313,7 +2038,7 @@ export async function registerRoutes(
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
       const input = addParlayLegInputSchema.parse(req.body);
-      const newLeg = await storage.addParlayLeg(parlayId, normalizeAddParlayLegInput(input));
+      const newLeg = await storage.addParlayLeg(parlayId, { ...normalizeAddParlayLegInput(input), userId: parlay.userId });
       res.json(newLeg);
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
@@ -1457,113 +2182,6 @@ export async function registerRoutes(
     }
   });
 
-  // ONE-TIME MIGRATION: copy dev data snapshot into this database (production use only)
-  // Gated by PROD_MIGRATION_ENABLED=true env var + must be authenticated as the owner account
-  app.post("/api/admin/migrate-dev-to-prod", isAuthenticated, async (req, res) => {
-    try {
-      if (process.env.PROD_MIGRATION_ENABLED !== "true") {
-        return res.status(403).json({ message: "Migration not enabled" });
-      }
-      const userId = (req.user as any).claims.sub;
-      if (userId !== "52372237") {
-        return res.status(403).json({ message: "Only the owner account can run this migration" });
-      }
-
-      const client = await pool.connect();
-      try {
-        await client.query("BEGIN");
-
-        // 1. Upsert all 17 dev users
-        await client.query(`
-          INSERT INTO users (id, first_name, last_name, email, profile_image_url, is_demo, settings, created_at, updated_at) VALUES
-            ('52372237', 'Tim', 'Holland', 'hollandtim917@gmail.com', NULL, false, '{}', '2026-01-04 02:15:51.029151', '2026-01-19 21:42:51.235'),
-            ('55226224', NULL, NULL, 'parlayconchtest1@gmail.com', 'https://lh3.googleusercontent.com/a/ACg8ocKQxu6tW1_-Y4_g3QrqoqVVohWMBYSqb85bekdTEYfC3qj52A=s96-c', true, '{"displayName": "Test 1"}', '2026-02-24 03:51:49.360548', '2026-03-29 18:59:32.129'),
-            ('admin-priv-test-001', 'Admin', 'Tester', 'adminprivtest@example.com', NULL, false, '{}', '2026-03-30 03:10:57.554269', '2026-03-30 03:10:57.554269'),
-            ('demo_user_01', 'ParlayConch Demo 1', NULL, 'demo1@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.014062', '2026-04-02 00:50:51.014062'),
-            ('demo_user_02', 'ParlayConch Demo 2', NULL, 'demo2@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.051363', '2026-04-02 00:50:51.051363'),
-            ('demo_user_03', 'ParlayConch Demo 3', NULL, 'demo3@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.055654', '2026-04-02 00:50:51.055654'),
-            ('demo_user_04', 'ParlayConch Demo 4', NULL, 'demo4@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.059640', '2026-04-02 00:50:51.059640'),
-            ('demo_user_05', 'ParlayConch Demo 5', NULL, 'demo5@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.063067', '2026-04-02 00:50:51.063067'),
-            ('demo_user_06', 'ParlayConch Demo 6', NULL, 'demo6@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.065880', '2026-04-02 00:50:51.065880'),
-            ('demo_user_07', 'ParlayConch Demo 7', NULL, 'demo7@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.068128', '2026-04-02 00:50:51.068128'),
-            ('demo_user_08', 'ParlayConch Demo 8', NULL, 'demo8@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.071019', '2026-04-02 00:50:51.071019'),
-            ('demo_user_09', 'ParlayConch Demo 9', NULL, 'demo9@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.074396', '2026-04-02 00:50:51.074396'),
-            ('demo_user_10', 'ParlayConch Demo 10', NULL, 'demo10@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.077579', '2026-04-02 00:50:51.077579'),
-            ('demo_user_11', 'ParlayConch Demo 11', NULL, 'demo11@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.080674', '2026-04-02 00:50:51.080674'),
-            ('demo_user_12', 'ParlayConch Demo 12', NULL, 'demo12@parlayconch.demo', NULL, true, '{}', '2026-04-02 00:50:51.083996', '2026-04-02 00:50:51.083996'),
-            ('lock-test-admin', 'Lock', 'Admin', 'lockadmin@example.com', NULL, false, '{}', '2026-03-30 02:54:18.220776', '2026-03-30 02:54:18.220776'),
-            ('notif-test-001', 'Notif', 'Tester', 'notiftest@example.com', NULL, false, '{"notificationPreferences":{"sms":true,"push":false,"email":true,"phone":"+1 555 123 4567"}}', '2026-03-29 18:30:34.459406', '2026-03-29 18:30:34.459406')
-          ON CONFLICT (id) DO UPDATE SET
-            first_name = EXCLUDED.first_name,
-            last_name = EXCLUDED.last_name,
-            email = EXCLUDED.email,
-            profile_image_url = EXCLUDED.profile_image_url,
-            is_demo = EXCLUDED.is_demo,
-            settings = EXCLUDED.settings,
-            updated_at = EXCLUDED.updated_at
-        `);
-
-        // 2. Replace leagues and league_members (delete FK children first)
-        await client.query("DELETE FROM league_week_locks");
-        await client.query("DELETE FROM notifications");
-        await client.query("DELETE FROM parlay_legs");
-        await client.query("DELETE FROM parlays");
-        await client.query("DELETE FROM import_batches");
-        await client.query("DELETE FROM league_members");
-        await client.query("DELETE FROM leagues");
-
-        await client.query(`
-          INSERT INTO leagues (id, name, description, invite_code, max_parlays_per_week, min_legs_per_parlay, max_legs_per_parlay, created_at, is_demo, lieutenant_permissions, notification_settings) VALUES
-            (1, 'ParlayKirk69', 'DKE House Fantasy League', 'O16LFN', 1, 3, 5, '2026-01-04 02:16:42.713739', false, NULL, NULL),
-            (2, 'TestingWithTheBoys1', 'Testing with the boys 1', 'X0GXHN', 1, 3, 5, '2026-02-24 03:57:08.060994', false, NULL, NULL),
-            (3, 'Lock Test League', 'League for lock/unlock testing', 'X4VRKG', 1, 3, 5, '2026-03-30 02:54:49.187388', false, NULL, NULL),
-            (4, 'Admin Priv Test League', 'League created for admin privileges test', '5T1OHN', 1, 3, 5, '2026-03-30 03:11:58.588873', false, NULL, NULL)
-        `);
-        await client.query("SELECT setval('leagues_id_seq', 4)");
-
-        // 3. League members
-        await client.query(`
-          INSERT INTO league_members (id, league_id, user_id, role, joined_at) VALUES
-            (1, 1, '52372237', 'admin', '2026-01-04 02:16:42.721631'),
-            (2, 2, '55226224', 'admin', '2026-02-24 03:57:08.078734'),
-            (3, 3, 'lock-test-admin', 'admin', '2026-03-30 02:54:49.194456'),
-            (4, 4, 'admin-priv-test-001', 'admin', '2026-03-30 03:11:58.593102')
-        `);
-        await client.query("SELECT setval('league_members_id_seq', 4)");
-
-        // 4. Weeks
-        await client.query("DELETE FROM games");
-        await client.query("DELETE FROM weeks");
-        await client.query(`
-          INSERT INTO weeks (id, season, week_number, label, is_active) VALUES
-            (1, 2024, 1, 'Week 1', true),
-            (2, 2024, 2, 'Week 2', true)
-        `);
-        await client.query("SELECT setval('weeks_id_seq', 2)");
-
-        // 5. Games
-        await client.query(`
-          INSERT INTO games (id, week_id, home_team, away_team, spread, game_time, home_score, away_score, is_finished, winner) VALUES
-            (1, 1, 'Chiefs', 'Ravens', '-3.0', '2024-09-05 20:20:00', 27, 20, true, 'home'),
-            (2, 1, 'Eagles', 'Packers', '-2.5', '2024-09-06 20:15:00', 34, 29, true, 'home'),
-            (3, 2, 'Dolphins', 'Bills', '-1.5', '2024-09-12 20:15:00', NULL, NULL, false, NULL)
-        `);
-        await client.query("SELECT setval('games_id_seq', 3)");
-
-        await client.query("COMMIT");
-        res.json({ success: true, message: "Migration completed successfully" });
-      } catch (err) {
-        await client.query("ROLLBACK");
-        throw err;
-      } finally {
-        client.release();
-      }
-    } catch (err: any) {
-      console.error("Migration error:", err);
-      res.status(500).json({ message: err.message });
-    }
-  });
-
   // Leave league — available to members and lieutenants; blocked for the admin
   app.delete("/api/leagues/:id/members/me", isAuthenticated, async (req, res) => {
     try {
@@ -1581,7 +2199,7 @@ export async function registerRoutes(
       const isMember = members.some(m => m.userId === userId);
       if (!isMember) return res.status(404).json({ message: "You are not a member of this league" });
 
-      await storage.removeLeagueMember(leagueId, userId);
+      await storage.leaveLeagueMember(leagueId, userId);
       res.json({ message: "You have left the league" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1613,6 +2231,255 @@ export async function registerRoutes(
       res.json({ message: "Admin rights transferred and you have left the league" });
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // Maestro removes another member. If they own parlay_legs in this league,
+  // the removal is blocked (409, with the list of orphaned legs) unless the
+  // caller passes bypass:true — in which case the member is soft-purged and
+  // their legs surface on the exceptions blotter for later cleanup.
+  app.post("/api/leagues/:id/members/:userId/remove", isAuthenticated, auditLog("league_member.remove", { targetParam: "userId", targetType: "league_member" }), async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const targetUserId = req.params.userId;
+      const adminId = (req.user as any).claims.sub;
+
+      const isAdmin = await storage.isLeagueAdmin(leagueId, adminId);
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+      if (targetUserId === adminId) {
+        return res.status(400).json({ message: "Transfer admin rights before removing yourself — use transfer-and-leave" });
+      }
+
+      const { bypass } = z.object({ bypass: z.boolean().optional() }).parse(req.body ?? {});
+
+      const orphanedLegs = await storage.getOrphanedLegsForMember(leagueId, targetUserId);
+      if (orphanedLegs.length === 0) {
+        await storage.removeLeagueMember(leagueId, targetUserId);
+        return res.json({ message: "Member removed", orphanedLegs: [] });
+      }
+
+      if (!bypass) {
+        return res.status(409).json({
+          message: "This member has parlay legs in this league that must be reassigned or deleted first",
+          orphanedLegs,
+        });
+      }
+
+      await storage.purgeLeagueMemberBypass(leagueId, targetUserId);
+      res.json({
+        message: "Member purged; unresolved legs moved to the exceptions blotter",
+        orphanedLegs,
+      });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // Exceptions blotter — orphaned legs left behind by bypassed purges.
+  app.get("/api/leagues/:id/orphaned-legs", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+
+      const orphanedLegs = await storage.getOrphanedLegsForLeague(leagueId);
+      res.json(orphanedLegs);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Resolve orphaned legs one at a time — reassign to an active member or delete.
+  app.post("/api/leagues/:id/orphaned-legs/resolve", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+      if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
+
+      const { resolutions } = z.object({
+        resolutions: z.array(z.object({
+          legId: z.number().int(),
+          action: z.enum(['reassign', 'delete']),
+          newUserId: z.string().optional(),
+        })).min(1),
+      }).parse(req.body);
+
+      const activeMembers = await storage.getLeagueMembers(leagueId);
+      for (const r of resolutions) {
+        if (r.action === 'reassign') {
+          if (!r.newUserId) return res.status(400).json({ message: "newUserId is required to reassign a leg" });
+          if (!activeMembers.some(m => m.userId === r.newUserId)) {
+            return res.status(400).json({ message: "Reassignment target must be an active member of this league" });
+          }
+        }
+        await storage.resolveOrphanedLeg(leagueId, r.legId, r.action, r.newUserId);
+      }
+
+      res.json({ message: "Resolved" });
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // ===== STORY STUDIO =====
+  const SECTION_ORDER: Record<StorySectionKind, number> = {
+    headline: 0,
+    opening: 1,
+    winnerSummary: 2,
+    closing: 3,
+  };
+
+  async function assertLeagueMember(leagueId: number, userId: string, res: any): Promise<boolean> {
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) res.status(403).json({ message: "Not a member of this league" });
+    return isMember;
+  }
+
+  app.get("/api/story-studio/analytics", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.query.leagueId);
+      const weekId = Number(req.query.weekId);
+      const userId = (req.user as any).claims.sub;
+      if (!(await assertLeagueMember(leagueId, userId, res))) return;
+
+      const report = await getWeeklyAnalyticsReport(leagueId, weekId);
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/story-studio/candidates", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.query.leagueId);
+      const weekId = Number(req.query.weekId);
+      const userId = (req.user as any).claims.sub;
+      if (!(await assertLeagueMember(leagueId, userId, res))) return;
+
+      const report = await getWeeklyAnalyticsReport(leagueId, weekId);
+      res.json(discoverStories(report));
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/story-studio/reports", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const input = insertStoryReportSchema.parse(req.body);
+      if (!(await assertLeagueMember(input.leagueId, userId, res))) return;
+
+      const report = await storage.createStoryReport(userId, input);
+      res.json(report);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/story-studio/reports/:id", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/story-studio/reports/:id/sections/:kind/generate", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const kind = req.params.kind as StorySectionKind;
+      const userId = (req.user as any).claims.sub;
+      if (!STORY_SECTION_KINDS.includes(kind)) return res.status(400).json({ message: "Invalid section kind" });
+
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+
+      const analytics = await getWeeklyAnalyticsReport(report.leagueId, report.weekId);
+      const generated = await generateSection(kind, {
+        report: analytics,
+        candidate: report.selectedStory,
+        thesis: report.thesis,
+        tone: report.tone as any,
+      });
+
+      const section = await storage.upsertStorySection(reportId, kind, SECTION_ORDER[kind], {
+        content: generated.content,
+        generatedContent: generated.content,
+        promptVersion: generated.promptVersion,
+      });
+      res.json(section);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/story-studio/reports/:id/sections/:kind", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const kind = req.params.kind as StorySectionKind;
+      const userId = (req.user as any).claims.sub;
+      if (!STORY_SECTION_KINDS.includes(kind)) return res.status(400).json({ message: "Invalid section kind" });
+
+      const { content } = z.object({ content: z.string() }).parse(req.body);
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+
+      const section = await storage.upsertStorySection(reportId, kind, SECTION_ORDER[kind], { content });
+      res.json(section);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.patch("/api/story-studio/reports/:id", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const updates = updateStoryReportSchema.parse(req.body);
+
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+
+      const updated = await storage.updateStoryReport(reportId, updates);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/story-studio/reports/:id/export", isAuthenticated, async (req, res) => {
+    try {
+      const reportId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const report = await storage.getStoryReportWithSections(reportId);
+      if (!report) return res.status(404).json({ message: "Report not found" });
+      if (!(await assertLeagueMember(report.leagueId, userId, res))) return;
+
+      const byKind = new Map(report.sections.map(s => [s.kind, s.content ?? ""]));
+      const md = [
+        `# ${byKind.get("headline") ?? report.selectedStory.title}`,
+        "",
+        byKind.get("opening") ?? "",
+        "",
+        byKind.get("winnerSummary") ?? "",
+        "",
+        byKind.get("closing") ?? "",
+      ].join("\n").trim() + "\n";
+
+      res.json({ markdown: md });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
     }
   });
 

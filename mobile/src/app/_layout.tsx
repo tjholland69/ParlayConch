@@ -7,6 +7,7 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { queryClient } from "@/lib/query-client";
 import { useAuth } from "@/hooks/use-auth";
+import { SentParlayResumeGuard } from "@/components/SentParlayResumeGuard";
 
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth();
@@ -32,6 +33,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
           <StatusBar style="light" />
+          <SentParlayResumeGuard />
           <AuthGuard>
             <Stack
               screenOptions={{
@@ -46,8 +48,12 @@ export default function RootLayout() {
               <Stack.Screen name="login" options={{ headerShown: false }} />
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen
-                name="leagues/[id]"
+                name="leagues/[id]/index"
                 options={{ headerBackTitle: "Leagues" }}
+              />
+              <Stack.Screen
+                name="leagues/[id]/build"
+                options={{ headerBackTitle: "Back", title: "Build Pick" }}
               />
             </Stack>
           </AuthGuard>

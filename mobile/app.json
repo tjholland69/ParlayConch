@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Parlay.Conch",
-    "slug": "parlayclub",
+    "slug": "parlay-conch",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -16,15 +16,23 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.parlayclub.app",
       "infoPlist": {
-        "NSCameraUsageDescription": "Used for profile photo upload"
-      }
+        "NSCameraUsageDescription": "Used for profile photo upload",
+        "LSApplicationQueriesSchemes": [
+          "fanduel",
+          "draftkings"
+        ]
+      },
+      "runtimeVersion": "1.0.0"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#09090b"
       },
-      "package": "com.parlayclub.app"
+      "package": "com.parlayclub.app",
+      "runtimeVersion": {
+        "policy": "appVersion"
+      }
     },
     "web": {
       "bundler": "metro",
@@ -33,8 +41,20 @@
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      "./plugins/withSportsbookQueries.js",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"
+          }
+        }
+      ]
     ],
+    "newArchEnabled": true,
     "experiments": {
       "typedRoutes": true
     },
@@ -42,7 +62,14 @@
       "apiUrl": "https://parlayconch.com",
       "router": {
         "origin": false
+      },
+      "eas": {
+        "projectId": "6ffb989b-ab74-49ec-b524-b3613f680d8c"
       }
+    },
+    "owner": "hollandt12s-team",
+    "updates": {
+      "url": "https://u.expo.dev/6ffb989b-ab74-49ec-b524-b3613f680d8c"
     }
   }
 }

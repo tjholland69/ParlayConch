@@ -1,7 +1,46 @@
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, type InfiniteData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, League, WeekLockStatus } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team } from "@shared/schema";
+
+export type PaginatedParlays = {
+  items: ParlayWithLegs[];
+  total: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+};
+
+const PARLAY_PAGE_LIMIT = 50;
+
+export function flattenParlayPages(
+  data: InfiniteData<PaginatedParlays> | undefined,
+): ParlayWithLegs[] {
+  return data?.pages.flatMap((p) => p.items) ?? [];
+}
+
+async function fetchPaginatedParlays(
+  url: string,
+): Promise<PaginatedParlays> {
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.message || "Failed to fetch parlays");
+  }
+  const data = await res.json();
+  // Tolerate legacy array responses during rollout.
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      total: data.length,
+      limit: data.length,
+      offset: 0,
+      hasMore: false,
+    };
+  }
+  return data as PaginatedParlays;
+}
 
 export function useWeeks() {
   return useQuery<Week[]>({
@@ -24,6 +63,31 @@ export function useGames(weekId: number) {
       return res.json();
     },
     enabled: !!weekId,
+  });
+}
+
+export function usePlayerSearch(query: string) {
+  return useQuery<Player[]>({
+    queryKey: ["/api/players", query],
+    queryFn: async () => {
+      const res = await fetch(`/api/players?q=${encodeURIComponent(query)}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch players");
+      return res.json();
+    },
+  });
+}
+
+// Full team reference list — only 32 rows, so fetched once and filtered
+// client-side (see TeamCombobox) rather than re-querying per keystroke.
+export function useTeams() {
+  return useQuery<Team[]>({
+    queryKey: ["/api/teams"],
+    queryFn: async () => {
+      const res = await fetch("/api/teams", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch teams");
+      return res.json();
+    },
+    staleTime: Infinity,
   });
 }
 
@@ -51,7 +115,7 @@ export function useLeagues() {
 }
 
 export function useLeaguesOverviewStats() {
-  return useQuery<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number }>>({
+  return useQuery<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number; parlaysWon: number }>>({
     queryKey: ['/api/leagues/overview-stats'],
     queryFn: async () => {
       const res = await fetch('/api/leagues/overview-stats', { credentials: "include" });
@@ -62,8 +126,20 @@ export function useLeaguesOverviewStats() {
   });
 }
 
+export function useLeaguesWeeklyWinRates() {
+  return useQuery<Record<number, { weekLabel: string; winRate: number }[]>>({
+    queryKey: ['/api/leagues/weekly-win-rates'],
+    queryFn: async () => {
+      const res = await fetch('/api/leagues/weekly-win-rates', { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch weekly win rates");
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+}
+
 export function useLeaguesActiveStatus() {
-  return useQuery<Record<number, { weekId: number; weekLabel: string; submittedCount: number; isLocked: boolean }>>({
+  return useQuery<Record<number, ActiveWeekStatus>>({
     queryKey: ['/api/leagues/active-week-status'],
     queryFn: async () => {
       const res = await fetch('/api/leagues/active-week-status', { credentials: "include" });
@@ -71,6 +147,30 @@ export function useLeaguesActiveStatus() {
       return res.json();
     },
     staleTime: 30_000,
+  });
+}
+
+export function useLeagueDataStats(leagueId: number) {
+  return useQuery<LeagueDataStats>({
+    queryKey: ['/api/leagues', leagueId, 'data-stats'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/data-stats`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch league data stats");
+      return res.json();
+    },
+    enabled: !!leagueId,
+  });
+}
+
+export function usePopularPicks(leagueId: number, weekId: number) {
+  return useQuery<PopularPick[]>({
+    queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'popular-picks'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/popular-picks`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch popular picks");
+      return res.json();
+    },
+    enabled: !!leagueId && !!weekId,
   });
 }
 
@@ -180,6 +280,19 @@ export function useMyParlayHistory(leagueId?: number) {
   });
 }
 
+export function useMyLegHistory(leagueId?: number) {
+  return useQuery<ParlayLegWithParlayContext[]>({
+    queryKey: [api.parlayLegs.myHistory.path, leagueId],
+    queryFn: async () => {
+      let url = api.parlayLegs.myHistory.path;
+      if (leagueId) url += `?leagueId=${leagueId}`;
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch leg history");
+      return res.json();
+    },
+  });
+}
+
 type ParlayLegInput = { gameId: number; betType: string; pick: string; line?: string };
 
 export function useCreateParlay() {
@@ -283,15 +396,92 @@ export function useSetUserDemo() {
   });
 }
 
-export function useLeagueMembersWithUsers(leagueId: number) {
+export function useLeagueMembersWithUsers(leagueId: number, opts?: { includeInactive?: boolean }) {
+  const includeInactive = opts?.includeInactive ?? false;
   return useQuery({
-    queryKey: ['/api/leagues', leagueId, 'members'],
+    queryKey: ['/api/leagues', leagueId, 'members', { includeInactive }],
     queryFn: async () => {
-      const res = await fetch(`/api/leagues/${leagueId}/members`, { credentials: "include" });
+      const url = `/api/leagues/${leagueId}/members${includeInactive ? "?includeInactive=true" : ""}`;
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch members");
       return res.json() as Promise<import('@shared/schema').LeagueMemberWithUser[]>;
     },
     enabled: !!leagueId,
+  });
+}
+
+// Maestro-only: remove another member. Resolves with { orphanedLegs } on success
+// (empty array = removed clean) or throws a special OrphanConflictError when the
+// server responds 409 with unresolved orphaned legs, so callers can render the
+// resolution dialog instead of a generic error toast.
+export class OrphanConflictError extends Error {
+  orphanedLegs: import('@shared/schema').ParlayLeg[];
+  constructor(message: string, orphanedLegs: import('@shared/schema').ParlayLeg[]) {
+    super(message);
+    this.orphanedLegs = orphanedLegs;
+  }
+}
+
+export function useRemoveLeagueMember(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ userId, bypass }: { userId: string; bypass?: boolean }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/members/${userId}/remove`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bypass: bypass ?? false }),
+        credentials: "include",
+      });
+      const d = await res.json();
+      if (res.status === 409) throw new OrphanConflictError(d.message, d.orphanedLegs ?? []);
+      if (!res.ok) throw new Error(d.message);
+      return d as { message: string; orphanedLegs: import('@shared/schema').ParlayLeg[] };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'orphaned-legs'] });
+      queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
+    },
+    onError: (e: Error) => {
+      if (e instanceof OrphanConflictError) return; // caller renders the resolution dialog instead
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useOrphanedLegs(leagueId: number) {
+  return useQuery({
+    queryKey: ['/api/leagues', leagueId, 'orphaned-legs'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/orphaned-legs`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch orphaned legs");
+      return res.json() as Promise<import('@shared/schema').ParlayLeg[]>;
+    },
+    enabled: !!leagueId,
+  });
+}
+
+export function useResolveOrphanedLegs(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (resolutions: { legId: number; action: 'reassign' | 'delete'; newUserId?: string }[]) => {
+      const res = await fetch(`/api/leagues/${leagueId}/orphaned-legs/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resolutions }),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'members'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'orphaned-legs'] });
+      toast({ title: "Resolved" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 }
 
@@ -681,16 +871,111 @@ export function useUnlockWeekParlay(leagueId: number, weekId: number) {
 
 // ===== DEMO DATA EDITOR HOOKS =====
 
-export function useAllLeagueParlays(leagueId: number, enabled = true) {
-  return useQuery<ParlayWithLegs[]>({
-    queryKey: ['/api/leagues', leagueId, 'parlays', 'all'],
+/**
+ * Admin/demo endpoint: `/api/leagues/:id/parlays/all`.
+ * Default: infinite pages (limit 50). Pass `{ all: true }` for uncapped `?all=1`
+ * (DemoDataEditor / History "show all" that need the full set).
+ */
+export function useAllLeagueParlays(
+  leagueId: number,
+  enabled?: boolean,
+  opts?: { all?: false },
+): ReturnType<typeof useInfiniteQuery<PaginatedParlays>>;
+export function useAllLeagueParlays(
+  leagueId: number,
+  enabled: boolean | undefined,
+  opts: { all: true },
+): ReturnType<typeof useQuery<ParlayWithLegs[]>>;
+export function useAllLeagueParlays(
+  leagueId: number,
+  enabled = true,
+  opts?: { all?: boolean },
+) {
+  const fetchAll = opts?.all === true;
+
+  const allQuery = useQuery<ParlayWithLegs[]>({
+    queryKey: ["/api/leagues", leagueId, "parlays", "all", { all: true }],
     queryFn: async () => {
-      const res = await fetch(`/api/leagues/${leagueId}/parlays/all`, { credentials: "include" });
-      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
-      return res.json();
+      const page = await fetchPaginatedParlays(
+        `/api/leagues/${leagueId}/parlays/all?all=1`,
+      );
+      return page.items;
     },
+    enabled: !!leagueId && enabled && fetchAll,
+  });
+
+  const infinite = useInfiniteQuery<PaginatedParlays>({
+    queryKey: ["/api/leagues", leagueId, "parlays", "all", { limit: PARLAY_PAGE_LIMIT }],
+    queryFn: async ({ pageParam }) => {
+      const offset = typeof pageParam === "number" ? pageParam : 0;
+      return fetchPaginatedParlays(
+        `/api/leagues/${leagueId}/parlays/all?limit=${PARLAY_PAGE_LIMIT}&offset=${offset}`,
+      );
+    },
+    initialPageParam: 0,
+    getNextPageParam: (last) =>
+      last.hasMore ? last.offset + last.limit : undefined,
+    enabled: !!leagueId && enabled && !fetchAll,
+  });
+
+  if (fetchAll) return allQuery;
+  return infinite;
+}
+
+// Member-facing read-only view of all parlays (no demo/admin gating), used by the
+// League Detail "All Parlays" tab. Distinct query key from useAllLeagueParlays so
+// admin-editor mutations don't invalidate/collide with this cache.
+export function useAllLeagueParlaysReadOnly(leagueId: number, enabled = true) {
+  return useInfiniteQuery<PaginatedParlays>({
+    queryKey: ["/api/leagues", leagueId, "parlays", { limit: PARLAY_PAGE_LIMIT }],
+    queryFn: async ({ pageParam }) => {
+      const offset = typeof pageParam === "number" ? pageParam : 0;
+      return fetchPaginatedParlays(
+        `/api/leagues/${leagueId}/parlays?limit=${PARLAY_PAGE_LIMIT}&offset=${offset}`,
+      );
+    },
+    initialPageParam: 0,
+    getNextPageParam: (last) =>
+      last.hasMore ? last.offset + last.limit : undefined,
     enabled: !!leagueId && enabled,
   });
+}
+
+async function fetchAllPagesForLeague(leagueId: number): Promise<ParlayWithLegs[]> {
+  const items: ParlayWithLegs[] = [];
+  let offset = 0;
+  while (true) {
+    const page = await fetchPaginatedParlays(
+      `/api/leagues/${leagueId}/parlays?limit=${PARLAY_PAGE_LIMIT}&offset=${offset}`,
+    );
+    items.push(...page.items);
+    if (!page.hasMore) break;
+    offset = page.offset + page.limit;
+  }
+  return items;
+}
+
+/**
+ * Member-facing "everyone's picks" view merged across every league in
+ * `leagueIds` — the History tab's "All Leagues" + "My picks only" unchecked
+ * case, where there's no single league to scope the per-league paginated
+ * endpoint to. Each league fetches its full result set (looping pages
+ * internally) rather than infinite-scrolling, since history data per league
+ * is small enough that "load it all" is simpler than juggling N independent
+ * infinite-scroll cursors.
+ */
+export function useAllMyLeaguesParlaysReadOnly(leagueIds: number[], enabled = true) {
+  const queries = useQueries({
+    queries: leagueIds.map((leagueId) => ({
+      queryKey: ["/api/leagues", leagueId, "parlays", "read-only-all-pages"],
+      queryFn: () => fetchAllPagesForLeague(leagueId),
+      enabled: enabled && leagueIds.length > 0,
+    })),
+  });
+
+  const data = useMemo(() => queries.flatMap((q) => q.data ?? []), [queries]);
+  const isLoading = leagueIds.length > 0 && queries.some((q) => q.isLoading);
+  return { data, isLoading };
 }
 
 export function useDeleteParlay(leagueId: number) {
@@ -707,6 +992,60 @@ export function useDeleteParlay(leagueId: number) {
       toast({ title: "Parlay Deleted" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useLegDisputes(legId: number) {
+  return useQuery<ParlayLegDispute[]>({
+    queryKey: ['/api/parlay-legs', legId, 'disputes'],
+    queryFn: async () => {
+      const res = await fetch(`/api/parlay-legs/${legId}/disputes`, { credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    enabled: !!legId,
+  });
+}
+
+export function useFileDispute(legId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (form: { reasonType: string; justification: string; screenshot?: File | null }) => {
+      const body = new FormData();
+      body.append("reasonType", form.reasonType);
+      body.append("justification", form.justification);
+      if (form.screenshot) body.append("screenshot", form.screenshot);
+      const res = await fetch(`/api/parlay-legs/${legId}/disputes`, {
+        method: "POST",
+        body,
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/parlay-legs', legId, 'disputes'] });
+      toast({ title: "Dispute filed", description: "Support will review this and follow up." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't file dispute", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useCloneParlay(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (parlayId: number) => {
+      const res = await fetch(`/api/parlays/${parlayId}/clone`, { method: "POST", credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Parlay Cloned", description: "Copied into this week — review and submit when ready." });
+    },
+    onError: (e: Error) => toast({ title: "Clone failed", description: e.message, variant: "destructive" }),
   });
 }
 
@@ -744,6 +1083,28 @@ export function useUpdateParlayLeg(leagueId: number) {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
       toast({ title: "Leg Updated" });
+    },
+    onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useBulkUpdateParlayLegs(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ legIds, field, value }: { legIds: number[]; field: string; value: string | null }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlay-legs/bulk-update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ legIds, field, value }),
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      toast({ title: "Legs Updated", description: `${variables.legIds.length} leg(s) updated.` });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -828,6 +1189,41 @@ export function useSplitParlayLegs(leagueId: number) {
       toast({ title: "Legs Split", description: data.message });
     },
     onError: (e: Error) => toast({ title: "Split failed", description: e.message, variant: "destructive" }),
+  });
+}
+
+// League members who were on the roster as of `weekId` but have no parlay for
+// that week yet — powers the Data Editor's "Backfill Missing" button.
+export function useMissingParlayMembers(leagueId: number, weekId: number | null) {
+  return useQuery<LeagueMemberWithUser[]>({
+    queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'missing-parlay-members'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/missing-parlay-members`, { credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    enabled: !!leagueId && !!weekId,
+  });
+}
+
+export function useBackfillMissingParlays(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (weekId: number) => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/backfill-missing-parlays`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json() as Promise<{ message: string; parlays: unknown[] }>;
+    },
+    onSuccess: (data, weekId) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'missing-parlay-members'] });
+      toast({ title: "Backfilled", description: data.message });
+    },
+    onError: (e: Error) => toast({ title: "Backfill failed", description: e.message, variant: "destructive" }),
   });
 }
 

@@ -1,5 +1,6 @@
 import { storage } from "../storage";
 import type { Game, ParlayLeg } from "@shared/schema";
+import { logger } from "../logger";
 
 /**
  * Given a finished game and a parlay leg, calculate whether it was a win, loss, or push.
@@ -57,6 +58,13 @@ function deriveApproximateLine(betType: string, pick: string, game: Game): strin
   return null;
 }
 
+type LegEnrichUpdate = {
+  id: number;
+  result?: string | null;
+  line?: string | null;
+  oddsEnriched: boolean;
+};
+
 /**
  * Enrich all unenriched parlay legs for a league (or all leagues if leagueId is omitted).
  * For each leg:
@@ -74,26 +82,20 @@ export async function enrichLeagueParlayLegs(leagueId?: number): Promise<{
 }> {
   const legs = await storage.getUnenrichedLegs(leagueId);
 
-  let enriched = 0;
   let resultsFilled = 0;
   let linesFilled = 0;
-  let skipped = 0;
+  const batch: LegEnrichUpdate[] = [];
 
   for (const leg of legs) {
     const game = leg.game;
-    const updates: { result?: string | null; line?: string | null; oddsEnriched: boolean } = {
+    const updates: LegEnrichUpdate = {
+      id: leg.id,
       oddsEnriched: true,
     };
 
     // Player prop legs: skip result/line enrichment (no game-score formula applies)
-    if (leg.betType === 'player_prop' || !game) {
-      try {
-        await storage.enrichParlayLeg(leg.id, updates);
-        enriched++;
-      } catch (err) {
-        console.error(`Failed to mark prop leg ${leg.id} enriched:`, err);
-        skipped++;
-      }
+    if (leg.betType === "player_prop" || !game) {
+      batch.push(updates);
       continue;
     }
 
@@ -115,12 +117,25 @@ export async function enrichLeagueParlayLegs(leagueId?: number): Promise<{
       }
     }
 
-    try {
-      await storage.enrichParlayLeg(leg.id, updates);
-      enriched++;
-    } catch (err) {
-      console.error(`Failed to enrich leg ${leg.id}:`, err);
-      skipped++;
+    batch.push(updates);
+  }
+
+  let enriched = 0;
+  let skipped = 0;
+  try {
+    await storage.enrichParlayLegsBatch(batch);
+    enriched = batch.length;
+  } catch (err) {
+    logger.error({ err }, "[Enrichment] batch update failed; falling back per-leg");
+    for (const u of batch) {
+      try {
+        const { id, ...rest } = u;
+        await storage.enrichParlayLeg(id, rest);
+        enriched++;
+      } catch (legErr) {
+        logger.error({ err: legErr }, `Failed to enrich leg ${u.id}:`);
+        skipped++;
+      }
     }
   }
 
@@ -128,7 +143,7 @@ export async function enrichLeagueParlayLegs(leagueId?: number): Promise<{
   // leaderboard (which counts parlay.status = 'win'/'loss'/'push') reflects
   // the individual leg results.
   const rollupResult = await storage.rollupLeagueParlayStatuses(leagueId);
-  console.log(`[Enrichment] rollup: ${rollupResult.updated} parlay(s) promoted to win/loss/push, ${rollupResult.skipped} skipped`);
+  logger.info(`[Enrichment] rollup: ${rollupResult.updated} parlay(s) promoted to win/loss/push, ${rollupResult.skipped} skipped`);
 
   return { enriched, resultsFilled, linesFilled, skipped };
 }

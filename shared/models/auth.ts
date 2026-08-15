@@ -2,7 +2,7 @@ import { sql } from "drizzle-orm";
 import { boolean, index, jsonb, pgTable, timestamp, varchar } from "drizzle-orm/pg-core";
 
 // Session storage table.
-// (IMPORTANT) This table is mandatory for Replit Auth, don't drop it.
+// (IMPORTANT) Backs express-session — don't drop it.
 export const sessions = pgTable(
   "sessions",
   {
@@ -14,7 +14,6 @@ export const sessions = pgTable(
 );
 
 // User storage table.
-// (IMPORTANT) This table is mandatory for Replit Auth, don't drop it.
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email").unique(),
@@ -37,5 +36,22 @@ export const userPasswords = pgTable("user_passwords", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// One-time tokens for the Replit-auth -> local-auth migration ("set your
+// password") flow and for future password resets. Stores a hash of the
+// token, never the raw value.
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: varchar("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => [index("IDX_password_reset_tokens_user").on(table.userId)]
+);
+
 export type UpsertUser = typeof users.$inferInsert;
 export type User = typeof users.$inferSelect;
+export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;

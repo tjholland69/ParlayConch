@@ -3,7 +3,8 @@ import "express-async-errors";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
-import { storage } from "./storage";
+import { logger, httpLogger } from "./logger";
+import { startAuditWriter } from "./jobs/audit-queue";
 
 const app = express();
 const httpServer = createServer(app);
@@ -14,12 +15,12 @@ declare module "http" {
   }
 }
 
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("[unhandledRejection]", reason, promise);
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "[unhandledRejection]");
 });
 
 process.on("uncaughtException", (err) => {
-  console.error("[uncaughtException]", err);
+  logger.error({ err }, "[uncaughtException]");
 });
 
 app.use(
@@ -32,42 +33,13 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 
+// Kept as a thin wrapper so existing `log(...)` call sites elsewhere don't
+// need touching; new code should prefer `logger` directly for structured fields.
 export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
-
-  console.log(`${formattedTime} [${source}] ${message}`);
+  logger.info({ source }, message);
 }
 
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
-});
+app.use(httpLogger);
 
 (async () => {
   await registerRoutes(httpServer, app);
@@ -89,11 +61,11 @@ app.use((req, res, next) => {
     }
 
     if (res.headersSent) {
-      console.error("[express] Error after headers sent:", err);
+      logger.error({ err }, "[express] Error after headers sent");
       return;
     }
 
-    console.error("[express]", err);
+    logger.error({ err }, "[express] unhandled route error");
     res.status(status).json({ message });
   });
 
@@ -116,21 +88,14 @@ app.use((req, res, next) => {
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
+      // SO_REUSEPORT is Linux-only; macOS (local dev) throws ENOTSUP if set.
+      reusePort: process.platform === "linux",
     },
     () => {
       log(`serving on port ${port}`);
-
-      // One-time backfill: promote fully-resolved parlays from 'approved'/'pending'
-      // to win/loss/push so the Dashboard leaderboard shows real data.
-      // Runs every startup but is fully idempotent — skips terminal-status parlays.
-      storage.rollupLeagueParlayStatuses().then(result => {
-        if (result.updated > 0) {
-          log(`[startup] parlay status rollup: ${result.updated} promoted, ${result.skipped} skipped`);
-        }
-      }).catch(err => {
-        console.error("[startup] parlay status rollup failed:", err.message);
-      });
+      startAuditWriter();
+      // Parlay status rollup runs after enrichment / explicit admin endpoints —
+      // not on every boot (was a full-table N+1 scan).
     },
   );
 })();

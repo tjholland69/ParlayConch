@@ -34,11 +34,14 @@ export const updateParlayLegInputSchema = z
     pick: z.string().min(1).optional(),
     line: z.string().nullable().optional(),
     odds: z.string().nullable().optional(),
+    oddsSource: z.string().nullable().optional(),
     result: z.enum(["win", "loss", "push"]).nullable().optional(),
+    resultDetail: z.string().nullable().optional(),
     playerName: z.string().nullable().optional(),
     propType: z.string().nullable().optional(),
     notes: z.string().nullable().optional(),
     gameSegment: z.string().nullable().optional(),
+    userId: z.string().optional(),
   })
   .strict();
 
@@ -60,6 +63,8 @@ export const updateLeagueSettingsSchema = z
     minLegsPerParlay: z.number().int().min(1).optional(),
     maxLegsPerParlay: z.number().int().min(1).optional(),
     insightsEnabled: z.boolean().optional(),
+    loserLabel: z.enum(['parlay_loser', 'asshole', 'jerry', 'dud', 'doofus']).optional(),
+    heroLabel: z.enum(['parlay_hero', 'mvp', 'legend', 'big_time']).optional(),
   })
   .strict()
   .refine(
@@ -84,6 +89,7 @@ export const addParlayLegInputSchema = z
     pick: z.string().min(1),
     line: z.string().nullable().optional(),
     odds: z.string().nullable().optional(),
+    oddsSource: z.string().nullable().optional(),
     playerName: z.string().nullable().optional(),
     propType: z.string().nullable().optional(),
     notes: z.string().nullable().optional(),

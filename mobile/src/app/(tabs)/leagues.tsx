@@ -16,14 +16,11 @@ import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLeagues, useCreateLeague, useJoinLeague } from "@/hooks/use-leagues";
-import { useAuth } from "@/hooks/use-auth";
 import { LeagueCard } from "@/components/LeagueCard";
-import { Avatar } from "@/components/ui/Avatar";
 
 type ModalType = "create" | "join" | null;
 
 export default function LeaguesScreen() {
-  const { user } = useAuth();
   const { data: leagues, isLoading, refetch, isRefetching } = useLeagues();
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
@@ -64,17 +61,6 @@ export default function LeaguesScreen() {
     }
   }
 
-  const userName = user?.firstName
-    ? `${user.firstName}${user.lastName ? " " + user.lastName : ""}`
-    : user?.email ?? "You";
-
-  const greeting = (() => {
-    const h = new Date().getHours();
-    if (h < 12) return "Good morning";
-    if (h < 17) return "Good afternoon";
-    return "Good evening";
-  })();
-
   return (
     <View style={styles.container}>
       <ScrollView
@@ -88,32 +74,25 @@ export default function LeaguesScreen() {
           />
         }
       >
-        {/* Greeting header */}
-        <View style={styles.greetingRow}>
-          <View style={styles.greetingText}>
-            <Text style={styles.greetingLabel}>{greeting}</Text>
-            <Text style={styles.greetingName} numberOfLines={1}>
-              {userName}
-            </Text>
-          </View>
-          <Avatar src={user?.profileImageUrl} name={userName} size={44} />
-        </View>
-
         {/* Action buttons */}
         <View style={styles.actionRow}>
           <Pressable
-            style={({ pressed }) => [styles.actionBtn, styles.actionBtnOutline, pressed && styles.pressed]}
+            style={({ pressed }) => [pressed && styles.pressed]}
             onPress={() => setModal("join")}
           >
-            <Ionicons name="enter-outline" size={16} color="#94a3b8" />
-            <Text style={styles.actionBtnOutlineText}>Join League</Text>
+            <View style={[styles.actionBtn, styles.actionBtnOutline]}>
+              <Ionicons name="enter-outline" size={16} color="#93c5fd" />
+              <Text style={styles.actionBtnOutlineText}>Join League</Text>
+            </View>
           </Pressable>
           <Pressable
-            style={({ pressed }) => [styles.actionBtn, styles.actionBtnPrimary, pressed && styles.pressed]}
+            style={({ pressed }) => [pressed && styles.pressed]}
             onPress={() => setModal("create")}
           >
-            <Ionicons name="add" size={16} color="#ffffff" />
-            <Text style={styles.actionBtnPrimaryText}>New League</Text>
+            <View style={[styles.actionBtn, styles.actionBtnPrimary]}>
+              <Ionicons name="add" size={16} color="#ffffff" />
+              <Text style={styles.actionBtnPrimaryText}>New League</Text>
+            </View>
           </Pressable>
         </View>
 
@@ -268,33 +247,24 @@ export default function LeaguesScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#141926" },
   scroll: { flex: 1 },
-  scrollContent: { padding: 20, paddingTop: 8 },
-  greetingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 20,
-  },
-  greetingText: { flex: 1, paddingRight: 12 },
-  greetingLabel: { fontSize: 13, color: "#94a3b8", marginBottom: 2 },
-  greetingName: { fontSize: 22, fontWeight: "700", color: "#f1f5f9" },
-  actionRow: { flexDirection: "row", gap: 10, marginBottom: 28 },
+  scrollContent: { padding: 20, paddingTop: 16 },
+  actionRow: { flexDirection: "row", justifyContent: "center", gap: 12, marginBottom: 28 },
   actionBtn: {
-    flex: 1,
+    width: 160,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: 12,
-    borderRadius: 12,
+    paddingVertical: 14,
+    borderRadius: 14,
   },
   actionBtnOutline: {
-    backgroundColor: "#1c2538",
-    borderWidth: 1,
-    borderColor: "#2a3447",
+    backgroundColor: "#1c2b4a",
+    borderWidth: 1.5,
+    borderColor: "#2563eb",
   },
   actionBtnPrimary: { backgroundColor: "#2563eb" },
-  actionBtnOutlineText: { fontSize: 14, fontWeight: "600", color: "#94a3b8" },
+  actionBtnOutlineText: { fontSize: 14, fontWeight: "600", color: "#93c5fd" },
   actionBtnPrimaryText: { fontSize: 14, fontWeight: "600", color: "#ffffff" },
   pressed: { opacity: 0.75 },
   centered: { alignItems: "center", paddingVertical: 64 },

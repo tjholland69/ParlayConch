@@ -115,6 +115,7 @@ export function normalizeAddParlayLegInput(
     pick: input.pick,
     line: emptyToNull(input.line),
     odds: emptyToNull(input.odds),
+    oddsSource: emptyToNull(input.oddsSource),
     playerName: emptyToNull(input.playerName),
     propType: emptyToNull(input.propType),
     notes: emptyToNull(input.notes),

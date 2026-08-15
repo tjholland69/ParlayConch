@@ -103,9 +103,10 @@ NativeWind 4 is used for Tailwind-compatible class names in React Native. The co
 
 ## What Comes Next (Future Sprints)
 
-- [ ] Full pick submission flow (game selection, leg builder)
+- [x] Full pick submission flow (game selection, leg builder)
+- [x] Parlay approval/rejection for Maestros
+- [x] Invite + lock week (full settings via “Manage on web”)
 - [ ] Push notifications via Expo Notifications
 - [ ] Mobile auth bridge on the server side
-- [ ] League settings management
-- [ ] Parlay approval/rejection for Maestros
-- [ ] App Store submission
+- [ ] Light history (1.1)
+- [ ] App Store submission (iOS first)

@@ -44,8 +44,10 @@ export async function apiRequest<T = unknown>(
   };
 
   if (token) {
-    // Backend uses express-session cookie auth; Bearer is not checked server-side.
-    headers["Cookie"] = `connect.sid=${token}`;
+    // Native iOS overrides a manually-set `Cookie` header via its own
+    // NSURLSession cookie jar, so we send the session token as a Bearer
+    // header instead; the server translates it back into the session cookie.
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, {

@@ -1,6 +1,7 @@
 import type { Server } from "http";
 import crypto from "crypto";
 import type { Express } from "express";
+import { logger } from "./logger";
 import { WebSocketServer, WebSocket } from "ws";
 import IORedis from "ioredis";
 import { isAuthenticated } from "./replit_integrations/auth";
@@ -63,7 +64,7 @@ function startRedisFanout(): void {
     }
   });
   subscriber.psubscribe("parlayconch:*").catch((err) => {
-    console.error("[realtime-ws] psubscribe failed", err);
+    logger.error({ err }, "[realtime-ws] psubscribe failed");
   });
 }
 
