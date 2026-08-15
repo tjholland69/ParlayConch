@@ -1,12 +1,5 @@
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { migrate } from "drizzle-orm/node-postgres/migrator";
-import path from "path";
-import { fileURLToPath } from "url";
+import { describe, expect, test } from "vitest";
 import { eq } from "drizzle-orm";
-import {
-  PostgreSqlContainer,
-  type StartedPostgreSqlContainer,
-} from "@testcontainers/postgresql";
 import {
   users,
   leagues,
@@ -16,55 +9,15 @@ import {
   parlays,
   parlayLegs,
 } from "@shared/schema";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const migrationsFolder = path.join(__dirname, "..", "migrations");
+import { setupTestDatabase, skipIfNoDb } from "./helpers/test-db";
 
 describe("DatabaseStorage integration", () => {
-  let container: StartedPostgreSqlContainer | undefined;
-  let dbReady = false;
-
-  beforeAll(async () => {
-    if (process.env.CI === "true") {
-      if (!process.env.DATABASE_URL) {
-        throw new Error("CI requires DATABASE_URL for integration tests");
-      }
-      const { db, pool } = await import("../server/db");
-      // CI reuses the same DATABASE_URL across runs, so previous runs'
-      // tables are still there — reset the schema before migrating so
-      // `migrate()` doesn't hit "relation already exists" (42P07).
-      await pool.query(`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`);
-      await migrate(db, { migrationsFolder });
-      dbReady = true;
-      return;
-    }
-
-    try {
-      container = await new PostgreSqlContainer("postgres:16-alpine").start();
-    } catch {
-      console.warn(
-        "[integration tests] No container runtime (start Docker) or use CI with DATABASE_URL — skipping.",
-      );
-      return;
-    }
-
-    process.env.DATABASE_URL = container.getConnectionUri();
-    const { db } = await import("../server/db");
-    await migrate(db, { migrationsFolder });
-    dbReady = true;
-  }, 180_000);
-
-  afterAll(async () => {
-    if (!dbReady) return;
-    const { pool } = await import("../server/db");
-    await pool.end();
-    if (container) await container.stop();
-  });
+  setupTestDatabase();
 
   test("createParlay is transactional: invalid leg gameId rolls back entire write", async ({
     skip,
   }) => {
-    skip(!dbReady, "database not available");
+    skipIfNoDb(skip);
     const { db } = await import("../server/db");
     const { storage } = await import("../server/storage");
 
@@ -123,7 +76,7 @@ describe("DatabaseStorage integration", () => {
   });
 
   test("createParlay replaces legs for same user/league/week", async ({ skip }) => {
-    skip(!dbReady, "database not available");
+    skipIfNoDb(skip);
     const { db } = await import("../server/db");
     const { storage } = await import("../server/storage");
 
@@ -177,7 +130,7 @@ describe("DatabaseStorage integration", () => {
   });
 
   test("rollupLeagueParlayStatuses: a single loss makes the whole parlay a loss, but a push alone is still a win", async ({ skip }) => {
-    skip(!dbReady, "database not available");
+    skipIfNoDb(skip);
     const { db } = await import("../server/db");
     const { storage } = await import("../server/storage");
 

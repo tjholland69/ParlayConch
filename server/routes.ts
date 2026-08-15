@@ -33,6 +33,16 @@ import { enrichSingleLeg } from "./services/legEnrich";
 import { syncGameFinishTimesFromPlayByPlay } from "./services/playByPlay";
 import { detectExactDecisionMoments, detectHeuristicDecisionMoments } from "./services/decisionDetection";
 import { parseTicketImages } from "./services/screenshotParser";
+import { emptyToNull, normalizeAddParlayLegInput, normalizeImportLegFields, normalizeUpdateParlayInput } from "@shared/dataIntegrity";
+import {
+  addParlayLegInputSchema,
+  createParlayInputSchema,
+  updateLeagueNotificationSettingsSchema,
+  updateLeagueSettingsSchema,
+  updateParlayInputSchema,
+  updateParlayLegInputSchema,
+  updateUserSettingsSchema,
+} from "@shared/routeValidation";
 import multer from "multer";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
@@ -557,20 +567,9 @@ export async function registerRoutes(
   });
 
   // ===== PARLAYS =====
-  const createParlayInput = z.object({
-    leagueId: z.number(),
-    weekId: z.number(),
-    legs: z.array(z.object({
-      gameId: z.number(),
-      betType: z.string(),
-      pick: z.string(),
-      line: z.string().optional()
-    }))
-  });
-
   app.post("/api/parlays", isAuthenticated, async (req, res) => {
     try {
-      const input = createParlayInput.parse(req.body);
+      const input = createParlayInputSchema.parse(req.body);
       const userId = (req.user as any).claims.sub;
 
       // Validate league membership
@@ -594,7 +593,7 @@ export async function registerRoutes(
           gameId: l.gameId,
           betType: l.betType,
           pick: l.pick,
-          line: l.line || null
+          line: emptyToNull(l.line)
         }))
       );
       res.status(201).json(parlay);
@@ -984,13 +983,7 @@ export async function registerRoutes(
               gameId: gameId ?? null,
               betType,
               pick: leg.pick,
-              line: leg.line || null,
-              odds: leg.odds || null,
-              gameSegment: leg.gameSegment || null,
-              result: leg.result || null,
-              playerName: isPlayerProp ? (leg.playerName || null) : null,
-              propType: isPlayerProp ? (leg.propType || null) : null,
-              notes: leg.notes || null,
+              ...normalizeImportLegFields(leg, isPlayerProp),
             });
           }
 
@@ -1483,17 +1476,7 @@ export async function registerRoutes(
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
       if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
 
-      const schema = z.object({
-        name: z.string().min(1).optional(),
-        description: z.string().nullable().optional(),
-        maxParlaysPerWeek: z.number().int().positive().optional(),
-        minLegsPerParlay: z.number().int().min(1).optional(),
-        maxLegsPerParlay: z.number().int().min(1).optional(),
-        insightsEnabled: z.boolean().optional(),
-        loserLabel: z.enum(['parlay_loser', 'asshole', 'jerry', 'dud', 'doofus']).optional(),
-        heroLabel: z.enum(['parlay_hero', 'mvp', 'legend', 'big_time']).optional(),
-      });
-      const updates = schema.parse(req.body);
+      const updates = updateLeagueSettingsSchema.parse(req.body);
       const league = await storage.updateLeagueSettings(leagueId, updates);
       res.json(league);
     } catch (err: any) {
@@ -1557,10 +1540,11 @@ export async function registerRoutes(
   app.patch("/api/users/me/settings", isAuthenticated, async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
-      await storage.updateUserSettings(userId, req.body);
+      const settings = updateUserSettingsSchema.parse(req.body);
+      await storage.updateUserSettings(userId, settings);
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
   });
 
@@ -1633,11 +1617,11 @@ export async function registerRoutes(
         return res.status(403).json({ message: "Only the Parlay Maestro can edit parlays" });
       }
 
-      const { status, legs } = req.body;
-      const updated = await storage.updateParlay(parlayId, { status, legs });
+      const input = updateParlayInputSchema.parse(req.body);
+      const updated = await storage.updateParlay(parlayId, normalizeUpdateParlayInput(input));
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
   });
 
@@ -1960,33 +1944,20 @@ export async function registerRoutes(
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
-      const { betType, pick, line, odds, oddsSource, result, playerName, propType, notes, gameSegment, userId } = req.body;
+      const input = updateParlayLegInputSchema.parse(req.body);
 
-      if (userId !== undefined && userId !== leg.userId) {
+      if (input.userId !== undefined && input.userId !== leg.userId) {
         const members = await storage.getLeagueMembers(parlay.leagueId);
-        if (!members.some(m => m.userId === userId)) {
+        if (!members.some(m => m.userId === input.userId)) {
           return res.status(400).json({ message: "Selected user is not a member of this league" });
         }
         const siblingLegs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, leg.parlayId));
-        if (siblingLegs.some(l => l.id !== legId && l.userId === userId)) {
+        if (siblingLegs.some(l => l.id !== legId && l.userId === input.userId)) {
           return res.status(400).json({ message: "This member already has a leg in this parlay" });
         }
       }
 
-      const updates: Record<string, unknown> = {};
-      if (betType !== undefined) updates.betType = betType;
-      if (pick !== undefined) updates.pick = pick;
-      if (line !== undefined) updates.line = line;
-      if (odds !== undefined) updates.odds = odds;
-      if (oddsSource !== undefined) updates.oddsSource = oddsSource;
-      if (result !== undefined) updates.result = result;
-      if (playerName !== undefined) updates.playerName = playerName;
-      if (propType !== undefined) updates.propType = propType;
-      if (notes !== undefined) updates.notes = notes;
-      if (gameSegment !== undefined) updates.gameSegment = gameSegment;
-      if (userId !== undefined) updates.userId = userId;
-
-      const updated = await storage.updateParlayLeg(legId, updates);
+      const updated = await storage.updateParlayLeg(legId, input);
       res.json(updated);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2039,7 +2010,7 @@ export async function registerRoutes(
       const updated = await storage.bulkUpdateParlayLegs(legIds, field as any, value);
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
   });
 
@@ -2066,12 +2037,11 @@ export async function registerRoutes(
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
-      const { betType, pick, line, odds, oddsSource, playerName, propType, notes, gameSegment } = req.body;
-      if (!betType || !pick) return res.status(400).json({ message: "betType and pick are required" });
-      const newLeg = await storage.addParlayLeg(parlayId, { userId: parlay.userId, betType, pick, line, odds, oddsSource, playerName, propType, notes, gameSegment });
+      const input = addParlayLegInputSchema.parse(req.body);
+      const newLeg = await storage.addParlayLeg(parlayId, { ...normalizeAddParlayLegInput(input), userId: parlay.userId });
       res.json(newLeg);
     } catch (err: any) {
-      res.status(500).json({ message: err.message });
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
   });
 
@@ -2135,11 +2105,7 @@ export async function registerRoutes(
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
       if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
 
-      const settings = z.object({
-        scheduledReminders: z.boolean(),
-        reminderDaysBeforeDeadline: z.number().min(1).max(7),
-        reminderMessage: z.string().max(500),
-      }).parse(req.body);
+      const settings = updateLeagueNotificationSettingsSchema.parse(req.body);
 
       const league = await storage.updateLeagueNotificationSettings(leagueId, settings);
       res.json(league);

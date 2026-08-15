@@ -123,6 +123,7 @@ function HistoryDateRangeFilter({
 }
 
 // ── LegTable ─────────────────────────────────────────────────────────────────
+// Flat per-leg table rows, matching the "League Parlays" card format in LeagueDetail.
 
 function LegTable({ legs, compact = false }: { legs: any[]; compact?: boolean }) {
   if (legs.length === 0) {
@@ -326,43 +327,11 @@ const HistoryParlayCard = memo(function HistoryParlayCard({
 
   return (
     <Card
-      className={cn(
-        "border transition-all duration-500",
-        perfect
-          ? "border-green-400/60 bg-card/50"
-          : "border-white/10 bg-card/50",
-        parlay.status === "void" && "opacity-60"
-      )}
-      style={
-        perfect
-          ? { boxShadow: "0 0 18px 2px rgba(74,222,128,0.22), 0 0 4px 1px rgba(74,222,128,0.18)" }
-          : undefined
-      }
+      className={cn("border-white/5", parlay.status === "void" ? "bg-card/20 opacity-60" : "bg-card/50")}
       data-testid={`card-parlay-history-${parlay.id}`}
     >
-      <CardHeader className="relative overflow-hidden pb-3">
-        {/* Progress bar background */}
-        {pct > 0 && (
-          <div
-            aria-hidden="true"
-            className={cn(
-              "absolute inset-y-0 left-0 pointer-events-none transition-all duration-700 ease-out",
-              perfect && "animate-pulse"
-            )}
-            style={{
-              width: `${pct}%`,
-              background: perfect
-                ? "linear-gradient(to right, rgba(74,222,128,0.35), rgba(74,222,128,0.10))"
-                : "linear-gradient(to right, rgba(74,222,128,0.18), rgba(74,222,128,0.03))",
-              boxShadow: perfect
-                ? "inset -4px 0 12px rgba(74,222,128,0.25)"
-                : "inset -2px 0 6px rgba(74,222,128,0.08)",
-            }}
-          />
-        )}
-
-        {/* Header row */}
-        <div className="relative z-10 flex flex-wrap items-center gap-2 sm:gap-3">
+      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
+        <div className="flex items-center gap-3 min-w-0">
           {/* Collapse toggle */}
           <button
             className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
@@ -374,30 +343,45 @@ const HistoryParlayCard = memo(function HistoryParlayCard({
             />
           </button>
 
-          {/* Week + date */}
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
-            <span className="font-semibold truncate">
-              {parlay.week?.label ?? `Week ${parlay.weekId}`}
-            </span>
-            {parlay.createdAt && (
-              <span className="text-xs text-muted-foreground shrink-0 hidden sm:inline">
-                {format(new Date(parlay.createdAt), "MMM d, yyyy")}
-              </span>
+          {/* Avatar */}
+          <div
+            className={cn(
+              "w-8 h-8 rounded-full flex items-center justify-center text-primary-foreground shrink-0",
+              parlay.status === "void" ? "bg-muted" : perfect ? "bg-gradient-to-tr from-green-400 to-primary" : "bg-gradient-to-tr from-primary to-accent"
             )}
-            <span className="text-xs text-muted-foreground/50">#{parlay.id}</span>
-            {collapsed && parlay.legs.length > 0 && (
-              <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal text-muted-foreground border-white/15">
-                {parlay.legs.length} leg{parlay.legs.length !== 1 ? "s" : ""}
-              </Badge>
-            )}
+          >
+            <Calendar className="w-4 h-4" />
           </div>
 
+          {/* Week + date */}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className={cn("font-bold truncate", parlay.status === "void" && "text-muted-foreground")}>
+                {parlay.week?.label ?? `Week ${parlay.weekId}`}
+              </p>
+              {perfect && (
+                <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px] px-1 py-0 h-4">
+                  Perfect
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground truncate">
+              {parlay.status === "void" ? "No submission" : `${parlay.legs.length} leg parlay`}
+              {parlay.createdAt && (
+                <span className="ml-2 text-muted-foreground/60">
+                  {format(new Date(parlay.createdAt), "MMM d, yyyy")}
+                </span>
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
           {/* Win stats */}
           {resolved > 0 && (
             <span
               className={cn(
-                "text-xs font-semibold tabular-nums shrink-0",
+                "text-xs font-semibold tabular-nums",
                 pct >= 60 ? "text-green-400" : pct >= 40 ? "text-yellow-400" : "text-red-400"
               )}
             >
@@ -407,36 +391,34 @@ const HistoryParlayCard = memo(function HistoryParlayCard({
             </span>
           )}
           {pending > 0 && resolved === 0 && (
-            <span className="text-xs text-muted-foreground/50 shrink-0">{pending} pending</span>
+            <span className="text-xs text-muted-foreground/50">{pending} pending</span>
           )}
 
-          {/* Status badge + copy */}
-          <div className="flex items-center gap-2 shrink-0">
-            <Badge
-              variant={getStatusVariant(parlay.status)}
-              className={parlay.status === "void" ? "text-muted-foreground border-white/10" : ""}
+          <Badge
+            variant={getStatusVariant(parlay.status)}
+            className={parlay.status === "void" ? "text-muted-foreground border-white/10" : ""}
+          >
+            {parlay.status === "void" ? "Void" : parlay.status}
+          </Badge>
+
+          {parlay.status !== "void" && (
+            <button
+              onClick={() => onCopySlip(parlay)}
+              title="Copy bet slip"
+              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
             >
-              {parlay.status === "void" ? "Void" : parlay.status}
-            </Badge>
-            {parlay.status !== "void" && (
-              <button
-                onClick={() => onCopySlip(parlay)}
-                title="Copy bet slip"
-                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
-              >
-                {copiedId === parlay.id
-                  ? <Check className="w-3.5 h-3.5 text-green-400" />
-                  : <Copy className="w-3.5 h-3.5" />}
-              </button>
-            )}
-          </div>
+              {copiedId === parlay.id
+                ? <Check className="w-3.5 h-3.5 text-green-400" />
+                : <Copy className="w-3.5 h-3.5" />}
+            </button>
+          )}
         </div>
       </CardHeader>
 
       {!collapsed && (
-        <CardContent className="pt-0">
+        <CardContent>
           {parlay.status === "void" ? (
-            <p className="text-sm text-muted-foreground italic py-2">No submission — missed this week</p>
+            <p className="text-sm text-muted-foreground italic">No submission — missed this week</p>
           ) : (
             <>
               {/* My legs */}
@@ -484,7 +466,9 @@ const HistoryParlayCard = memo(function HistoryParlayCard({
                       <div key={other.id} className="rounded-lg border border-white/5 bg-muted/10 overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-white/5">
                           <span className="text-sm font-semibold flex items-center gap-2">
-                            <User className="w-3.5 h-3.5 text-muted-foreground" />
+                            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground text-xs font-bold shrink-0">
+                              {displayName[0]}
+                            </div>
                             {displayName}
                           </span>
                           <div className="flex items-center gap-2">
@@ -506,7 +490,9 @@ const HistoryParlayCard = memo(function HistoryParlayCard({
                             </Badge>
                           </div>
                         </div>
-                        <LegTable legs={other.legs} compact />
+                        <div className="p-2">
+                          <LegTable legs={other.legs} compact />
+                        </div>
                       </div>
                     );
                   })}

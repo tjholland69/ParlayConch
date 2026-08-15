@@ -17,8 +17,11 @@ import {
   type Notification, type LeagueNotificationSettings,
   type LeagueWeekLock, type WeekLockStatus,
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
+  type UserSettings,
   type ActiveWeekStatus, type LeagueDataStats, type PopularPick,
 } from "@shared/schema";
+import { normalizeJoinedGame, normalizeParlayLegPatch } from "@shared/dataIntegrity";
+import { countParlayOutcomes, mergeUserSettings, buildUserStat, normalizeOutcomeCounts } from "@shared/statsAggregation";
 import { eq, and, desc, asc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
 import {
   averagePowerScore,
@@ -334,25 +337,23 @@ export class DatabaseStorage implements IStorage {
 
     return rows
       .map(row => {
-        const wins = Number(row.wins);
-        const losses = Number(row.losses);
-        const pushes = Number(row.pushes);
-        const totalDecided = wins + losses;
-        const winRate = totalDecided > 0 ? (wins / totalDecided) * 100 : 0;
-        const settings = row.settings as any;
+        const counts = normalizeOutcomeCounts(row);
+        const settings = row.settings as UserSettings | null;
         return {
-          userId: row.userId,
-          username: settings?.displayName || row.firstName || row.email || 'Unknown',
-          profileImageUrl: row.profileImageUrl,
-          wins,
-          losses,
-          pushes,
-          winRate,
+          ...buildUserStat(
+            {
+              userId: row.userId,
+              firstName: row.firstName,
+              email: row.email,
+              profileImageUrl: row.profileImageUrl,
+              settings,
+            },
+            counts,
+          ),
           // Global leaderboard is parlay-based; Power Score / BAR are league leg metrics.
           powerScore: 0,
           participationRate: 0,
           bar: 0,
-          region: settings?.region || null,
         };
       })
       .sort((a, b) => b.winRate - a.winRate);
@@ -983,7 +984,7 @@ export class DatabaseStorage implements IStorage {
 
     return {
       ...parlay,
-      legs: legs.map(l => ({ ...l.leg, game: l.game ?? null })),
+      legs: legs.map(l => ({ ...l.leg, game: normalizeJoinedGame(l.game) })),
       week
     };
   }
@@ -1019,7 +1020,7 @@ export class DatabaseStorage implements IStorage {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
       existing.push({
         ...leg,
-        game,
+        game: normalizeJoinedGame(game),
         user: legUser ? { firstName: legUser.firstName, email: legUser.email, profileImageUrl: legUser.profileImageUrl, isDemo: legUser.isDemo, settings: legUser.settings as any } : undefined,
       });
       legsByParlayId.set(leg.parlayId, existing);
@@ -1137,7 +1138,7 @@ export class DatabaseStorage implements IStorage {
     const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
     for (const { leg, game } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
-      existing.push({ ...leg, game });
+      existing.push({ ...leg, game: normalizeJoinedGame(game) });
       legsByParlayId.set(leg.parlayId, existing);
     }
 
@@ -1281,7 +1282,7 @@ export class DatabaseStorage implements IStorage {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
       existing.push({
         ...leg,
-        game,
+        game: normalizeJoinedGame(game),
         user: legUser ? { firstName: legUser.firstName, email: legUser.email, profileImageUrl: legUser.profileImageUrl, isDemo: legUser.isDemo, settings: legUser.settings as any } : undefined,
       });
       legsByParlayId.set(leg.parlayId, existing);
@@ -1319,7 +1320,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'resultDetail' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg> {
-    const [updated] = await db.update(parlayLegs).set(updates).where(eq(parlayLegs.id, legId)).returning();
+    const normalized = { ...updates, ...normalizeParlayLegPatch(updates) };
+    const [updated] = await db.update(parlayLegs).set(normalized).where(eq(parlayLegs.id, legId)).returning();
     return updated;
   }
 
@@ -1796,7 +1798,10 @@ export class DatabaseStorage implements IStorage {
 
   async updateUserSettings(userId: string, settings: Record<string, unknown>): Promise<void> {
     const [current] = await db.select({ settings: users.settings }).from(users).where(eq(users.id, userId));
-    const merged = { ...(current?.settings as Record<string, unknown> || {}), ...settings };
+    const merged = mergeUserSettings(
+      current?.settings as UserSettings | null | undefined,
+      settings as UserSettings,
+    );
     await db.update(users).set({ settings: merged }).where(eq(users.id, userId));
   }
 
