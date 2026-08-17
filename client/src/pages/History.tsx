@@ -1,8 +1,8 @@
-import { useMyParlayHistory, useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useAllMyLeaguesParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages } from "@/hooks/use-bets";
+import { useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useAllMyLeaguesParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages } from "@/hooks/use-bets";
 import { useAuth } from "@/hooks/use-auth";
-import { useState, useEffect, useMemo, useRef, Fragment, memo, Suspense, lazy } from "react";
+import { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -16,20 +16,22 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { DateRange } from "react-day-picker";
 import { MultiSelect } from "@/components/MultiSelect";
 import { BET_TYPE_OPTIONS } from "@/lib/bettingConstants";
-import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, Copy, Check, ChevronRight, User, ChevronsUpDown, Search, HelpCircle, LayoutGrid, Table2 } from "lucide-react";
+import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, ChevronsUpDown, Search, HelpCircle, LayoutGrid, Table2 } from "lucide-react";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { formatPickLabel } from "@/lib/formatPick";
-import { format } from "date-fns";
 import { getDisplayName } from "@/lib/displayName";
 import type { ParlayWithLegs, ParlayLegWithParlayContext } from "@shared/schema";
 import { filterLegsByQuery, LEG_QUERY_HELP, filterParlaysByQuery, PARLAY_QUERY_HELP } from "@/lib/historyQuery";
-import { getStatusVariant } from "@/lib/parlayStatusStyles";
 import { legMatchup } from "@/lib/legLabel";
 import { PageLoader } from "@/components/PageLoader";
 import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
+import { ParlayRollupCard } from "@/components/ParlayRollupCard";
+import { CardErrorBoundary } from "@/components/CardErrorBoundary";
+import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
+import { getSlate } from "@shared/slate";
 
 // AG Grid alone is ~1MB — only worth loading once someone actually asks
 // for the raw leg grid, not on every History page visit.
@@ -51,38 +53,47 @@ function toISODate(d: Date): string {
 
 // Same All Time / This Year / This Month / Custom pattern as the Dashboard >
 // Performance tile's time-range dropdown, applied here as a client-side filter.
+//
+// `mode` (which Select item is shown) and `range` (what's actually applied)
+// are both controlled from the parent rather than mode living in local state
+// here — splitting them across component boundaries let them drift out of
+// sync after repeated toggling. Lifting both into the same parent state
+// keeps them atomic.
 function HistoryDateRangeFilter({
-  value,
-  onChange,
+  mode,
+  range,
+  onModeChange,
+  onRangeChange,
 }: {
-  value: HistoryDateRange;
-  onChange: (mode: DateRangeMode, range: HistoryDateRange) => void;
+  mode: DateRangeMode;
+  range: HistoryDateRange;
+  onModeChange: (mode: DateRangeMode) => void;
+  onRangeChange: (range: HistoryDateRange) => void;
 }) {
-  const [mode, setMode] = useState<DateRangeMode>("all");
   const [customRange, setCustomRange] = useState<DateRange | undefined>(undefined);
   const [popoverOpen, setPopoverOpen] = useState(false);
 
   const handleModeChange = (next: string) => {
     const m = next as DateRangeMode;
-    setMode(m);
+    onModeChange(m);
     if (m === "all") {
-      onChange(m, {});
+      onRangeChange({});
     } else if (m === "year") {
       const now = new Date();
-      onChange(m, { startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) });
+      onRangeChange({ startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) });
     } else if (m === "month") {
       const now = new Date();
-      onChange(m, { startDate: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: toISODate(now) });
+      onRangeChange({ startDate: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: toISODate(now) });
     } else {
       setPopoverOpen(true);
-      // Wait for explicit range selection before firing onChange.
+      // Wait for explicit range selection before firing onRangeChange.
     }
   };
 
-  const applyCustomRange = (range: DateRange | undefined) => {
-    setCustomRange(range);
-    if (range?.from && range?.to) {
-      onChange("custom", { startDate: toISODate(range.from), endDate: toISODate(range.to) });
+  const applyCustomRange = (r: DateRange | undefined) => {
+    setCustomRange(r);
+    if (r?.from && r?.to) {
+      onRangeChange({ startDate: toISODate(r.from), endDate: toISODate(r.to) });
       setPopoverOpen(false);
     }
   };
@@ -110,7 +121,7 @@ function HistoryDateRangeFilter({
               data-testid="button-history-custom-date-range"
             >
               <Calendar className="w-3.5 h-3.5 mr-1.5" />
-              {value.startDate && value.endDate ? `${value.startDate} – ${value.endDate}` : "Pick dates"}
+              {range.startDate && range.endDate ? `${range.startDate} – ${range.endDate}` : "Pick dates"}
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-auto p-0">
@@ -122,100 +133,28 @@ function HistoryDateRangeFilter({
   );
 }
 
-// ── LegTable ─────────────────────────────────────────────────────────────────
-// Flat per-leg table rows, matching the "League Parlays" card format in LeagueDetail.
-
-function LegTable({ legs, compact = false }: { legs: any[]; compact?: boolean }) {
-  if (legs.length === 0) {
-    return <p className="text-sm text-muted-foreground italic py-2 px-1">No legs.</p>;
-  }
-  return (
-    <div className="rounded-lg overflow-hidden border border-white/5">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="bg-muted/30 text-muted-foreground text-xs">
-            <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
-            <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
-            <th className="text-left px-3 py-2 font-medium">Pick</th>
-            {!compact && <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>}
-            {!compact && <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>}
-            <th className="text-left px-3 py-2 font-medium">Result</th>
-          </tr>
-        </thead>
-        <tbody>
-          {legs.map((leg: any, i: number) => (
-            <Fragment key={leg.id ?? i}>
-              <tr
-                className={cn(
-                  "border-t border-white/5",
-                  i % 2 === 1 && "bg-muted/10",
-                  leg.result === "win" && "bg-primary/10",
-                  leg.result === "loss" && "bg-destructive/5",
-                  leg.game?.isFinished && !leg.result && "bg-amber-500/10"
-                )}
-              >
-                <td className="px-3 py-2 font-medium">
-                  <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                    {leg.gameSegment && (
-                      <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 leading-none shrink-0">
-                        {leg.gameSegment}
-                      </span>
-                    )}
-                    <span className="truncate max-w-[130px] text-xs">{legMatchup(leg)}</span>
-                  </div>
-                </td>
-                <td className="px-3 py-2 hidden sm:table-cell">
-                  <Badge variant="outline" className="text-xs px-1.5 py-0">
-                    {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
-                  </Badge>
-                </td>
-                <td className="px-3 py-2 text-muted-foreground text-xs">{formatPickLabel(leg)}</td>
-                {!compact && (
-                  <td className="px-3 py-2 text-muted-foreground hidden md:table-cell text-xs">{leg.line || "—"}</td>
-                )}
-                {!compact && (
-                  <td className="px-3 py-2 text-muted-foreground hidden md:table-cell text-xs">{leg.odds || "—"}</td>
-                )}
-                <td className="px-3 py-2 font-medium text-xs">
-                  <ParlayLegResultBadge leg={leg} game={leg.game} />
-                </td>
-              </tr>
-              {leg.notes && (
-                <tr className="border-t border-white/5">
-                  <td
-                    colSpan={compact ? 3 : 5}
-                    className="px-4 py-1.5 text-xs text-muted-foreground italic border-l-2 border-white/10"
-                  >
-                    {leg.notes}
-                  </td>
-                </tr>
-              )}
-            </Fragment>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // ── LegsWithParlayTable ──────────────────────────────────────────────────────
-// Like LegTable, but for legs pulled from multiple parlays at once — shows
-// which parlay each leg belongs to (week/#id/status, and who owns it when
-// it isn't the current user's own parlay).
+// Flat per-leg rows pulled from (potentially) multiple parlays at once — shows
+// which parlay each leg belongs to (week/#id, and who owns it when it isn't
+// the current user's own parlay). Only calls out the parlay when it won —
+// losing parlays render with no red status framing, per the "lookthrough"
+// design: we highlight wins, not losses.
 
 function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
   if (legs.length === 0) {
     return <p className="text-sm text-muted-foreground italic py-2 px-1">No legs.</p>;
   }
   return (
-    <div className="rounded-lg overflow-hidden border border-white/5">
-      <table className="w-full text-sm">
+    <div className="rounded-lg border border-white/5 overflow-x-auto">
+      <table className="w-full min-w-[760px] text-sm">
         <thead>
           <tr className="bg-muted/30 text-muted-foreground text-xs">
             <th className="text-left px-3 py-2 font-medium">Parlay</th>
             <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
-            <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
+            <th className="text-left px-3 py-2 font-medium">Type</th>
             <th className="text-left px-3 py-2 font-medium">Pick</th>
+            <th className="text-left px-3 py-2 font-medium">Date</th>
+            <th className="text-left px-3 py-2 font-medium">Slate</th>
             <th className="text-left px-3 py-2 font-medium">Result</th>
           </tr>
         </thead>
@@ -226,8 +165,7 @@ function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
               className={cn(
                 "border-t border-white/5",
                 i % 2 === 1 && "bg-muted/10",
-                leg.result === "win" && "bg-primary/10",
-                leg.result === "loss" && "bg-destructive/5",
+                leg.parlay.status === "win" && "bg-green-500/10",
                 leg.game?.isFinished && !leg.result && "bg-amber-500/10"
               )}
             >
@@ -237,12 +175,11 @@ function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
                     {leg.parlay.week?.label ?? `Week ${leg.parlay.weekId}`}
                   </span>
                   <span className="text-[10px] text-muted-foreground/50">#{leg.parlay.id}</span>
-                  <Badge
-                    variant={getStatusVariant(leg.parlay.status)}
-                    className={cn("text-[10px] px-1 py-0", leg.parlay.status === "void" && "text-muted-foreground border-white/10")}
-                  >
-                    {leg.parlay.status === "void" ? "Void" : leg.parlay.status}
-                  </Badge>
+                  {leg.parlay.status === "win" && (
+                    <Badge variant="outline" className="text-[10px] px-1 py-0 border-green-500/40 text-green-400">
+                      Win
+                    </Badge>
+                  )}
                   {!leg.parlay.isOwnParlay && (
                     <span className="text-[10px] text-muted-foreground/70 italic">
                       via {getDisplayName(leg.parlay.owner, "Member")}
@@ -260,12 +197,20 @@ function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
                   <span className="truncate max-w-[130px] text-xs">{legMatchup(leg)}</span>
                 </div>
               </td>
-              <td className="px-3 py-2 hidden sm:table-cell">
+              <td className="px-3 py-2">
                 <Badge variant="outline" className="text-xs px-1.5 py-0">
                   {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
                 </Badge>
               </td>
               <td className="px-3 py-2 text-muted-foreground text-xs">{formatPickLabel(leg)}</td>
+              <td className="px-3 py-2 text-muted-foreground text-xs whitespace-nowrap">
+                {leg.game?.gameTime
+                  ? new Date(leg.game.gameTime).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "2-digit", day: "2-digit", year: "2-digit" })
+                  : "—"}
+              </td>
+              <td className="px-3 py-2 text-muted-foreground text-xs whitespace-nowrap">
+                {leg.game?.gameTime ? getSlate(new Date(leg.game.gameTime)) : "—"}
+              </td>
               <td className="px-3 py-2 font-medium text-xs">
                 <ParlayLegResultBadge leg={leg} game={leg.game} />
               </td>
@@ -277,24 +222,27 @@ function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
   );
 }
 
-// ── HistoryParlayCard ─────────────────────────────────────────────────────────
+// ── HistoryParlayTile ────────────────────────────────────────────────────────
+// Wraps the shared ParlayRollupCard (readOnly) with History-specific chrome:
+// a "copy bet slip" action and an opt-in view of every other league member's
+// parlay for the same week. Keeps the tile's own header/legs/badges/slate
+// display in one place (ParlayRollupCard) instead of duplicating it here.
 
-const HistoryParlayCard = memo(function HistoryParlayCard({
+function HistoryParlayTile({
   parlay,
   onCopySlip,
   copiedId,
-  initialCollapsed,
+  collapseSignal = 0,
+  expandSignal = 0,
+  defaultExpanded = false,
 }: {
   parlay: ParlayWithLegs;
-  onCopySlip: (p: any) => void;
+  onCopySlip: (p: ParlayWithLegs) => void;
   copiedId: number | null;
-  initialCollapsed: boolean;
+  collapseSignal?: number;
+  expandSignal?: number;
+  defaultExpanded?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(initialCollapsed);
-
-  useEffect(() => {
-    setCollapsed(initialCollapsed);
-  }, [initialCollapsed]);
   const [showAll, setShowAll] = useState(false);
 
   const {
@@ -317,194 +265,71 @@ const HistoryParlayCard = memo(function HistoryParlayCard({
     ? (allLeagueParlays ?? []).filter(p => p.weekId === parlay.weekId && p.id !== parlay.id)
     : [];
 
-  const wins     = parlay.legs.filter((l: any) => l.result === "win").length;
-  const losses   = parlay.legs.filter((l: any) => l.result === "loss").length;
-  const pushes   = parlay.legs.filter((l: any) => l.result === "push").length;
-  const resolved = wins + losses + pushes;
-  const pct      = resolved > 0 ? Math.round((wins / resolved) * 100) : 0;
-  const perfect  = pct === 100 && resolved > 0;
-  const pending  = parlay.legs.filter((l: any) => !l.result).length;
+  if (parlay.status === "void") {
+    return (
+      <Card className="border-white/5 bg-card/20 opacity-60" data-testid={`card-parlay-history-${parlay.id}`}>
+        <CardContent className="p-4">
+          <p className="text-sm font-medium text-muted-foreground">
+            {parlay.week?.label ?? `Week ${parlay.weekId}`} — No submission
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
-    <Card
-      className={cn("border-white/5", parlay.status === "void" ? "bg-card/20 opacity-60" : "bg-card/50")}
-      data-testid={`card-parlay-history-${parlay.id}`}
-    >
-      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
-        <div className="flex items-center gap-3 min-w-0">
-          {/* Collapse toggle */}
-          <button
-            className="text-muted-foreground hover:text-foreground transition-colors shrink-0"
-            onClick={() => setCollapsed(c => !c)}
-            title={collapsed ? "Expand" : "Collapse"}
-          >
-            <ChevronRight
-              className={cn("w-4 h-4 transition-transform duration-150", !collapsed && "rotate-90")}
-            />
-          </button>
+    <div className="space-y-3" data-testid={`card-parlay-history-${parlay.id}`}>
+      <CardErrorBoundary parlayId={parlay.id}>
+        <ParlayRollupCard
+          parlay={parlay}
+          leagueId={parlay.leagueId}
+          readOnly
+          collapseSignal={collapseSignal}
+          expandSignal={expandSignal}
+          defaultExpanded={defaultExpanded}
+          onCopySlip={onCopySlip}
+          copiedId={copiedId}
+        />
+      </CardErrorBoundary>
 
-          {/* Avatar */}
-          <div
-            className={cn(
-              "w-8 h-8 rounded-full flex items-center justify-center text-primary-foreground shrink-0",
-              parlay.status === "void" ? "bg-muted" : perfect ? "bg-gradient-to-tr from-green-400 to-primary" : "bg-gradient-to-tr from-primary to-accent"
-            )}
-          >
-            <Calendar className="w-4 h-4" />
-          </div>
+      <div className="flex items-center gap-2.5 pl-2">
+        <Checkbox
+          id={`show-all-${parlay.id}`}
+          checked={showAll}
+          onCheckedChange={v => setShowAll(!!v)}
+        />
+        <label
+          htmlFor={`show-all-${parlay.id}`}
+          className="text-sm text-muted-foreground cursor-pointer select-none"
+        >
+          Show all league members' picks for this week
+        </label>
+        {loadingAll && showAll && (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+        )}
+      </div>
 
-          {/* Week + date */}
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <p className={cn("font-bold truncate", parlay.status === "void" && "text-muted-foreground")}>
-                {parlay.week?.label ?? `Week ${parlay.weekId}`}
-              </p>
-              {perfect && (
-                <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-[10px] px-1 py-0 h-4">
-                  Perfect
-                </Badge>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground truncate">
-              {parlay.status === "void" ? "No submission" : `${parlay.legs.length} leg parlay`}
-              {parlay.createdAt && (
-                <span className="ml-2 text-muted-foreground/60">
-                  {format(new Date(parlay.createdAt), "MMM d, yyyy")}
-                </span>
-              )}
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Win stats */}
-          {resolved > 0 && (
-            <span
-              className={cn(
-                "text-xs font-semibold tabular-nums",
-                pct >= 60 ? "text-green-400" : pct >= 40 ? "text-yellow-400" : "text-red-400"
-              )}
-            >
-              {wins}
-              <span className="text-muted-foreground/50 font-normal">/{resolved}</span>
-              <span className="ml-1 text-muted-foreground/60 font-normal">({pct}%)</span>
-            </span>
-          )}
-          {pending > 0 && resolved === 0 && (
-            <span className="text-xs text-muted-foreground/50">{pending} pending</span>
-          )}
-
-          <Badge
-            variant={getStatusVariant(parlay.status)}
-            className={parlay.status === "void" ? "text-muted-foreground border-white/10" : ""}
-          >
-            {parlay.status === "void" ? "Void" : parlay.status}
-          </Badge>
-
-          {parlay.status !== "void" && (
-            <button
-              onClick={() => onCopySlip(parlay)}
-              title="Copy bet slip"
-              className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors"
-            >
-              {copiedId === parlay.id
-                ? <Check className="w-3.5 h-3.5 text-green-400" />
-                : <Copy className="w-3.5 h-3.5" />}
-            </button>
-          )}
-        </div>
-      </CardHeader>
-
-      {!collapsed && (
-        <CardContent>
-          {parlay.status === "void" ? (
-            <p className="text-sm text-muted-foreground italic">No submission — missed this week</p>
-          ) : (
-            <>
-              {/* My legs */}
-              <LegTable legs={parlay.legs} />
-
-              {/* Show full parlay toggle */}
-              <div className="mt-4 flex items-center gap-2.5">
-                <Checkbox
-                  id={`show-all-${parlay.id}`}
-                  checked={showAll}
-                  onCheckedChange={v => setShowAll(!!v)}
-                />
-                <label
-                  htmlFor={`show-all-${parlay.id}`}
-                  className="text-sm text-muted-foreground cursor-pointer select-none"
-                >
-                  Show all league members' picks for this week
-                </label>
-                {loadingAll && showAll && (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
-                )}
-              </div>
-
-              {/* Other members */}
-              {showAll && !loadingAll && otherParlays.length === 0 && (
-                <p className="mt-3 text-sm text-muted-foreground italic">
-                  No other members submitted a parlay this week.
-                </p>
-              )}
-
-              {showAll && otherParlays.length > 0 && (
-                <div className="mt-4 space-y-3">
-                  <p className="text-xs text-muted-foreground uppercase font-medium tracking-wide">
-                    Other members ({otherParlays.length})
-                  </p>
-                  {otherParlays.map(other => {
-                    const displayName = getDisplayName(other.user, "Member");
-                    const oWins     = other.legs.filter((l: any) => l.result === "win").length;
-                    const oLosses   = other.legs.filter((l: any) => l.result === "loss").length;
-                    const oPushes   = other.legs.filter((l: any) => l.result === "push").length;
-                    const oResolved = oWins + oLosses + oPushes;
-                    const oPct      = oResolved > 0 ? Math.round((oWins / oResolved) * 100) : 0;
-
-                    return (
-                      <div key={other.id} className="rounded-lg border border-white/5 bg-muted/10 overflow-hidden">
-                        <div className="flex items-center justify-between px-3 py-2 bg-muted/20 border-b border-white/5">
-                          <span className="text-sm font-semibold flex items-center gap-2">
-                            <div className="w-6 h-6 rounded-full bg-gradient-to-tr from-primary to-accent flex items-center justify-center text-primary-foreground text-xs font-bold shrink-0">
-                              {displayName[0]}
-                            </div>
-                            {displayName}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            {oResolved > 0 && (
-                              <span
-                                className={cn(
-                                  "text-xs font-semibold tabular-nums",
-                                  oPct >= 60 ? "text-green-400" : oPct >= 40 ? "text-yellow-400" : "text-red-400"
-                                )}
-                              >
-                                {oWins}/{oResolved} ({oPct}%)
-                              </span>
-                            )}
-                            <Badge
-                              variant={getStatusVariant(other.status)}
-                              className="text-xs"
-                            >
-                              {other.status}
-                            </Badge>
-                          </div>
-                        </div>
-                        <div className="p-2">
-                          <LegTable legs={other.legs} compact />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          )}
-        </CardContent>
+      {showAll && !loadingAll && otherParlays.length === 0 && (
+        <p className="text-sm text-muted-foreground italic pl-2">
+          No other members submitted a parlay this week.
+        </p>
       )}
-    </Card>
+
+      {showAll && otherParlays.length > 0 && (
+        <div className="space-y-3 pl-2">
+          <p className="text-xs text-muted-foreground uppercase font-medium tracking-wide">
+            Other members ({otherParlays.length})
+          </p>
+          {otherParlays.map(other => (
+            <CardErrorBoundary key={other.id} parlayId={other.id}>
+              <ParlayRollupCard parlay={other} leagueId={other.leagueId} readOnly defaultExpanded={defaultExpanded} />
+            </CardErrorBoundary>
+          ))}
+        </div>
+      )}
+    </div>
   );
-});
+}
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -514,7 +339,8 @@ export default function History() {
   const { data: leagues } = useLeagues();
   const [selectedLeagueId, setSelectedLeagueId] = useState<string>("all");
   const [copiedId, setCopiedId] = useState<number | null>(null);
-  const [allCollapsed, setAllCollapsed] = useState(true);
+  const [collapseSignal, setCollapseSignal] = useState(0);
+  const [expandSignal, setExpandSignal] = useState(0);
   const [legsCollapsed, setLegsCollapsed] = useState(true);
   const [viewMode, setViewMode] = useState<"tiles" | "grid">("tiles");
   const [legQuery, setLegQuery] = useState("");
@@ -526,6 +352,7 @@ export default function History() {
   const [ownPicksOnly, setOwnPicksOnly] = useState(true);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [selectedBetTypes, setSelectedBetTypes] = useState<string[]>([]);
+  const [historyDateRangeMode, setHistoryDateRangeMode] = useState<DateRangeMode>("all");
   const [historyDateRange, setHistoryDateRange] = useState<HistoryDateRange>({});
 
   const handleCopySlip = async (parlay: Parameters<typeof buildSlipText>[0]) => {
@@ -540,14 +367,14 @@ export default function History() {
   };
 
   const leagueId = selectedLeagueId === "all" ? undefined : Number(selectedLeagueId);
-  const { data: parlays, isLoading } = useMyParlayHistory(leagueId);
   const { data: myLegs } = useMyLegHistory(leagueId);
   const [activeTile, setActiveTile] = useState<TileKey | null>(null);
 
-  // Unchecking "My picks only" reveals other members' picks. When a specific
-  // league is selected we use its paginated endpoint (infinite-scrolled below);
-  // on "All Leagues" there's no single league to scope that to, so we merge
-  // results across every league the user belongs to instead.
+  // "My picks only" is a leg-level filter, not a data-source switch: every
+  // parlay tile the user has at least one leg in stays visible (owned or
+  // not) — only the legs shown inside it narrow down to the user's own. So
+  // the underlying parlay data is always "everyone in scope", regardless of
+  // the toggle; canShowOthers only controls the member-picker filter below.
   const canShowOthers = !ownPicksOnly;
   const { data: members } = useLeagueMembersWithUsers(leagueId ?? 0);
   const memberOptions = useMemo(
@@ -560,22 +387,24 @@ export default function History() {
     hasNextPage: hasNextAllLeaguePage,
     fetchNextPage: fetchNextAllLeaguePage,
     isFetchingNextPage: fetchingNextAllLeaguePage,
-  } = useAllLeagueParlaysReadOnly(leagueId ?? 0, canShowOthers && leagueId !== undefined);
+    isLoading: loadingSingleLeagueParlays,
+  } = useAllLeagueParlaysReadOnly(leagueId ?? 0, leagueId !== undefined);
 
   useEffect(() => {
-    if (canShowOthers && leagueId !== undefined && hasNextAllLeaguePage && !fetchingNextAllLeaguePage) {
+    if (leagueId !== undefined && hasNextAllLeaguePage && !fetchingNextAllLeaguePage) {
       void fetchNextAllLeaguePage();
     }
-  }, [canShowOthers, leagueId, hasNextAllLeaguePage, fetchingNextAllLeaguePage, fetchNextAllLeaguePage]);
+  }, [leagueId, hasNextAllLeaguePage, fetchingNextAllLeaguePage, fetchNextAllLeaguePage]);
 
   const allMemberLeagueIds = useMemo(() => (leagues ?? []).map(l => l.id), [leagues]);
-  const { data: allLeaguesOthersParlays } = useAllMyLeaguesParlaysReadOnly(
+  const { data: allLeaguesOthersParlays, isLoading: loadingAllLeaguesParlays } = useAllMyLeaguesParlaysReadOnly(
     allMemberLeagueIds,
-    canShowOthers && leagueId === undefined,
+    leagueId === undefined,
   );
 
   const allLeagueParlays = leagueId !== undefined ? flattenParlayPages(allLeaguePages) : allLeaguesOthersParlays;
-  const baseParlays = canShowOthers ? allLeagueParlays : (parlays ?? []);
+  const baseParlays = allLeagueParlays;
+  const isLoading = leagueId !== undefined ? loadingSingleLeagueParlays : loadingAllLeaguesParlays;
 
   const baseLegs: ParlayLegWithParlayContext[] = useMemo(() => {
     if (!canShowOthers) return myLegs ?? [];
@@ -712,7 +541,7 @@ export default function History() {
   const activeTileInfo = activeTile ? tileInfo[activeTile] : null;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 pb-12">
+    <div className="max-w-screen-2xl mx-auto space-y-8 pb-12">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-card/30 p-6 rounded-2xl border border-white/5 backdrop-blur-sm">
         <div>
@@ -780,7 +609,12 @@ export default function History() {
             />
           </div>
 
-          <HistoryDateRangeFilter value={historyDateRange} onChange={(_mode, range) => setHistoryDateRange(range)} />
+          <HistoryDateRangeFilter
+            mode={historyDateRangeMode}
+            range={historyDateRange}
+            onModeChange={setHistoryDateRangeMode}
+            onRangeChange={setHistoryDateRange}
+          />
 
           <button
             type="button"
@@ -907,9 +741,9 @@ export default function History() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-muted-foreground">
               {filteredParlays.length} of {baseParlays.length} parlay{baseParlays.length !== 1 ? "s" : ""}
-              {parlayQuery.trim() || selectedBetTypes.length > 0 || selectedMemberIds.length > 0 || historyDateRange.startDate
+              {parlayQuery.trim() || selectedBetTypes.length > 0 || selectedMemberIds.length > 0 || historyDateRange.startDate || ownPicksOnly
                 ? " match"
-                : ownPicksOnly ? " I have created" : " in this league"}
+                : " in this league"}
             </p>
             <div className="flex items-center gap-2">
               <ToggleGroup
@@ -926,13 +760,10 @@ export default function History() {
                 </ToggleGroupItem>
               </ToggleGroup>
               {viewMode === "tiles" && (
-                <button
-                  onClick={() => setAllCollapsed(c => !c)}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors px-2.5 py-1.5 rounded-md hover:bg-white/5"
-                >
-                  <ChevronsUpDown className="w-3.5 h-3.5" />
-                  {allCollapsed ? "Expand All" : "Collapse All"}
-                </button>
+                <ExpandCollapseControls
+                  onCollapseAll={() => setCollapseSignal(s => s + 1)}
+                  onExpandAll={() => setExpandSignal(s => s + 1)}
+                />
               )}
             </div>
           </div>
@@ -988,11 +819,12 @@ export default function History() {
                       className="absolute top-0 left-0 w-full pb-4"
                       style={{ transform: `translateY(${virtualRow.start}px)` }}
                     >
-                      <HistoryParlayCard
+                      <HistoryParlayTile
                         parlay={parlay}
                         onCopySlip={handleCopySlip}
                         copiedId={copiedId}
-                        initialCollapsed={allCollapsed}
+                        collapseSignal={collapseSignal}
+                        expandSignal={expandSignal}
                       />
                     </div>
                   );
@@ -1001,12 +833,13 @@ export default function History() {
             </div>
           ) : (
             filteredParlays.map(parlay => (
-              <HistoryParlayCard
+              <HistoryParlayTile
                 key={parlay.id}
                 parlay={parlay}
                 onCopySlip={handleCopySlip}
                 copiedId={copiedId}
-                initialCollapsed={allCollapsed}
+                collapseSignal={collapseSignal}
+                expandSignal={expandSignal}
               />
             ))
           )}
@@ -1072,7 +905,7 @@ export default function History() {
 
       {/* Tile drill-down */}
       <Dialog open={activeTile !== null} onOpenChange={open => !open && setActiveTile(null)}>
-        <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{activeTileInfo?.title}</DialogTitle>
           </DialogHeader>
@@ -1082,12 +915,12 @@ export default function History() {
             ) : (
               <div className="space-y-4">
                 {activeTileInfo.items.map(p => (
-                  <HistoryParlayCard
+                  <HistoryParlayTile
                     key={p.id}
                     parlay={p}
                     onCopySlip={handleCopySlip}
                     copiedId={copiedId}
-                    initialCollapsed={false}
+                    defaultExpanded
                   />
                 ))}
               </div>

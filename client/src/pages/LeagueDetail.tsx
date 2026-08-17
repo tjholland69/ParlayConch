@@ -1,7 +1,7 @@
-import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction } from "react";
+import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory } from "@/hooks/use-bets";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords } from "@/hooks/use-bets";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -12,7 +12,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2 } from "lucide-react";
+import { Trophy, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2, Award, Flame, Shield, User, Dices, TrendingUp, TrendingDown } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -23,6 +23,7 @@ import { ParlayRollupCard } from "@/components/ParlayRollupCard";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
+import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
 import { PageLoader } from "@/components/PageLoader";
 import { UserAvatar } from "@/components/UserAvatar";
 import { getDisplayName, shortId } from "@/lib/displayName";
@@ -219,6 +220,17 @@ function StandingsList({ list }: { list: UserStat[] }) {
   );
 }
 
+const LEAGUE_RECORD_ICONS: Record<string, ElementType> = {
+  highestSingleLegOdds: Dices,
+  highestParlayOdds: TrendingUp,
+  mostParlayLosses: TrendingDown,
+  longestWinStreak: Flame,
+  longestLossStreak: AlertTriangle,
+  favoriteTeam: Shield,
+  favoritePlayer: User,
+  favoriteBetType: Dices,
+};
+
 export default function LeagueDetail() {
   const [, params] = useRoute("/leagues/:id");
   const leagueId = Number(params?.id);
@@ -307,6 +319,9 @@ export default function LeagueDetail() {
 
   // Members tab state
   const { data: members, isLoading: loadingMembers } = useLeagueMembersWithUsers(leagueId);
+
+  // Records tab state
+  const { data: leagueRecords, isLoading: loadingRecords } = useLeagueRecords(leagueId);
   const inviteByEmail = useInviteByEmail(leagueId);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmails, setInviteEmails] = useState<string[]>(['']);
@@ -372,7 +387,7 @@ export default function LeagueDetail() {
   const canSubmit = selectedLegs.length >= minLegs && selectedLegs.length <= maxLegs;
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6 pb-12">
+    <div className="max-w-screen-2xl mx-auto space-y-6 pb-12">
       {/* Demo Banner */}
       {league.isDemo && (
         <div className="flex items-center gap-3 px-5 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-yellow-400" data-testid="banner-demo-league">
@@ -499,6 +514,7 @@ export default function LeagueDetail() {
           <TabsTrigger value="open" data-testid="tab-open">Open Parlays</TabsTrigger>
           <TabsTrigger value="all" data-testid="tab-all">All Parlays</TabsTrigger>
           <TabsTrigger value="data" data-testid="tab-data">League Data</TabsTrigger>
+          <TabsTrigger value="records" data-testid="tab-records">Records</TabsTrigger>
           <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
         </TabsList>
 
@@ -1187,6 +1203,55 @@ export default function LeagueDetail() {
           )}
         </TabsContent>
 
+        {/* Records Tab */}
+        <TabsContent value="records" className="space-y-4">
+          <Card className="bg-card/50 border-white/5">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Award className="w-5 h-5 text-primary" />
+                League Records
+              </CardTitle>
+              <CardDescription>
+                Best-of records across every member's picks in this league — grows over time as new record types are added.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingRecords ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[1, 2, 3, 4, 5, 6].map(i => (
+                    <div key={i} className="h-24 bg-white/5 rounded-xl animate-pulse" />
+                  ))}
+                </div>
+              ) : !leagueRecords || leagueRecords.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic py-4">
+                  No decided picks yet — records will appear once the league has some history.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {leagueRecords.map(record => {
+                    const Icon = LEAGUE_RECORD_ICONS[record.key] ?? Trophy;
+                    const holderName = record.holderUserId
+                      ? getDisplayName(members?.find(m => m.userId === record.holderUserId)?.user, "Unknown")
+                      : null;
+                    return (
+                      <div key={record.key} className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                        <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
+                          <Icon className="w-3.5 h-3.5" />
+                          {record.label}
+                        </div>
+                        <p className="font-mono font-bold text-xl truncate">{record.value}</p>
+                        {holderName && (
+                          <p className="text-xs text-muted-foreground mt-1 truncate">{holderName}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Members Tab */}
         <TabsContent value="members" className="space-y-4">
           <Card className="bg-card/50 border-white/5">
@@ -1194,6 +1259,7 @@ export default function LeagueDetail() {
               <CardTitle className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-primary" />
                 League Members
+                <LeagueRolesDialog />
               </CardTitle>
               {league.isAdmin && (
                 <Button

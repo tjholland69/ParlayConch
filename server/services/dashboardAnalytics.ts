@@ -2,6 +2,7 @@ import { db } from "../db";
 import { storage } from "../storage";
 import { parlayLegs, parlays, weeks, leagueMembers, games, players } from "@shared/schema";
 import { eq, and, or, inArray, sql, isNotNull, ilike, exists, gte, lte } from "drizzle-orm";
+import { getSlate, SLATE_NAMES, type SlateName } from "@shared/slate";
 
 export interface UserSummary {
   leagueCount: number;
@@ -100,6 +101,8 @@ export interface UserPatterns {
   favoritePlayer: { name: string; count: number } | null;
   favoriteDay: { day: string; count: number } | null;
   favoriteTimeOfDay: { label: string; count: number } | null;
+  /** Full breakdown of legs across all 4 broadcast slates (zero-filled for unused slates). */
+  slateBreakdown: { slate: SlateName; count: number }[];
   /** Most-picked team across spread/moneyline legs (favorite or underdog side, whichever the user actually picked). */
   favoriteTeam: { team: string; count: number } | null;
   /** Which side of over/under the user leans toward, across game totals and numeric player props. */
@@ -109,27 +112,6 @@ export interface UserPatterns {
 /** Day of week the game kicked off, as observed in US Eastern time. */
 function easternDayName(date: Date): string {
   return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(date);
-}
-
-/**
- * NFL broadcast-slate bucket for a kickoff time, evaluated in US Eastern time
- * (the timezone the slates are defined against, regardless of server/client TZ).
- */
-function slateBucket(date: Date): string {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-  }).formatToParts(date);
-  const hour = Number(parts.find(p => p.type === "hour")?.value ?? "0") % 24;
-  const minute = Number(parts.find(p => p.type === "minute")?.value ?? "0");
-  const minutesSinceMidnight = hour * 60 + minute;
-
-  if (minutesSinceMidnight < 12 * 60) return "Morning";
-  if (minutesSinceMidnight < 16 * 60) return "Early Slate";
-  if (minutesSinceMidnight < 18 * 60 + 30) return "Afternoon";
-  return "Nighttime";
 }
 
 function topEntry<T extends string>(counts: Record<T, number>): { key: T; count: number } | null {
@@ -163,7 +145,7 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
   const betTypeCounts: Record<string, number> = {};
   const playerCounts: Record<string, number> = {};
   const dayCounts: Record<string, number> = {};
-  const timeCounts: Record<string, number> = {};
+  const timeCounts: Partial<Record<SlateName, number>> = {};
   const teamCounts: Record<string, number> = {};
   let overCount = 0;
   let underCount = 0;
@@ -196,7 +178,7 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
       const date = new Date(row.gameTime);
       const day = easternDayName(date);
       dayCounts[day] = (dayCounts[day] ?? 0) + 1;
-      const bucket = slateBucket(date);
+      const bucket = getSlate(date);
       timeCounts[bucket] = (timeCounts[bucket] ?? 0) + 1;
     }
   }
@@ -205,8 +187,9 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
   const topBetType = topEntry(betTypeCounts);
   const favoritePlayer = topEntry(playerCounts);
   const favoriteDay = topEntry(dayCounts);
-  const favoriteTimeOfDay = topEntry(timeCounts);
+  const favoriteTimeOfDay = topEntry(timeCounts as Record<SlateName, number>);
   const favoriteTeamEntry = topEntry(teamCounts);
+  const slateBreakdown = SLATE_NAMES.map(slate => ({ slate, count: timeCounts[slate] ?? 0 }));
 
   return {
     totalLegs: rows.length,
@@ -218,6 +201,7 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
     favoritePlayer: favoritePlayer ? { name: favoritePlayer.key, count: favoritePlayer.count } : null,
     favoriteDay: favoriteDay ? { day: favoriteDay.key, count: favoriteDay.count } : null,
     favoriteTimeOfDay: favoriteTimeOfDay ? { label: favoriteTimeOfDay.key, count: favoriteTimeOfDay.count } : null,
+    slateBreakdown,
     favoriteTeam: favoriteTeamEntry ? { team: favoriteTeamEntry.key, count: favoriteTeamEntry.count } : null,
     overUnderPreference:
       overCount + underCount > 0

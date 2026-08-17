@@ -2,6 +2,7 @@ import type { ParlayWithLegs } from "@shared/schema";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { legLabel } from "@/lib/legLabel";
 import { formatPickLabel } from "@/lib/formatPick";
+import { getSlate } from "@shared/slate";
 
 export type FlatParlayLegRow = {
   parlayId: number;
@@ -19,6 +20,10 @@ export type FlatParlayLegRow = {
   oddsSource: string;
   result: string;
   gameTime: string | null;
+  slate: string | null;
+  /** When this leg's outcome was actually decided — see parlayLegs.decidedAt. More
+   * precise than gameTime for "when did this settle" sorting/display. */
+  decidedAt: string | null;
 };
 
 /** Unrolls parlays into one row per parlay_leg, carrying parent parlay fields onto each row. */
@@ -43,6 +48,8 @@ export function flattenParlayLegs(parlays: ParlayWithLegs[]): FlatParlayLegRow[]
         oddsSource: leg.oddsSource || "—",
         result: leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—",
         gameTime: leg.game?.gameTime ? String(leg.game.gameTime) : null,
+        slate: leg.game?.gameTime ? getSlate(new Date(leg.game.gameTime)) : null,
+        decidedAt: leg.decidedAt ? String(leg.decidedAt) : null,
       });
     }
   }

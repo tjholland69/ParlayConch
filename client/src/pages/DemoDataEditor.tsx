@@ -1,7 +1,7 @@
 import { useState, useMemo, Suspense, lazy } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs, useMissingParlayMembers, useBackfillMissingParlays } from "@/hooks/use-bets";
+import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs, useMissingParlayMembers, useBackfillMissingParlays, useUpdateParlayLeg, useDeleteParlayLeg, useEnrichParlayLeg } from "@/hooks/use-bets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -11,18 +11,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine, UserX, LayoutGrid, Table2 } from "lucide-react";
-import { PLAYER_PROP_TYPES, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
+import { PLAYER_PROP_TYPES, type ParlayWithLegs, type ParlayLeg, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { ParlayRollupCard, LegSheet, blankLeg, BET_TYPES, RESULTS, type LegFormState } from "@/components/ParlayRollupCard";
+import { ParlayRollupCard, LegSheet, legToForm, blankLeg, BET_TYPES, RESULTS, type LegFormState } from "@/components/ParlayRollupCard";
 import { PageLoader } from "@/components/PageLoader";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { getDisplayName, shortId, sortByFirstName } from "@/lib/displayName";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
+import type { ParlayLegRowActions } from "@/components/ParlayLegsGrid";
 
 // AG Grid alone is ~1MB — only worth loading once someone actually asks
 // for the raw leg grid, not on every Data Editor page visit.
@@ -450,6 +452,7 @@ export default function DemoDataEditor() {
   const { data: weeks } = useWeeks();
   const { data: membersRaw } = useLeagueMembersWithUsers(leagueId);
   const members = useMemo(() => membersRaw ? sortByFirstName(membersRaw) : membersRaw, [membersRaw]);
+  const { toast } = useToast();
 
   const [yearFilter, setYearFilter] = useState<string>("all");
   const [weekFilter, setWeekFilter] = useState<string>("all");
@@ -465,6 +468,14 @@ export default function DemoDataEditor() {
   const [selectedLegIds, setSelectedLegIds] = useState<Set<number>>(new Set());
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"tiles" | "grid">("tiles");
+
+  // Grid ("Table" view) row actions — mirrors the per-leg edit/fetch/delete
+  // controls ParlayRollupCard offers in its non-readOnly tile view.
+  const updateGridLeg = useUpdateParlayLeg(leagueId);
+  const deleteGridLeg = useDeleteParlayLeg(leagueId);
+  const enrichGridLeg = useEnrichParlayLeg(leagueId);
+  const [gridEditLeg, setGridEditLeg] = useState<ParlayLeg | null>(null);
+  const [gridDeleteLegId, setGridDeleteLegId] = useState<number | null>(null);
 
   // Backfill only targets one concrete week — in "All Years" mode the week
   // filter can represent the same weekNumber across multiple season rows, so
@@ -569,8 +580,22 @@ export default function DemoDataEditor() {
 
   const selectedParlays = filtered.filter(p => selectedIds.has(p.id));
 
+  const gridRowActions: ParlayLegRowActions = {
+    onEdit: (row) => {
+      const leg = sorted.flatMap(p => p.legs).find(l => l.id === row.legId);
+      if (leg) setGridEditLeg(leg);
+    },
+    onFetch: (row) => {
+      enrichGridLeg.mutate(row.legId, {
+        onSuccess: () => toast({ title: "Fetched", description: `Leg #${row.legId} data refreshed.` }),
+        onError: (err: any) => toast({ title: "Fetch failed", description: err.message, variant: "destructive" }),
+      });
+    },
+    onDelete: (row) => setGridDeleteLegId(row.legId),
+  };
+
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-32">
+    <div className="max-w-screen-2xl mx-auto space-y-6 pb-32">
       {/* Header */}
       <div className="flex items-center gap-4">
         <Link href={`/leagues/${leagueId}`}>
@@ -758,7 +783,7 @@ export default function DemoDataEditor() {
         </div>
       ) : viewMode === "grid" ? (
         <Suspense fallback={<div className="h-[70vh] bg-white/5 rounded-xl animate-pulse" />}>
-          <ParlayLegsGrid rows={flattenParlayLegs(sorted)} />
+          <ParlayLegsGrid rows={flattenParlayLegs(sorted)} rowActions={gridRowActions} />
         </Suspense>
       ) : (
         <div className="space-y-4">
@@ -898,6 +923,45 @@ export default function DemoDataEditor() {
         weeks={weeks ?? []}
         members={members ?? []}
       />
+
+      {/* Grid ("Table" view) right-click actions — edit/fetch mirror the same
+          controls ParlayRollupCard offers per-leg in Rollup Tiles view. */}
+      {gridEditLeg && (
+        <LegSheet
+          key={gridEditLeg.id}
+          open={!!gridEditLeg}
+          onOpenChange={v => { if (!v) setGridEditLeg(null); }}
+          title="Edit Leg"
+          initial={legToForm(gridEditLeg)}
+          isSaving={updateGridLeg.isPending}
+          onSave={form => {
+            updateGridLeg.mutate(
+              { legId: gridEditLeg.id, updates: { ...form, result: form.result || null, line: form.line || null, odds: form.odds || null, playerName: form.playerName || null, propType: form.propType || null, gameSegment: form.gameSegment || null, notes: form.notes || null } },
+              { onSuccess: () => setGridEditLeg(null) }
+            );
+          }}
+        />
+      )}
+
+      <AlertDialog open={gridDeleteLegId !== null} onOpenChange={v => { if (!v) setGridDeleteLegId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove this leg?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the selected leg from its parlay.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90"
+              onClick={() => deleteGridLeg.mutate(gridDeleteLegId!, { onSuccess: () => setGridDeleteLegId(null) })}
+            >
+              Remove
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
