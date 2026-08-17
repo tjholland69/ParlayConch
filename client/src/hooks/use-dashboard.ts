@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@shared/routes";
+import type { SlateName } from "@shared/slate";
 
 export interface UserSummary {
   leagueCount: number;
@@ -23,6 +24,7 @@ export interface UserPatterns {
   favoritePlayer: { name: string; count: number } | null;
   favoriteDay: { day: string; count: number } | null;
   favoriteTimeOfDay: { label: string; count: number } | null;
+  slateBreakdown: { slate: SlateName; count: number }[];
   favoriteTeam: { team: string; count: number } | null;
   overUnderPreference: { pick: "over" | "under"; overCount: number; underCount: number } | null;
 }

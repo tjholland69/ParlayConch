@@ -131,39 +131,49 @@ function toISODate(d: Date): string {
 }
 
 /** All Time (default) / This Year / This Month / Custom — resolves to a concrete
- * startDate/endDate for the server; "All Time" sends no range at all. */
+ * startDate/endDate for the server; "All Time" sends no range at all.
+ *
+ * `mode` (which Select item is shown) and `range` (what's actually applied) are
+ * both controlled from the parent rather than mode living in local state here —
+ * splitting them across component boundaries let them drift out of sync after
+ * repeated toggling (the Select could show one mode while a stale range from an
+ * earlier selection stayed applied). Lifting both into the same parent state
+ * keeps them atomic. */
 function DateRangeFilter({
-  value,
-  onChange,
+  mode,
+  range,
+  onModeChange,
+  onRangeChange,
 }: {
-  value: DashboardDateRange;
-  onChange: (mode: DateRangeMode, range: DashboardDateRange) => void;
+  mode: DateRangeMode;
+  range: DashboardDateRange;
+  onModeChange: (mode: DateRangeMode) => void;
+  onRangeChange: (range: DashboardDateRange) => void;
 }) {
-  const [mode, setMode] = useState<DateRangeMode>("all");
   const [customRange, setCustomRange] = useState<DateRange | undefined>(undefined);
   const [popoverOpen, setPopoverOpen] = useState(false);
 
   const handleModeChange = (next: string) => {
     const m = next as DateRangeMode;
-    setMode(m);
+    onModeChange(m);
     if (m === "all") {
-      onChange(m, {});
+      onRangeChange({});
     } else if (m === "year") {
       const now = new Date();
-      onChange(m, { startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) });
+      onRangeChange({ startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) });
     } else if (m === "month") {
       const now = new Date();
-      onChange(m, { startDate: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: toISODate(now) });
+      onRangeChange({ startDate: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: toISODate(now) });
     } else {
       setPopoverOpen(true);
-      // Wait for explicit range selection before firing onChange.
+      // Wait for explicit range selection before firing onRangeChange.
     }
   };
 
-  const applyCustomRange = (range: DateRange | undefined) => {
-    setCustomRange(range);
-    if (range?.from && range?.to) {
-      onChange("custom", { startDate: toISODate(range.from), endDate: toISODate(range.to) });
+  const applyCustomRange = (r: DateRange | undefined) => {
+    setCustomRange(r);
+    if (r?.from && r?.to) {
+      onRangeChange({ startDate: toISODate(r.from), endDate: toISODate(r.to) });
       setPopoverOpen(false);
     }
   };
@@ -191,7 +201,7 @@ function DateRangeFilter({
               data-testid="button-custom-date-range"
             >
               <CalendarIcon className="w-3.5 h-3.5 mr-1.5" />
-              {value.startDate && value.endDate ? `${value.startDate} – ${value.endDate}` : "Pick dates"}
+              {range.startDate && range.endDate ? `${range.startDate} – ${range.endDate}` : "Pick dates"}
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-auto p-0">
@@ -353,6 +363,7 @@ function PerformanceChartSlide({
 export function Tile2Performance() {
   const [leagueFilter, setLeagueFilter] = useState(ALL_LEAGUES_VALUE);
   const [activeIndexIds, setActiveIndexIds] = useState<string[]>([DEFAULT_INDEX_ID]);
+  const [dateRangeMode, setDateRangeMode] = useState<DateRangeMode>("all");
   const [dateRange, setDateRange] = useState<DashboardDateRange>({});
 
   const toggleIndex = (id: string) =>
@@ -368,7 +379,12 @@ export function Tile2Performance() {
         <div className="flex items-center gap-2 flex-wrap justify-end">
           <LeagueFilter value={leagueFilter} onChange={setLeagueFilter} />
           <CompareAgainstFilter active={activeIndexIds} onToggle={toggleIndex} />
-          <DateRangeFilter value={dateRange} onChange={(_mode, range) => setDateRange(range)} />
+          <DateRangeFilter
+            mode={dateRangeMode}
+            range={dateRange}
+            onModeChange={setDateRangeMode}
+            onRangeChange={setDateRange}
+          />
         </div>
       }
       slides={[

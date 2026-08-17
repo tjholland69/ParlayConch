@@ -180,8 +180,21 @@ function AnalyticsSlide() {
         {data.favoriteDay && (
           <StatRow icon={CalendarDays} label="Most Active Day" value={`${data.favoriteDay.day} (${data.favoriteDay.count})`} />
         )}
-        {data.favoriteTimeOfDay && (
-          <StatRow icon={Clock} label="Most Active Slate" value={`${data.favoriteTimeOfDay.label} (${data.favoriteTimeOfDay.count})`} />
+        {data.slateBreakdown.some(s => s.count > 0) && (
+          <div className="p-4 rounded-xl bg-white/5 border border-white/10">
+            <div className="flex items-center gap-3 text-muted-foreground text-sm mb-3">
+              <Clock className="w-4 h-4" />
+              Slate Breakdown
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              {data.slateBreakdown.map(s => (
+                <div key={s.slate} className="flex items-center justify-between text-sm">
+                  <span className="text-muted-foreground">{s.slate}</span>
+                  <span className="font-mono font-bold">{s.count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
         )}
       </div>
     </div>

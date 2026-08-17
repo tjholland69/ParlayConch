@@ -19,6 +19,7 @@ import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries, getLeagueWeeklyWinRates } from "./services/dashboardAnalytics";
+import { getLeagueRecords } from "./services/leagueRecords";
 import { cacheGetJson, cacheSetJson } from "./cache";
 import { getWeeklyAnalyticsReport } from "./services/storyStudio/analyticsEngine";
 import { discoverStories } from "./services/storyStudio/storyDiscovery";
@@ -254,7 +255,7 @@ export async function registerRoutes(
 
   app.get("/api/dashboard/patterns", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
-    const cacheKey = `dashboard:patterns:${userId}`;
+    const cacheKey = `dashboard:patterns:v2:${userId}`;
     const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserPatterns>>>(cacheKey);
     if (cached) return res.json(cached);
     const patterns = await getUserPatterns(userId);
@@ -540,6 +541,16 @@ export async function registerRoutes(
     if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
     const stats = await storage.getLeagueDataStats(leagueId);
     res.json(stats);
+  });
+
+  app.get("/api/leagues/:id/records", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const records = await getLeagueRecords(leagueId);
+    res.json(records);
   });
 
   // Member-facing read-only view of all parlays across all weeks (no demo/admin gating)

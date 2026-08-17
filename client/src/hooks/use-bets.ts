@@ -187,6 +187,25 @@ export function useLeagueStats(leagueId: number) {
   });
 }
 
+export type LeagueRecordEntry = {
+  key: string;
+  label: string;
+  value: string;
+  holderUserId: string | null;
+};
+
+export function useLeagueRecords(leagueId: number) {
+  return useQuery<LeagueRecordEntry[]>({
+    queryKey: ["/api/leagues", leagueId, "records"],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/records`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch league records");
+      return res.json();
+    },
+    enabled: !!leagueId,
+  });
+}
+
 export function useCreateLeague() {
   const queryClient = useQueryClient();
   const { toast } = useToast();

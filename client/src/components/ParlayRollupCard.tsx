@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, Scissors, Info, Copy } from "lucide-react";
+import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, Scissors, Info, Copy, Check, Clock } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatPickLabel } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
@@ -26,6 +26,7 @@ import { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 import { legLabel } from "@/lib/legLabel";
 import { resultColor, statusColor } from "@/lib/parlayStatusStyles";
 import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
+import { getSlate } from "@shared/slate";
 
 export { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 
@@ -219,6 +220,12 @@ export type ParlayCardProps = {
   loserLabel?: string | null;
   /** League's chosen name for whoever's winning leg is decided last — one of HERO_LABEL_TEXT's keys. */
   heroLabel?: string | null;
+  /** When provided (readOnly views only), shows a "copy bet slip" button in the header. */
+  onCopySlip?: (parlay: ParlayWithLegs) => void;
+  /** Id of the parlay whose slip was most recently copied — swaps the copy icon to a checkmark. */
+  copiedId?: number | null;
+  /** Mount already expanded instead of the default collapsed state — e.g. a drill-down dialog. */
+  defaultExpanded?: boolean;
 };
 
 const LOSER_LABEL_TEXT: Record<string, string> = {
@@ -296,6 +303,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   legSelectMode = false, selectedLegIds, onToggleLegSelect = () => {},
   collapseSignal = 0, expandSignal = 0, versionNumber, readOnly = false,
   participationRate = 1, loserLabel = "parlay_loser", heroLabel = "parlay_hero",
+  onCopySlip, copiedId = null, defaultExpanded = false,
 }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
   const deleteLeg = useDeleteParlayLeg(leagueId);
@@ -324,7 +332,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const [enrichResults, setEnrichResults] = useState<Record<number, EnrichLog>>({});
   const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
   const [fetchAllState, setFetchAllState] = useState<{ running: boolean; done: number; total: number; errors: number } | null>(null);
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(!defaultExpanded);
   React.useEffect(() => { if (collapseSignal > 0) setCollapsed(true); }, [collapseSignal]);
   React.useEffect(() => { if (expandSignal > 0) setCollapsed(false); }, [expandSignal]);
   const [splitMode, setSplitMode] = useState(false);
@@ -360,6 +368,14 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const heroMemberName = heroLeg?.user
     ? getDisplayName(heroLeg.user, `User #${shortId(heroLeg.userId)}`)
     : memberName;
+
+  // Slate the parlay expired in: the decisive leg's game finish time — the
+  // leg that killed the parlay (bustedLeg) for a loss, or the leg that
+  // clinched it last (heroLeg) for a win. Same timestamp source as the
+  // Loser/Hero labels above, just bucketed into a broadcast slate.
+  const decisiveLeg = bustedLeg ?? heroLeg;
+  const decisiveFinishTime = decisiveLeg?.decidedAt ?? decisiveLeg?.game?.finishedAt ?? null;
+  const decidedSlate = decisiveFinishTime ? getSlate(new Date(decisiveFinishTime)) : null;
 
   const sortedLegs = [...parlay.legs].sort((a, b) => {
     const aTime = a.game?.gameTime ? new Date(a.game.gameTime).getTime() : Infinity;
@@ -441,6 +457,11 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
               </div>
               {bustedLeg || heroLeg ? (
                 <div className="flex items-center gap-2 flex-wrap">
+                  {readOnly && parlay.status === "win" && (
+                    <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-green-500/40 text-green-400">
+                      Win
+                    </Badge>
+                  )}
                   {bustedLeg && (
                     <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-destructive/40 text-destructive">
                       {loserLabelText}: {memberName}
@@ -451,8 +472,20 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                       {heroLabelText}: {heroMemberName}
                     </Badge>
                   )}
+                  {decidedSlate && (
+                    <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-white/15 text-muted-foreground gap-1">
+                      <Clock className="w-3 h-3" />
+                      {decidedSlate}
+                    </Badge>
+                  )}
                 </div>
-              ) : null}
+              ) : (
+                readOnly && parlay.status === "win" && (
+                  <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal w-fit border-green-500/40 text-green-400">
+                    Win
+                  </Badge>
+                )
+              )}
             </div>
 
             {/* ── Parlay leg stats summary ─────────────────────── */}
@@ -495,6 +528,18 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
               )}
               (Started by {memberName})
             </span>
+
+            {readOnly && onCopySlip && parlay.status !== "void" && (
+              <button
+                onClick={e => { e.stopPropagation(); onCopySlip(parlay); }}
+                title="Copy bet slip"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0"
+              >
+                {copiedId === parlay.id
+                  ? <Check className="w-3.5 h-3.5 text-green-400" />
+                  : <Copy className="w-3.5 h-3.5" />}
+              </button>
+            )}
 
             {!readOnly && !selectMode && (
               <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
@@ -605,19 +650,20 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
           {parlay.legs.length === 0 ? (
             <p className="text-sm text-muted-foreground italic py-2">No legs yet.</p>
           ) : (
-            <div className="rounded-lg overflow-hidden border border-white/5">
-              <table className="w-full text-sm">
+            <div className="rounded-lg border border-white/5 overflow-x-auto">
+              <table className="w-full min-w-[920px] text-sm">
                 <thead>
                   <tr className="bg-muted/30 text-muted-foreground text-xs">
                     {(splitMode || legSelectMode) && <th className="px-3 py-2 w-8" />}
                     <th className="text-left px-3 py-2 font-medium">Bet Owner</th>
                     <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
-                    <th className="text-left px-3 py-2 font-medium hidden sm:table-cell">Type</th>
+                    <th className="text-left px-3 py-2 font-medium">Type</th>
                     <th className="text-left px-3 py-2 font-medium">Pick</th>
-                    <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Line</th>
-                    <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Odds</th>
-                    <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Date</th>
-                    <th className="text-left px-3 py-2 font-medium hidden lg:table-cell">Kickoff (ET)</th>
+                    <th className="text-left px-3 py-2 font-medium">Line</th>
+                    <th className="text-left px-3 py-2 font-medium">Odds</th>
+                    <th className="text-left px-3 py-2 font-medium">Date</th>
+                    <th className="text-left px-3 py-2 font-medium">Kickoff (ET)</th>
+                    <th className="text-left px-3 py-2 font-medium">Slate</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
                     <th className="px-2 py-2 w-8" />
                     <th className="px-2 py-2 w-8" />
@@ -649,7 +695,8 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                             splitMode && splitSelected.has(leg.id) && "bg-primary/10",
                             legSelectMode && "cursor-pointer hover:bg-primary/5",
                             legSelectMode && selectedLegIds?.has(leg.id) && "bg-primary/10",
-                            leg.game?.isFinished && !leg.result && "bg-amber-500/10"
+                            leg.game?.isFinished && !leg.result && "bg-amber-500/10",
+                            parlay.status === "win" && "bg-green-500/10"
                           )}
                           onClick={splitMode ? () => toggleSplitLeg(leg.id) : legSelectMode ? () => onToggleLegSelect(leg.id) : undefined}
                         >
@@ -709,26 +756,29 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                             </div>
                           </td>
                           <td className="px-3 py-2 font-medium truncate max-w-[160px] sm:max-w-[220px] lg:max-w-none">{legLabel(leg)}</td>
-                          <td className="px-3 py-2 hidden sm:table-cell">
+                          <td className="px-3 py-2">
                             <Badge variant="outline" className="text-xs px-1.5 py-0">
                               {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
                             </Badge>
                           </td>
                           <td className="px-3 py-2 text-muted-foreground">{formatPickLabel(leg)}</td>
-                          <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">{leg.line || "—"}</td>
-                          <td className="px-3 py-2 text-muted-foreground hidden md:table-cell">
+                          <td className="px-3 py-2 text-muted-foreground">{leg.line || "—"}</td>
+                          <td className="px-3 py-2 text-muted-foreground">
                             {leg.odds || "—"}
                             {leg.oddsSource && <span className="block text-[10px] text-muted-foreground/60">{leg.oddsSource}</span>}
                           </td>
-                          <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
+                          <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
                             {leg.game?.gameTime
                               ? new Date(leg.game.gameTime).toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "short", month: "2-digit", day: "2-digit" })
                               : "—"}
                           </td>
-                          <td className="px-3 py-2 text-muted-foreground hidden lg:table-cell whitespace-nowrap">
+                          <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
                             {leg.game?.gameTime
                               ? new Date(leg.game.gameTime).toLocaleTimeString(undefined, { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })
                               : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                            {leg.game?.gameTime ? getSlate(new Date(leg.game.gameTime)) : "—"}
                           </td>
                           <td className="px-3 py-2 font-medium">
                             <ParlayLegResultBadge leg={leg} game={leg.game} />
@@ -817,7 +867,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                         </tr>
                         {activeLog && isExpanded && (
                           <tr key={`log-${leg.id}`} className="border-t border-white/5">
-                            <td colSpan={9} className="px-3 pb-3">
+                            <td colSpan={10} className="px-3 pb-3">
                               <LegLogPanel
                                 log={activeLog}
                                 onClose={() => setExpandedLogs(e => ({ ...e, [leg.id]: false }))}

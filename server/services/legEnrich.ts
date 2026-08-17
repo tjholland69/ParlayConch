@@ -5,8 +5,12 @@ import { parlayLegs, games, players, playerWeekStats } from "@shared/schema";
 import type { Game, ParlayLeg, PlayerWeekStat, Player } from "@shared/schema";
 import { storage } from "../storage";
 import { syncGameScoresFromNflverse, syncAllPlayerStatsForWeek } from "./nflverse";
+import { syncDefensiveStatsFromEspn } from "./espnBoxscore";
+import { syncGameFinishTimesFromPlayByPlay } from "./playByPlay";
 import { getHistoricalGameLines } from "./historicalOddsCache";
 import { buildResultDetail } from "@shared/legJustification";
+
+const DEFENSIVE_PROP_TYPES = new Set(["sacks", "tackles"]);
 
 export type EnrichLog = {
   at: string;
@@ -95,6 +99,20 @@ function calcPropResult(
     }
     actual = (stat.rushingYards ?? 0) + (stat.receivingYards ?? 0);
     statLabel = "all_purpose_yards";
+  } else if (propType === "tackles") {
+    // Conventionally graded as solo + assisted combined — see schema comment
+    // on playerWeekStats.defTacklesSolo/defTacklesWithAssist.
+    if (stat.defTacklesSolo == null && stat.defTacklesWithAssist == null) {
+      return { result: null, actual: null, note: `No tackle stats tracked for this player/week (defensive stats come from ESPN, not nflverse)` };
+    }
+    actual = (stat.defTacklesSolo ?? 0) + (stat.defTacklesWithAssist ?? 0);
+    statLabel = "tackles";
+  } else if (propType === "sacks") {
+    if (stat.defSacks == null) {
+      return { result: null, actual: null, note: `No sack stats tracked for this player/week (defensive stats come from ESPN, not nflverse)` };
+    }
+    actual = stat.defSacks;
+    statLabel = "sacks";
   } else {
     const statKey = PROP_STAT_MAP[propType];
     if (!statKey) {
@@ -169,9 +187,10 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
         return saveLog(legId, log);
       }
 
+      const isDefensiveProp = !!leg.propType && DEFENSIVE_PROP_TYPES.has(leg.propType);
       let playerStat = await storage.getPlayerStatByName(leg.playerName, season, weekNumber);
 
-      if (!playerStat) {
+      if (!playerStat && !isDefensiveProp) {
         log.changes.push(`Player "${leg.playerName}" not in local DB — fetching from nflverse (all teams, season ${season} week ${weekNumber})…`);
         try {
           // Use the team-unrestricted sync so players on any team can be found,
@@ -184,12 +203,27 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
           return saveLog(legId, log);
         }
         playerStat = await storage.getPlayerStatByName(leg.playerName, season, weekNumber);
-      } else {
+      } else if (playerStat) {
         log.changes.push(`Player stats found in local DB`);
       }
 
+      // nflverse's weekly file has no defensive columns (sacks/tackles) at all,
+      // and often omits players with zero offensive counting stats entirely —
+      // ESPN's boxscore is the only source for those, so always top it up for
+      // defensive props rather than relying on the nflverse fetch above.
+      if (isDefensiveProp && (!playerStat || (playerStat.defSacks == null && playerStat.defTacklesSolo == null && playerStat.defTacklesWithAssist == null))) {
+        log.changes.push(`Defensive prop — fetching sacks/tackles from ESPN boxscore (season ${season} week ${weekNumber})…`);
+        try {
+          const espnResult = await syncDefensiveStatsFromEspn(season, weekNumber);
+          log.changes.push(`ESPN sync: ${espnResult.matched}/${espnResult.events} game(s) matched, ${espnResult.players} player(s), ${espnResult.stats} stat row(s)`);
+        } catch (err: any) {
+          log.errors.push(`ESPN defensive stats fetch failed: ${err.message}`);
+        }
+        playerStat = await storage.getPlayerStatByName(leg.playerName, season, weekNumber);
+      }
+
       if (!playerStat) {
-        log.errors.push(`"${leg.playerName}" not found in nflverse for Season ${season} Week ${weekNumber}`);
+        log.errors.push(`"${leg.playerName}" not found in ${isDefensiveProp ? "ESPN boxscore" : "nflverse"} for Season ${season} Week ${weekNumber}`);
         log.warnings.push("Check: player name spelling, correct season/week, data available ~24h after game");
         return saveLog(legId, log);
       }
@@ -235,6 +269,21 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
       } catch (err: any) {
         log.errors.push(`nflverse score fetch failed: ${err.message}`);
         return saveLog(legId, log);
+      }
+
+      // The score sync above stamps games.finishedAt at the moment THIS sync
+      // runs, not the game's actual final whistle — fine for a single leg
+      // finishing in isolation, but every game in a batch/slate ends up with
+      // ~the same timestamp otherwise (breaks Hero/Loser ordering and sorting
+      // by "when did this settle"). Re-derive the precise finish time from
+      // play-by-play right away rather than waiting on the scheduled job.
+      try {
+        const finishResult = await syncGameFinishTimesFromPlayByPlay(season, [weekNumber]);
+        if (finishResult.updated > 0) {
+          log.changes.push(`Play-by-play: precise finish time set for ${finishResult.updated} game(s)`);
+        }
+      } catch (err: any) {
+        log.warnings.push(`Play-by-play finish-time sync failed (non-fatal): ${err.message}`);
       }
 
       const [freshGame] = await db.select().from(games).where(eq(games.id, leg.gameId));

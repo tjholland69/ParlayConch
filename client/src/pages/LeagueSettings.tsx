@@ -53,19 +53,8 @@ import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import type { LieutenantPermissions, LeagueMemberWithUser, LeagueNotificationSettings, ParlayLeg } from "@shared/schema";
 import { DEFAULT_LIEUTENANT_PERMISSIONS, DEFAULT_LEAGUE_NOTIFICATION_SETTINGS } from "@shared/schema";
-
-const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: string; description: string; group: string }[] = [
-  // Parlay management
-  { key: "approveRejectParlays", label: "Approve / Reject Parlays", description: "Can approve or reject pending parlay submissions", group: "Parlay Management" },
-  { key: "editParlays", label: "Edit Parlays", description: "Can edit parlay picks and leg results", group: "Parlay Management" },
-  { key: "lockParlay", label: "Lock Weekly Parlay", description: "Can lock the week's parlay to prevent further submissions", group: "Parlay Management" },
-  { key: "unlockParlay", label: "Unlock Weekly Parlay", description: "Can unlock a previously locked parlay to re-open submissions", group: "Parlay Management" },
-  { key: "unselectUserPick", label: "Remove a Member's Pick", description: "Can clear an individual pick from another member's parlay (secondary approvals will apply)", group: "Parlay Management" },
-  // Member management
-  { key: "approveMemberInvites", label: "Approve Member Invites", description: "Can approve pending invite requests submitted by regular members", group: "Member Management" },
-  // Data & admin
-  { key: "markLeagueDemo", label: "Mark League as Demo", description: "Can toggle the league's demo/QA flag", group: "Data & Admin" },
-];
+import { PERMISSION_LABELS } from "@/lib/leaguePermissionLabels";
+import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
 
 function formatMemberDateRange(startDate: string | Date | null, endDate: string | Date | null): string {
   const fmt = (d: string | Date) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -724,6 +713,7 @@ export default function LeagueSettings() {
               <CardTitle className="flex items-center gap-2">
                 <Star className="w-5 h-5 text-blue-400" />
                 Parlay Lieutenant Assignment
+                <LeagueRolesDialog triggerClassName="h-7 w-7 p-0 ml-auto text-muted-foreground hover:text-foreground" />
               </CardTitle>
               <CardDescription>
                 Designate up to 2 trusted members as Parlay Lieutenants. Their permitted actions are configured in the Permissions section below.
