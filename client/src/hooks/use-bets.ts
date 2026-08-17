@@ -192,6 +192,10 @@ export type LeagueRecordEntry = {
   label: string;
   value: string;
   holderUserId: string | null;
+  detail?: string | null;
+  week?: { season: number; weekNumber: number; label: string } | null;
+  dateRange?: { start: string; end: string } | null;
+  link?: { leagueId: number; parlayId: number } | null;
 };
 
 export function useLeagueRecords(leagueId: number) {
@@ -1238,7 +1242,11 @@ export function useBackfillMissingParlays(leagueId: number) {
       return res.json() as Promise<{ message: string; parlays: unknown[] }>;
     },
     onSuccess: (data, weekId) => {
-      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+      // Broad prefix invalidation: this hook is shared by the Data Editor
+      // (queryKey [...,'parlays','all']) and read-only views like History /
+      // League Detail (queryKey [...,'parlays', {...}] or [...,'read-only-all-pages']) —
+      // matching on the ['/api/leagues', leagueId, 'parlays'] prefix catches all of them.
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays'] });
       queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'missing-parlay-members'] });
       toast({ title: "Backfilled", description: data.message });
     },

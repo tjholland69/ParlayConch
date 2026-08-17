@@ -222,6 +222,7 @@ function StandingsList({ list }: { list: UserStat[] }) {
 
 const LEAGUE_RECORD_ICONS: Record<string, ElementType> = {
   highestSingleLegOdds: Dices,
+  highestSingleLegOddsWon: Award,
   highestParlayOdds: TrendingUp,
   mostParlayLosses: TrendingDown,
   longestWinStreak: Flame,
@@ -230,6 +231,14 @@ const LEAGUE_RECORD_ICONS: Record<string, ElementType> = {
   favoritePlayer: User,
   favoriteBetType: Dices,
 };
+
+function formatRecordDateRange(range: { start: string; end: string } | null | undefined): string | null {
+  if (!range) return null;
+  const fmt = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const start = fmt(range.start);
+  const end = fmt(range.end);
+  return start === end ? start : `${start} – ${end}`;
+}
 
 export default function LeagueDetail() {
   const [, params] = useRoute("/leagues/:id");
@@ -1138,24 +1147,6 @@ export default function LeagueDetail() {
             <Card className="bg-card/50 border-white/5">
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <Trophy className="w-5 h-5 text-accent" />
-                  All-Time Standings
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {loadingDataStats ? (
-                  <div className="space-y-2">
-                    {[1, 2, 3].map(i => <div key={i} className="h-12 bg-white/5 rounded animate-pulse" />)}
-                  </div>
-                ) : (
-                  <StandingsList list={dataStats?.allTimeStandings ?? []} />
-                )}
-              </CardContent>
-            </Card>
-
-            <Card className="bg-card/50 border-white/5">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
                   <Trophy className="w-5 h-5 text-primary" />
                   Current Season Standings
                 </CardTitle>
@@ -1167,6 +1158,24 @@ export default function LeagueDetail() {
                   </div>
                 ) : (
                   <StandingsList list={dataStats?.currentSeasonStandings ?? []} />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-card/50 border-white/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Trophy className="w-5 h-5 text-accent" />
+                  All-Time Standings
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loadingDataStats ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3].map(i => <div key={i} className="h-12 bg-white/5 rounded animate-pulse" />)}
+                  </div>
+                ) : (
+                  <StandingsList list={dataStats?.allTimeStandings ?? []} />
                 )}
               </CardContent>
             </Card>
@@ -1233,15 +1242,36 @@ export default function LeagueDetail() {
                     const holderName = record.holderUserId
                       ? getDisplayName(members?.find(m => m.userId === record.holderUserId)?.user, "Unknown")
                       : null;
+                    const weekLabel = record.week ? `${record.week.label}, ${record.week.season}` : null;
+                    const dateRangeLabel = formatRecordDateRange(record.dateRange);
                     return (
                       <div key={record.key} className="bg-white/5 border border-white/10 rounded-2xl p-4">
                         <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
                           <Icon className="w-3.5 h-3.5" />
                           {record.label}
                         </div>
-                        <p className="font-mono font-bold text-xl truncate">{record.value}</p>
+                        <p className="font-mono font-bold text-xl truncate">
+                          {record.value}
+                          {record.detail && (
+                            <span className="text-xs font-normal text-muted-foreground ml-1.5">({record.detail})</span>
+                          )}
+                        </p>
                         {holderName && (
                           <p className="text-xs text-muted-foreground mt-1 truncate">{holderName}</p>
+                        )}
+                        {weekLabel && (
+                          <p className="text-xs text-muted-foreground truncate">{weekLabel}</p>
+                        )}
+                        {dateRangeLabel && (
+                          <p className="text-xs text-muted-foreground truncate">{dateRangeLabel}</p>
+                        )}
+                        {record.link && (
+                          <Link
+                            href={`/history?league=${record.link.leagueId}&parlay=${record.link.parlayId}`}
+                            className="text-xs text-primary hover:underline mt-1 inline-block"
+                          >
+                            View bet →
+                          </Link>
                         )}
                       </div>
                     );

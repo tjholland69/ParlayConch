@@ -1716,11 +1716,23 @@ export async function registerRoutes(
     }
   });
 
+  // Same admin check as requireDemoAdmin, minus the isDemo restriction — the
+  // missing-bettor detection/backfill below is safe (and useful) in real
+  // leagues too, unlike the rest of the Data Editor's destructive tooling.
+  async function requireLeagueAdmin(req: any, res: any, leagueId: number): Promise<string | null> {
+    const userId = (req.user as any).claims.sub;
+    const league = await storage.getLeague(leagueId);
+    if (!league) { res.status(404).json({ message: "League not found" }); return null; }
+    const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
+    if (!isAdmin) { res.status(403).json({ message: "Only a league admin can do this" }); return null; }
+    return userId;
+  }
+
   app.get("/api/leagues/:leagueId/weeks/:weekId/missing-parlay-members", isAuthenticated, async (req, res) => {
     try {
       const leagueId = Number(req.params.leagueId);
       const weekId = Number(req.params.weekId);
-      const uid = await requireDemoAdmin(req, res, leagueId);
+      const uid = await requireLeagueAdmin(req, res, leagueId);
       if (!uid) return;
       const missing = await storage.getMissingParlayMembers(leagueId, weekId);
       res.json(missing);
@@ -1733,7 +1745,7 @@ export async function registerRoutes(
     try {
       const leagueId = Number(req.params.leagueId);
       const weekId = Number(req.params.weekId);
-      const uid = await requireDemoAdmin(req, res, leagueId);
+      const uid = await requireLeagueAdmin(req, res, leagueId);
       if (!uid) return;
       const created = await storage.backfillMissingParlays(leagueId, weekId);
       res.json({ message: `Backfilled ${created.length} missing parlay(s) as Void`, parlays: created });

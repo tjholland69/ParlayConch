@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { ModuleRegistry, AllCommunityModule, themeQuartz, type ColDef, type CellContextMenuEvent } from "ag-grid-community";
+import { ModuleRegistry, AllCommunityModule, themeQuartz, type ColDef, type CellContextMenuEvent, type AutoSizeStrategy } from "ag-grid-community";
 import type { FlatParlayLegRow } from "@/lib/flattenParlayLegs";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { Pencil, CloudDownload, Trash2 } from "lucide-react";
+import { Pencil, CloudDownload, Trash2, Copy, ClipboardCopy } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -26,32 +27,37 @@ const parlayConchGridTheme = themeQuartz.withParams({
   fontFamily: "var(--font-body)",
 });
 
+// Bounds ("within reason") for the dynamic content-based auto-sizing below —
+// each column can grow/shrink to fit its longest visible value, but never
+// past these limits, so one long matchup name can't blow out the whole grid.
 const columnDefs: ColDef<FlatParlayLegRow>[] = [
-  { field: "parlayId", headerName: "Parlay #", width: 110, filter: "agNumberColumnFilter" },
-  { field: "season", headerName: "Year", width: 90, filter: "agNumberColumnFilter" },
-  { field: "weekLabel", headerName: "Week", width: 110, filter: "agTextColumnFilter" },
-  { field: "member", headerName: "Member", width: 140, filter: "agTextColumnFilter" },
-  { field: "legOwner", headerName: "Leg Owner", width: 140, filter: "agTextColumnFilter" },
-  { field: "status", headerName: "Parlay Status", width: 130, filter: "agTextColumnFilter" },
-  { field: "betType", headerName: "Bet Type", width: 110, filter: "agTextColumnFilter" },
-  { field: "matchup", headerName: "Matchup / Player", flex: 1, minWidth: 180, filter: "agTextColumnFilter" },
-  { field: "pick", headerName: "Pick", flex: 1, minWidth: 160, filter: "agTextColumnFilter" },
-  { field: "line", headerName: "Line", width: 90, filter: "agTextColumnFilter" },
-  { field: "odds", headerName: "Odds", width: 90, filter: "agTextColumnFilter" },
-  { field: "oddsSource", headerName: "Book", width: 110, filter: "agTextColumnFilter" },
-  { field: "result", headerName: "Result", width: 100, filter: "agTextColumnFilter" },
+  { field: "parlayId", headerName: "Parlay #", minWidth: 90, maxWidth: 140, filter: "agNumberColumnFilter" },
+  { field: "season", headerName: "Year", minWidth: 70, maxWidth: 100, filter: "agNumberColumnFilter" },
+  { field: "weekLabel", headerName: "Week", minWidth: 90, maxWidth: 140, filter: "agTextColumnFilter" },
+  { field: "member", headerName: "Member", minWidth: 100, maxWidth: 220, filter: "agTextColumnFilter" },
+  { field: "legOwner", headerName: "Leg Owner", minWidth: 100, maxWidth: 220, filter: "agTextColumnFilter" },
+  { field: "status", headerName: "Parlay Status", minWidth: 100, maxWidth: 160, filter: "agTextColumnFilter" },
+  { field: "betType", headerName: "Bet Type", minWidth: 90, maxWidth: 140, filter: "agTextColumnFilter" },
+  { field: "matchup", headerName: "Matchup / Player", minWidth: 160, maxWidth: 340, filter: "agTextColumnFilter" },
+  { field: "pick", headerName: "Pick", minWidth: 120, maxWidth: 320, filter: "agTextColumnFilter" },
+  { field: "line", headerName: "Line", minWidth: 70, maxWidth: 110, filter: "agTextColumnFilter" },
+  { field: "odds", headerName: "Odds", minWidth: 70, maxWidth: 110, filter: "agTextColumnFilter" },
+  { field: "oddsSource", headerName: "Book", minWidth: 90, maxWidth: 150, filter: "agTextColumnFilter" },
+  { field: "result", headerName: "Result", minWidth: 80, maxWidth: 130, filter: "agTextColumnFilter" },
   {
     field: "gameTime",
     headerName: "Game Time",
-    width: 150,
+    minWidth: 130,
+    maxWidth: 190,
     filter: "agDateColumnFilter",
     valueFormatter: (p) => (p.value ? new Date(p.value).toLocaleString("en-US", { timeZone: "America/New_York", month: "2-digit", day: "2-digit", hour: "numeric", minute: "2-digit" }) : "—"),
   },
-  { field: "slate", headerName: "Slate", width: 120, filter: "agTextColumnFilter" },
+  { field: "slate", headerName: "Slate", minWidth: 90, maxWidth: 160, filter: "agTextColumnFilter" },
   {
     field: "decidedAt",
     headerName: "Settled At",
-    width: 160,
+    minWidth: 140,
+    maxWidth: 200,
     filter: "agDateColumnFilter",
     valueFormatter: (p) => (p.value ? new Date(p.value).toLocaleString("en-US", { timeZone: "America/New_York", month: "2-digit", day: "2-digit", hour: "numeric", minute: "2-digit" }) : "—"),
   },
@@ -63,6 +69,11 @@ const defaultColDef: ColDef = {
   filter: true,
 };
 
+// Auto-fits every column to its longest visible cell value on initial render
+// and whenever the row data changes, bounded by each colDef's minWidth/maxWidth
+// above ("within reason") instead of the fixed pixel widths used before.
+const autoSizeStrategy: AutoSizeStrategy = { type: "fitCellContents" };
+
 /** Row-level actions offered from the grid's right-click menu — only passed
  * in editable contexts (e.g. the Data Editor); read-only grid usages (League
  * Detail, History) omit this and get the plain browser context menu, same as
@@ -73,9 +84,40 @@ export type ParlayLegRowActions = {
   onDelete: (row: FlatParlayLegRow) => void;
 };
 
+function rowPickSummary(row: FlatParlayLegRow): string {
+  // row.pick already has the line baked in (e.g. "Packers +6.5") — don't
+  // append row.line too, or the line ends up printed twice.
+  const parts = [row.matchup, row.pick, row.odds && row.odds !== "—" ? `(${row.odds})` : null].filter(Boolean);
+  return parts.join(" ");
+}
+
+function rowAsText(row: FlatParlayLegRow): string {
+  return [
+    `Parlay #${row.parlayId}`,
+    row.weekLabel,
+    row.member,
+    row.betType,
+    rowPickSummary(row),
+    row.oddsSource,
+    row.result,
+  ]
+    .filter(Boolean)
+    .join(" — ");
+}
+
 export function ParlayLegsGrid({ rows, rowActions }: { rows: FlatParlayLegRow[]; rowActions?: ParlayLegRowActions }) {
   const rowData = useMemo(() => rows, [rows]);
   const [contextRow, setContextRow] = useState<FlatParlayLegRow | null>(null);
+  const { toast } = useToast();
+
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast({ title: `${label} copied`, description: text });
+    } catch {
+      toast({ title: "Copy failed", description: "Please copy manually.", variant: "destructive" });
+    }
+  };
 
   const grid = (
     <div style={{ height: "70vh", width: "100%" }}>
@@ -84,6 +126,7 @@ export function ParlayLegsGrid({ rows, rowActions }: { rows: FlatParlayLegRow[];
         rowData={rowData}
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
+        autoSizeStrategy={autoSizeStrategy}
         animateRows
         pagination
         paginationPageSize={50}
@@ -95,36 +138,45 @@ export function ParlayLegsGrid({ rows, rowActions }: { rows: FlatParlayLegRow[];
         // index.css keeps them above that chrome.
         popupParent={document.body}
         // AG Grid's own context menu is an Enterprise-only feature (not
-        // installed here) — suppressing it just stops AG Grid from getting in
-        // the way; the browser's native menu still shows unless we're driving
-        // our own (rowActions below).
-        suppressContextMenu={!!rowActions}
-        onCellContextMenu={rowActions ? (e: CellContextMenuEvent<FlatParlayLegRow>) => setContextRow(e.data ?? null) : undefined}
+        // installed here), so we suppress the browser's native menu and drive
+        // our own via onCellContextMenu below — available on every usage of
+        // this grid, not just editable ones (rowActions only adds extra items).
+        suppressContextMenu
+        onCellContextMenu={(e: CellContextMenuEvent<FlatParlayLegRow>) => setContextRow(e.data ?? null)}
       />
     </div>
   );
 
-  if (!rowActions) return grid;
-
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>{grid}</ContextMenuTrigger>
-      <ContextMenuContent className="w-52">
+      <ContextMenuContent className="w-56">
         {contextRow && (
           <>
-            <ContextMenuItem onSelect={() => rowActions.onEdit(contextRow)}>
-              <Pencil className="w-3.5 h-3.5 mr-2" /> Edit leg
+            <ContextMenuItem onSelect={() => copyToClipboard(rowPickSummary(contextRow), "Pick")}>
+              <Copy className="w-3.5 h-3.5 mr-2" /> Copy pick
             </ContextMenuItem>
-            <ContextMenuItem onSelect={() => rowActions.onFetch(contextRow)}>
-              <CloudDownload className="w-3.5 h-3.5 mr-2" /> Fetch historical data
+            <ContextMenuItem onSelect={() => copyToClipboard(rowAsText(contextRow), "Row")}>
+              <ClipboardCopy className="w-3.5 h-3.5 mr-2" /> Copy row as text
             </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem
-              onSelect={() => rowActions.onDelete(contextRow)}
-              className="text-destructive focus:text-destructive"
-            >
-              <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete leg
-            </ContextMenuItem>
+            {rowActions && (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => rowActions.onEdit(contextRow)}>
+                  <Pencil className="w-3.5 h-3.5 mr-2" /> Edit leg
+                </ContextMenuItem>
+                <ContextMenuItem onSelect={() => rowActions.onFetch(contextRow)}>
+                  <CloudDownload className="w-3.5 h-3.5 mr-2" /> Fetch historical data
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem
+                  onSelect={() => rowActions.onDelete(contextRow)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete leg
+                </ContextMenuItem>
+              </>
+            )}
           </>
         )}
       </ContextMenuContent>
