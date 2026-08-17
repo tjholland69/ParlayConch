@@ -186,7 +186,7 @@ function AnalyticsSlide() {
               <Clock className="w-4 h-4" />
               Slate Breakdown
             </div>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <div className="space-y-2">
               {data.slateBreakdown.map(s => (
                 <div key={s.slate} className="flex items-center justify-between text-sm">
                   <span className="text-muted-foreground">{s.slate}</span>

@@ -1,5 +1,6 @@
-import { useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useAllMyLeaguesParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages } from "@/hooks/use-bets";
+import { useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useAllMyLeaguesParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages, useMissingParlayMembers, useBackfillMissingParlays } from "@/hooks/use-bets";
 import { useAuth } from "@/hooks/use-auth";
+import { useSearch } from "wouter";
 import { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,6 +43,12 @@ const ParlayLegsGrid = lazy(() =>
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 type TileKey = "total" | "wins" | "losses" | "winRate" | "gameLegs" | "gameWinRate" | "propLegs" | "propWinRate";
+
+// A parlay is "closed" once it's reached one of these terminal statuses —
+// matches the terminalStatuses set used server-side for auto win/loss rollup
+// (server/storage.ts). Nothing in the app actually restricts reopening a
+// closed parlay's status, so "closed" here just means "graded", not "locked".
+const TERMINAL_PARLAY_STATUSES = new Set(["win", "loss", "push", "rejected", "void"]);
 
 type HistoryDateRange = { startDate?: string; endDate?: string };
 type DateRangeMode = "all" | "year" | "month" | "custom";
@@ -235,6 +242,7 @@ function HistoryParlayTile({
   collapseSignal = 0,
   expandSignal = 0,
   defaultExpanded = false,
+  highlighted = false,
 }: {
   parlay: ParlayWithLegs;
   onCopySlip: (p: ParlayWithLegs) => void;
@@ -242,6 +250,7 @@ function HistoryParlayTile({
   collapseSignal?: number;
   expandSignal?: number;
   defaultExpanded?: boolean;
+  highlighted?: boolean;
 }) {
   const [showAll, setShowAll] = useState(false);
 
@@ -267,7 +276,11 @@ function HistoryParlayTile({
 
   if (parlay.status === "void") {
     return (
-      <Card className="border-white/5 bg-card/20 opacity-60" data-testid={`card-parlay-history-${parlay.id}`}>
+      <Card
+        id={`parlay-${parlay.id}`}
+        className={cn("border-white/5 bg-card/20 opacity-60", highlighted && "ring-2 ring-primary")}
+        data-testid={`card-parlay-history-${parlay.id}`}
+      >
         <CardContent className="p-4">
           <p className="text-sm font-medium text-muted-foreground">
             {parlay.week?.label ?? `Week ${parlay.weekId}`} — No submission
@@ -278,7 +291,11 @@ function HistoryParlayTile({
   }
 
   return (
-    <div className="space-y-3" data-testid={`card-parlay-history-${parlay.id}`}>
+    <div
+      id={`parlay-${parlay.id}`}
+      className={cn("space-y-3 rounded-2xl", highlighted && "ring-2 ring-primary")}
+      data-testid={`card-parlay-history-${parlay.id}`}
+    >
       <CardErrorBoundary parlayId={parlay.id}>
         <ParlayRollupCard
           parlay={parlay}
@@ -331,13 +348,59 @@ function HistoryParlayTile({
   );
 }
 
+// A week that's closed (every submitted parlay graded) but "not full" — some
+// league member who was active in the league at the time never submitted a
+// parlay at all. Lets the league admin backfill them as Void so the week's
+// record-keeping is complete. Missing-member detection is point-in-time
+// aware server-side (see storage.getMissingParlayMembers), so a member who
+// joined/left mid-season is judged against who was actually in the league
+// that week, not who's in it now.
+function MissingBettorBanner({ leagueId, weekId, weekLabel }: { leagueId: number; weekId: number; weekLabel: string }) {
+  const { data: missing } = useMissingParlayMembers(leagueId, weekId);
+  const backfill = useBackfillMissingParlays(leagueId);
+
+  if (!missing || missing.length === 0) return null;
+
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20 text-sm">
+      <span>
+        <strong>{weekLabel}</strong> is closed but {missing.length} member{missing.length === 1 ? "" : "s"} never
+        submitted a parlay: {missing.map(m => getDisplayName(m.user, "Member")).join(", ")}.
+      </span>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => backfill.mutate(weekId)}
+        disabled={backfill.isPending}
+        data-testid={`button-find-missing-bettor-${weekId}`}
+      >
+        <Search className="w-4 h-4 mr-1" />
+        {backfill.isPending ? "Backfilling…" : "Find missing bettor"}
+      </Button>
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function History() {
   const { toast } = useToast();
   const { user } = useAuth();
   const { data: leagues } = useLeagues();
-  const [selectedLeagueId, setSelectedLeagueId] = useState<string>("all");
+  const search = useSearch();
+  // Deep-link target from e.g. a League Records "View bet" link
+  // (/history?league=X&parlay=Y) — read once on mount so a later manual
+  // league/checkbox change by the user doesn't keep fighting it.
+  const [{ leagueId: linkedLeagueId, parlayId: highlightParlayId }] = useState(() => {
+    const params = new URLSearchParams(search);
+    const league = params.get("league");
+    const parlay = params.get("parlay");
+    return {
+      leagueId: league ? Number(league) : null,
+      parlayId: parlay ? Number(parlay) : null,
+    };
+  });
+  const [selectedLeagueId, setSelectedLeagueId] = useState<string>(linkedLeagueId ? String(linkedLeagueId) : "all");
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [expandSignal, setExpandSignal] = useState(0);
@@ -349,7 +412,9 @@ export default function History() {
 
   // Default view: only the current user's own picks. Uncheck to bring in
   // every league member's picks (requires a specific league to be selected).
-  const [ownPicksOnly, setOwnPicksOnly] = useState(true);
+  // A deep-linked parlay (see highlightParlayId above) may belong to someone
+  // else, so start unchecked in that case or it'd never be visible to jump to.
+  const [ownPicksOnly, setOwnPicksOnly] = useState(!highlightParlayId);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [selectedBetTypes, setSelectedBetTypes] = useState<string[]>([]);
   const [historyDateRangeMode, setHistoryDateRangeMode] = useState<DateRangeMode>("all");
@@ -406,22 +471,47 @@ export default function History() {
   const baseParlays = allLeagueParlays;
   const isLoading = leagueId !== undefined ? loadingSingleLeagueParlays : loadingAllLeaguesParlays;
 
-  const baseLegs: ParlayLegWithParlayContext[] = useMemo(() => {
-    if (!canShowOthers) return myLegs ?? [];
-    return allLeagueParlays.flatMap(p =>
-      p.legs.map(l => ({
-        ...l,
-        parlay: {
-          id: p.id,
-          weekId: p.weekId,
-          week: p.week,
-          status: p.status,
-          isOwnParlay: p.userId === user?.id,
-          owner: p.userId === user?.id ? null : { firstName: p.user?.firstName, email: p.user?.email },
-          userId: p.userId,
-        },
-      })),
+  // Weeks that are fully graded (every parlay submitted for the week has
+  // reached a terminal status) but may still be missing a bettor — only
+  // meaningful with one specific league selected, and only actionable by
+  // that league's admin.
+  const isSelectedLeagueAdmin = leagueId !== undefined && !!leagues?.find(l => l.id === leagueId)?.isAdmin;
+  const closedWeekGroups = useMemo(() => {
+    if (leagueId === undefined) return [];
+    const byWeek = new Map<number, { weekId: number; weekLabel: string; parlays: ParlayWithLegs[] }>();
+    for (const p of allLeagueParlays) {
+      const group = byWeek.get(p.weekId) ?? { weekId: p.weekId, weekLabel: p.week?.label ?? `Week ${p.weekId}`, parlays: [] };
+      group.parlays.push(p);
+      byWeek.set(p.weekId, group);
+    }
+    return [...byWeek.values()].filter(
+      g => g.parlays.length > 0 && g.parlays.every(p => TERMINAL_PARLAY_STATUSES.has(p.status ?? "")),
     );
+  }, [allLeagueParlays, leagueId]);
+
+  const baseLegs: ParlayLegWithParlayContext[] = useMemo(() => {
+    const legs = !canShowOthers
+      ? (myLegs ?? [])
+      : allLeagueParlays.flatMap(p =>
+          p.legs.map(l => ({
+            ...l,
+            parlay: {
+              id: p.id,
+              weekId: p.weekId,
+              week: p.week,
+              status: p.status,
+              isOwnParlay: p.userId === user?.id,
+              owner: p.userId === user?.id ? null : { firstName: p.user?.firstName, email: p.user?.email },
+              userId: p.userId,
+            },
+          })),
+        );
+    // Lookthrough view: most-recent pick first, by the game's actual kickoff time.
+    return [...legs].sort((a, b) => {
+      const aTime = a.game?.gameTime ? new Date(a.game.gameTime).getTime() : 0;
+      const bTime = b.game?.gameTime ? new Date(b.game.gameTime).getTime() : 0;
+      return bTime - aTime || b.id - a.id;
+    });
   }, [canShowOthers, allLeagueParlays, myLegs, user?.id]);
 
   // Structured filters (league members / bet types / time range) — applied
@@ -491,6 +581,26 @@ export default function History() {
     estimateSize: () => 160,
     overscan: 4,
   });
+
+  // Jump to and highlight a deep-linked parlay (e.g. from a League Records
+  // "View bet" link) once its data has actually loaded.
+  const scrolledToHighlightRef = useRef(false);
+  useEffect(() => {
+    if (!highlightParlayId || isLoading || scrolledToHighlightRef.current) return;
+    const index = filteredParlays.findIndex(p => p.id === highlightParlayId);
+    if (index === -1) return;
+    scrolledToHighlightRef.current = true;
+    if (shouldVirtualize) {
+      rowVirtualizer.scrollToIndex(index, { align: "center" });
+      // Virtualized rows mount async after the scroll command above; give
+      // the DOM node a tick to exist before trying to scroll to it directly.
+      setTimeout(() => {
+        document.getElementById(`parlay-${highlightParlayId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 150);
+    } else {
+      document.getElementById(`parlay-${highlightParlayId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlightParlayId, isLoading, filteredParlays, shouldVirtualize, rowVirtualizer]);
 
   const activeParlays = filteredParlays.filter(p => p.status !== "void");
   const stats = {
@@ -794,6 +904,14 @@ export default function History() {
             </div>
           )}
 
+          {isSelectedLeagueAdmin && closedWeekGroups.length > 0 && (
+            <div className="space-y-2">
+              {closedWeekGroups.map(g => (
+                <MissingBettorBanner key={g.weekId} leagueId={leagueId!} weekId={g.weekId} weekLabel={g.weekLabel} />
+              ))}
+            </div>
+          )}
+
           {filteredParlays.length === 0 ? (
             <p className="text-sm text-muted-foreground italic py-2 px-1">No parlays match this query.</p>
           ) : viewMode === "grid" ? (
@@ -825,6 +943,7 @@ export default function History() {
                         copiedId={copiedId}
                         collapseSignal={collapseSignal}
                         expandSignal={expandSignal}
+                        highlighted={highlightParlayId === parlay.id}
                       />
                     </div>
                   );
@@ -840,6 +959,7 @@ export default function History() {
                 copiedId={copiedId}
                 collapseSignal={collapseSignal}
                 expandSignal={expandSignal}
+                highlighted={highlightParlayId === parlay.id}
               />
             ))
           )}

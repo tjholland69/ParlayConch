@@ -1190,7 +1190,13 @@ export class DatabaseStorage implements IStorage {
           },
         };
       })
-      .sort((a, b) => b.parlay.week.weekNumber - a.parlay.week.weekNumber || a.parlay.id - b.parlay.id);
+      .sort((a, b) => {
+        // Lookthrough view: most-recent pick first, keyed off the game's actual
+        // kickoff time rather than week number so legs read in true date order.
+        const aTime = a.game?.gameTime ? new Date(a.game.gameTime).getTime() : 0;
+        const bTime = b.game?.gameTime ? new Date(b.game.gameTime).getTime() : 0;
+        return bTime - aTime || b.id - a.id;
+      });
   }
 
   async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay> {

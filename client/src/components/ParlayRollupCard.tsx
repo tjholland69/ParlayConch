@@ -801,6 +801,13 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                                 <div><span className="text-muted-foreground">game_id:</span> {leg.gameId ?? "—"}</div>
                                 <div><span className="text-muted-foreground">user_id:</span> {leg.userId ?? "—"}</div>
                                 <div><span className="text-muted-foreground">odds_source:</span> {leg.oddsSource ?? "—"}</div>
+                                <div>
+                                  <span className="text-muted-foreground">decided_at:</span>{" "}
+                                  {(() => {
+                                    const decided = leg.decidedAt ?? leg.game?.finishedAt;
+                                    return decided ? new Date(decided).toLocaleString() : "—";
+                                  })()}
+                                </div>
                               </PopoverContent>
                             </Popover>
                           </td>
