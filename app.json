@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "a038f53c-8103-4faf-b211-94267ce199aa"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.hollandt12.restexpress",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    }
+  }
+}
