@@ -20,7 +20,8 @@
         "LSApplicationQueriesSchemes": [
           "fanduel",
           "draftkings"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       },
       "runtimeVersion": "1.0.0"
     },
