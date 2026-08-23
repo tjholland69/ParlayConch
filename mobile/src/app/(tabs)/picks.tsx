@@ -15,6 +15,7 @@ import { useActiveWeek } from "@/hooks/use-weeks";
 import { useMyParlay, useMyParlayHistory } from "@/hooks/use-parlays";
 import { format, formatDistanceToNow, isPast } from "date-fns";
 import type { ParlayWithLegs } from "@shared/schema";
+import { shadows } from "@/lib/theme";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -173,10 +174,48 @@ function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueNam
   );
 }
 
+const RESULT_FILTERS: { key: string; label: string }[] = [
+  { key: "all", label: "All Results" },
+  { key: "win", label: "Won" },
+  { key: "loss", label: "Lost" },
+  { key: "push", label: "Push" },
+];
+
+function FilterChipRow({
+  options,
+  selected,
+  onSelect,
+}: {
+  options: { key: string; label: string }[];
+  selected: string;
+  onSelect: (key: string) => void;
+}) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+      {options.map((opt) => {
+        const active = opt.key === selected;
+        return (
+          <Pressable
+            key={opt.key}
+            onPress={() => onSelect(opt.key)}
+            style={[styles.chip, active && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
+              {opt.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
 export default function PicksScreen() {
   const { data: leagues, isLoading: leaguesLoading } = useLeagues();
   const activeWeek = useActiveWeek();
   const { data: parlayHistory } = useMyParlayHistory();
+  const [leagueFilter, setLeagueFilter] = useState("all");
+  const [resultFilter, setResultFilter] = useState("all");
 
   const deadline = (activeWeek as any)?.deadline
     ? new Date((activeWeek as any).deadline)
@@ -214,15 +253,28 @@ export default function PicksScreen() {
 
   const leagueName = (leagueId: number) => leagues.find((l) => l.id === leagueId)?.name ?? "League";
 
-  const leaguesNeedingPick = activeWeek
-    ? leagues.filter((l) => !(parlayHistory ?? []).some((p) => p.leagueId === l.id && p.weekId === activeWeek.id))
-    : [];
+  const leagueOptions = [
+    { key: "all", label: "All Leagues" },
+    ...leagues.map((l) => ({ key: String(l.id), label: l.name })),
+  ];
+  const matchesLeague = (id: number) => leagueFilter === "all" || String(id) === leagueFilter;
 
-  const openHistory = (parlayHistory ?? []).filter((p) => !PAST_STATUSES.has(p.status ?? ""));
-  const pastHistory = (parlayHistory ?? []).filter((p) => PAST_STATUSES.has(p.status ?? ""));
+  const leaguesNeedingPick = (activeWeek
+    ? leagues.filter((l) => !(parlayHistory ?? []).some((p) => p.leagueId === l.id && p.weekId === activeWeek.id))
+    : []
+  ).filter((l) => matchesLeague(l.id));
+
+  const openHistory = (parlayHistory ?? []).filter((p) => !PAST_STATUSES.has(p.status ?? "") && matchesLeague(p.leagueId));
+  const pastHistory = (parlayHistory ?? []).filter(
+    (p) =>
+      PAST_STATUSES.has(p.status ?? "") &&
+      matchesLeague(p.leagueId) &&
+      (resultFilter === "all" || p.status === resultFilter),
+  );
 
   const hasOpen = leaguesNeedingPick.length > 0 || openHistory.length > 0;
   const hasPast = pastHistory.length > 0;
+  const hasAnyPast = (parlayHistory ?? []).some((p) => PAST_STATUSES.has(p.status ?? ""));
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -256,6 +308,13 @@ export default function PicksScreen() {
         </View>
       )}
 
+      {leagues.length > 1 && (
+        <FilterChipRow options={leagueOptions} selected={leagueFilter} onSelect={setLeagueFilter} />
+      )}
+      {hasAnyPast && (
+        <FilterChipRow options={RESULT_FILTERS} selected={resultFilter} onSelect={setResultFilter} />
+      )}
+
       {hasOpen && (
         <>
           <Text style={styles.sectionLabel}>OPEN PARLAYS</Text>
@@ -271,6 +330,14 @@ export default function PicksScreen() {
             <HistoryTile key={`open-${parlay.id}`} parlay={parlay} leagueName={leagueName(parlay.leagueId)} />
           ))}
         </>
+      )}
+
+      {!hasOpen && !hasPast && (leagueFilter !== "all" || resultFilter !== "all") && (
+        <View style={styles.centered}>
+          <Ionicons name="filter-outline" size={28} color="#2563eb" />
+          <Text style={styles.emptyTitle}>No parlays match</Text>
+          <Text style={styles.emptySubtitle}>Try clearing a filter.</Text>
+        </View>
       )}
 
       {hasPast && (
@@ -347,6 +414,18 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   noWeekText: { fontSize: 13, color: "#94a3b8" },
+  chipRow: { gap: 8, paddingRight: 8, marginBottom: 14 },
+  chip: {
+    backgroundColor: "#1c2538",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chipActive: { backgroundColor: "#1e2a3b", borderColor: "#2563eb" },
+  chipText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
+  chipTextActive: { color: "#93c5fd" },
   sectionLabel: {
     fontSize: 11,
     fontWeight: "700",
@@ -362,11 +441,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignSelf: "stretch",
     minWidth: 0,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    ...shadows.card,
   },
   shadowWrapGlow: {
     shadowColor: "#22c55e",
