@@ -18,5 +18,12 @@ export function useGames(weekId: number) {
 
 export function useActiveWeek() {
   const { data: weeks } = useWeeks();
-  return weeks?.find((w) => w.isActive) ?? weeks?.[0] ?? null;
+  const flagged = weeks?.find((w) => w.isActive);
+  if (flagged) return flagged;
+  if (!weeks?.length) return null;
+  // No week is flagged active — rather than trusting API array order
+  // (weeks?.[0], which produced the "wrong current week" bug), fall back to
+  // the chronologically latest season/week on record. That's the closer
+  // approximation of "current" until an admin flips isActive.
+  return [...weeks].sort((a, b) => b.season - a.season || b.weekNumber - a.weekNumber)[0];
 }

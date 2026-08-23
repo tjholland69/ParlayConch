@@ -52,10 +52,16 @@ export default function Picks() {
 
   useEffect(() => {
     if (!weeksForYear.length) return;
+    // Only (re)seed the selection when it's missing or no longer valid for the
+    // current year — e.g. on first load or after switching years. A background
+    // refetch of `weeks` (focus/interval) must not clobber a week the user has
+    // already manually selected, which was snapping the picker back to the
+    // active week mid-session.
+    if (selectedWeekId && weeksForYear.some(w => String(w.id) === selectedWeekId)) return;
     const activeWeek = weeksForYear.find(w => w.isActive);
     const week1 = weeksForYear.find(w => w.weekNumber === 1) ?? weeksForYear[0];
     setSelectedWeekId(activeWeek ? String(activeWeek.id) : String(week1.id));
-  }, [selectedYear, weeks]);
+  }, [selectedYear, weeksForYear, selectedWeekId]);
 
   const { data: games, isLoading: isLoadingGames } = useGames(Number(selectedWeekId));
   const { data: activeStatus } = useLeaguesActiveStatus();

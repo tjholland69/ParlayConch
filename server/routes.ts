@@ -7,7 +7,7 @@ import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes
 import { z } from "zod";
 import { insertLeagueSchema, type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, users, leagueMembers, parlayLegs, parlays, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";
 import { ilike, eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
-import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
+import { getApiUsage, fetchUpcomingGames, syncGameScores, syncGamesFromOddsApi } from "./services/oddsApi";
 import { runOddsSyncQueued, startOddsSyncWorker, getOddsSyncJobStatus } from "./jobs/odds-sync-queue";
 import {
   enqueueNflverseSync,
@@ -1249,6 +1249,50 @@ export async function registerRoutes(
   // GET /api/games/:gameId/player-stats
   // Returns player stats for all players on both teams in a given game
   // Backfill: promote all fully-resolved parlays from 'approved'/'pending' to win/loss/push
+  // POST /api/admin/weeks — creates (or returns the existing) week row for a season +
+  // week number, e.g. for standing up the next season ahead of any picks import.
+  // Body: { season: number, weekNumber: number, label?: string }
+  app.post("/api/admin/weeks", isAuthenticated, auditLog("admin.week_create"), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const { season, weekNumber, label } = req.body;
+      if (!season || !weekNumber) {
+        return res.status(400).json({ message: "season and weekNumber are required" });
+      }
+      const existing = await storage.getWeekBySeasonAndNumber(Number(season), Number(weekNumber));
+      if (existing) {
+        return res.json({ message: "Week already exists", week: existing });
+      }
+      const week = await storage.createWeek({
+        season: Number(season),
+        weekNumber: Number(weekNumber),
+        label: label || `${season} Week ${weekNumber}`,
+        isActive: false,
+      });
+      res.json({ message: "Week created", week });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/admin/weeks/:id/sync-games — pulls the current OddsAPI board (upcoming
+  // games) into this week, matching by team names. Safe to re-run to pick up line moves.
+  app.post("/api/admin/weeks/:id/sync-games", isAuthenticated, auditLog("admin.week_sync_games", { targetParam: "id", targetType: "week" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const result = await syncGamesFromOddsApi(Number(req.params.id));
+      res.json({ message: "Games sync complete", ...result });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   app.post("/api/admin/weeks/:id/activate", isAuthenticated, auditLog("admin.week_activate", { targetParam: "id", targetType: "week" }), async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
