@@ -50,7 +50,10 @@ export default function SeasonAdmin() {
       return res.json();
     },
     onSuccess: (data) => {
-      toast({ title: "Games synced", description: `${data.added} added, ${data.updated} updated` });
+      const skipped = data.skippedOutOfRange
+        ? ` (${data.skippedOutOfRange} skipped — outside this week's date range)`
+        : "";
+      toast({ title: "Games synced", description: `${data.added} added, ${data.updated} updated${skipped}` });
     },
     onError: (err: Error) => toast({ title: "Sync failed", description: err.message, variant: "destructive" }),
   });
