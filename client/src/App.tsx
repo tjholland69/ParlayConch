@@ -29,6 +29,7 @@ const ScreenshotImport = lazy(() => import("@/pages/ScreenshotImport"));
 const IndexAdvanced = lazy(() => import("@/pages/IndexAdvanced"));
 const CustomIndexes = lazy(() => import("@/pages/CustomIndexes"));
 const Exceptions = lazy(() => import("@/pages/Exceptions"));
+const SeasonAdmin = lazy(() => import("@/pages/SeasonAdmin"));
 
 function useApplyPrimaryColor(primaryColor: string | undefined) {
   useEffect(() => {
@@ -132,6 +133,7 @@ function Router() {
               <Route path="/set-password" component={SetPassword} />
               {/* Unlisted — no nav link; support staff navigate here directly. */}
               <Route path="/exceptions" component={Exceptions} />
+              <Route path="/admin/season" component={SeasonAdmin} />
               <Route component={NotFound} />
             </Switch>
           </Suspense>
