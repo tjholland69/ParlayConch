@@ -22,7 +22,10 @@ export type FlatParlayLegRow = {
   gameTime: string | null;
   slate: string | null;
   /** When this leg's outcome was actually decided — see parlayLegs.decidedAt. More
-   * precise than gameTime for "when did this settle" sorting/display. */
+   * precise than gameTime for "when did this settle" sorting/display. Falls back to
+   * the game's finishedAt when decidedAt is unset (e.g. losses, which never get an
+   * early-detected moment — see decisionDetection.ts) so "Settled At" isn't blank
+   * for every loss, matching the same fallback used in leagueRecords.ts. */
   decidedAt: string | null;
 };
 
@@ -49,7 +52,7 @@ export function flattenParlayLegs(parlays: ParlayWithLegs[]): FlatParlayLegRow[]
         result: leg.result ? leg.result.charAt(0).toUpperCase() + leg.result.slice(1) : "—",
         gameTime: leg.game?.gameTime ? String(leg.game.gameTime) : null,
         slate: leg.game?.gameTime ? getSlate(new Date(leg.game.gameTime)) : null,
-        decidedAt: leg.decidedAt ? String(leg.decidedAt) : null,
+        decidedAt: leg.decidedAt ? String(leg.decidedAt) : (leg.game?.finishedAt ? String(leg.game.finishedAt) : null),
       });
     }
   }
