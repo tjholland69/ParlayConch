@@ -157,11 +157,6 @@ function ParlayCard({
   return (
     <View style={styles.parlayCard}>
       <View style={styles.parlayCardHeader}>
-        <Avatar
-          src={parlay.user?.profileImageUrl}
-          name={name}
-          size={36}
-        />
         <View style={styles.parlayCardMeta}>
           <Text style={styles.parlayCardName} numberOfLines={1}>{name}</Text>
           <Text style={styles.parlayCardStatus}>{statusLabel}</Text>
@@ -174,7 +169,7 @@ function ParlayCard({
           {parlay.legs.map((leg: ParlayLegWithGame, i: number) => {
             const isWin = leg.result === "win";
             const isLoss = leg.result === "loss";
-            const dotColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#374151";
+            const resultColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#cbd5e1";
             const label =
               leg.betType === "player_prop"
                 ? `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"}`
@@ -187,11 +182,13 @@ function ParlayCard({
                   onPress={() => leg.result && setExpandedLegIndex(expanded ? null : i)}
                   style={({ pressed }) => [styles.legRow, pressed && styles.pressed]}
                 >
-                  <View style={[styles.legDot, { backgroundColor: dotColor }]} />
-                  <Text style={styles.legText} numberOfLines={1}>{label}</Text>
-                  {leg.line != null && (
-                    <Text style={styles.legLine}>{parseFloat(leg.line) > 0 ? `+${leg.line}` : leg.line}</Text>
-                  )}
+                  <View style={[styles.legDot, { backgroundColor: resultColor }]} />
+                  <Text style={[styles.legText, { color: resultColor }]} numberOfLines={1} ellipsizeMode="tail">
+                    {label}
+                  </Text>
+                  {/* leg.line already carries its own sign (e.g. "+3.5" for
+                      underdog spreads, from game.spread) — don't add another. */}
+                  {leg.line != null && <Text style={styles.legLine}>{leg.line}</Text>}
                 </Pressable>
                 {expanded && leg.result && (
                   <Animated.View
@@ -533,7 +530,10 @@ export default function LeagueDetailScreen() {
           )}
         </View>
 
-        {isAdmin && activeWeek && (
+        {/* Submitted-count / lock control is league-management chrome tied to
+            the Parlays view — showing it under Members/Stats too was exactly
+            the "full league info that doesn't belong here" clutter. */}
+        {isAdmin && activeWeek && activeTab === "parlays" && (
           <View style={styles.adminBar}>
             <Text style={styles.adminBarText}>
               {lockStatus?.submittedCount ?? 0} / {lockStatus?.totalMembers ?? members?.length ?? "—"} submitted
@@ -638,11 +638,10 @@ export default function LeagueDetailScreen() {
                     })
                   }
                 >
-                  <Ionicons name="create-outline" size={16} color="#2563eb" />
+                  <Ionicons name="create-outline" size={18} color="#fff" />
                   <Text style={styles.submitBannerText}>
-                    {myParlay ? "Edit your pick" : "Build your pick"}
+                    {myParlay ? "Edit Your Pick" : "Build Your Pick"}
                   </Text>
-                  <Ionicons name="chevron-forward" size={14} color="#2563eb" />
                 </Pressable>
               )}
               {isLocked && !myParlay && (
@@ -922,16 +921,20 @@ const styles = StyleSheet.create({
   submitBanner: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 8,
-    backgroundColor: "#1e2a3b",
-    borderWidth: 1,
-    borderColor: "#2563eb",
+    backgroundColor: "#2563eb",
     borderRadius: 12,
-    padding: 12,
+    paddingVertical: 14,
     marginBottom: 14,
+    shadowColor: "#2563eb",
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
   },
-  submitBannerPressed: { opacity: 0.7 },
-  submitBannerText: { flex: 1, fontSize: 13, color: "#93c5fd", fontWeight: "500" },
+  submitBannerPressed: { opacity: 0.8 },
+  submitBannerText: { fontSize: 15, color: "#fff", fontWeight: "700", textAlign: "center" },
   missedBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -1058,7 +1061,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   legDot: { width: 7, height: 7, borderRadius: 4 },
-  legText: { flex: 1, fontSize: 12, color: "#94a3b8" },
+  legText: { flex: 1, fontSize: 13, fontWeight: "600" },
   legLine: { fontSize: 12, color: "#475569", fontWeight: "600" },
   pressed: { opacity: 0.6 },
   legDetailRow: {
