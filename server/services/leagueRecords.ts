@@ -200,6 +200,36 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
     });
   }
 
+  // ── The Juiceman: highest average odds among a member's WON legs. Unlike
+  // highestSingleLegOddsWon (their single best win), this rewards someone who
+  // consistently cashes plus-money underdogs rather than one lucky hit. ──
+  const juiceSums = new Map<string, { totalDecimal: number; count: number }>();
+  for (const r of rows) {
+    if (r.leg.result !== "win") continue;
+    const american = parseAmericanOdds(r.leg.odds);
+    if (american == null) continue;
+    const cur = juiceSums.get(r.leg.userId) ?? { totalDecimal: 0, count: 0 };
+    cur.totalDecimal += americanToDecimal(american);
+    cur.count += 1;
+    juiceSums.set(r.leg.userId, cur);
+  }
+  let juiceman: { userId: string; avgDecimal: number; count: number } | null = null;
+  for (const [userId, sum] of juiceSums) {
+    const avgDecimal = sum.totalDecimal / sum.count;
+    if (!juiceman || avgDecimal > juiceman.avgDecimal) {
+      juiceman = { userId, avgDecimal, count: sum.count };
+    }
+  }
+  if (juiceman) {
+    records.push({
+      key: "juiceman",
+      label: "The Juiceman",
+      value: decimalToAmericanLabel(juiceman.avgDecimal),
+      detail: `avg over ${juiceman.count} win${juiceman.count !== 1 ? "s" : ""}`,
+      holderUserId: juiceman.userId,
+    });
+  }
+
   // ── Longest win / loss streak per user, at the leg level ───────────────
   const legsByUser = new Map<string, Row[]>();
   for (const r of rows) {

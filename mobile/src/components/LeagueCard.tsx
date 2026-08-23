@@ -13,10 +13,15 @@ interface LeagueCardProps {
     isAdmin?: boolean;
     role?: string;
   };
+  /** All-time win rate + total parlays won — same top-level stats web shows on its Leagues list. */
+  stat?: { winRate: number; totalDecided: number; parlaysWon: number };
 }
 
-export function LeagueCard({ league }: LeagueCardProps) {
+export function LeagueCard({ league, stat }: LeagueCardProps) {
   const router = useRouter();
+
+  const statColor =
+    stat && stat.winRate >= 60 ? "#4ade80" : stat && stat.winRate >= 40 ? "#facc15" : "#f87171";
 
   const roleLabel = league.isAdmin
     ? "Parlay Maestro"
@@ -86,6 +91,23 @@ export function LeagueCard({ league }: LeagueCardProps) {
               </View>
             )}
           </View>
+
+          {stat && stat.totalDecided > 0 && (
+            <View style={styles.statRow}>
+              <View style={styles.metaItem}>
+                <Ionicons name="trending-up-outline" size={13} color={statColor} />
+                <Text style={[styles.statText, { color: statColor }]} numberOfLines={1}>
+                  {stat.winRate.toFixed(1)}% picks won
+                </Text>
+              </View>
+              <View style={styles.metaItem}>
+                <Ionicons name="trophy-outline" size={13} color="#475569" />
+                <Text style={styles.metaTextMuted} numberOfLines={1}>
+                  {stat.parlaysWon} parlay{stat.parlaysWon !== 1 ? "s" : ""} won
+                </Text>
+              </View>
+            </View>
+          )}
         </View>
       </View>
     </Pressable>
@@ -185,6 +207,18 @@ const styles = StyleSheet.create({
     minWidth: 0,
     flexShrink: 1,
   },
+  statRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: "#2a3447",
+    minWidth: 0,
+  },
+  statText: { fontSize: 12, fontWeight: "700", flexShrink: 1 },
   roleDot: { width: 6, height: 6, borderRadius: 3, flexShrink: 0 },
   metaText: { fontSize: 12, fontWeight: "600", flexShrink: 1 },
   metaTextMuted: { fontSize: 12, color: "#475569", flexShrink: 1 },
