@@ -83,7 +83,16 @@ function SummarySlide() {
           label="Participation Rate"
           value={`${(participationRate * 100).toFixed(0)}%`}
         />
-        <StatCard icon={Zap} label="Power Score" value={powerScore.toFixed(2)} />
+        <StatCard
+          icon={Zap}
+          label="Power Score"
+          value={powerScore.toFixed(2)}
+          info={{
+            fullName: "Power Score",
+            description:
+              "Average value earned per settled leg. Winning legs score based on their odds — a +150 underdog win scores 1.5, a -150 favorite win scores about 0.67 — while losing legs score 0. Pushes and voided legs don't count. It rewards value-weighted wins, not just win rate.",
+          }}
+        />
         <StatCard
           icon={BarChart3}
           label="BAR"
@@ -94,7 +103,7 @@ function SummarySlide() {
           info={{
             fullName: "Bets Above Replacement",
             description:
-              "How much value you're adding compared to an average bettor in your league — your Power Score weighted by how consistently you submit picks each week compared against the field.",
+              "How much value you're adding compared to an average bettor in your league — your Power Score weighted by how consistently you submit picks each week, minus the league average Power Score weighted by its average participation. Positive means you're outperforming the league average; negative means below it.",
           }}
         />
       </div>

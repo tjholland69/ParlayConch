@@ -1,16 +1,9 @@
 import { Tabs, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { Platform, View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { Shell } from "lucide-react-native";
 import { HeaderAvatarButton } from "@/components/HeaderAvatarButton";
-
-type IconName = React.ComponentProps<typeof Ionicons>["name"];
-
-const FOCUSED_ICONS: Partial<Record<IconName, IconName>> = {
-  "grid-outline": "grid",
-  "checkmark-circle-outline": "checkmark-circle",
-  "trophy-outline": "trophy",
-};
+import { BottomTabBar } from "@/components/BottomTabBar";
 
 function BackButton() {
   const router = useRouter();
@@ -25,39 +18,11 @@ function BackButton() {
   );
 }
 
-function TabIcon({
-  name,
-  focused,
-  color,
-  size,
-}: {
-  name: IconName;
-  focused: boolean;
-  color: string;
-  size: number;
-}) {
-  return <Ionicons name={(focused && FOCUSED_ICONS[name]) || name} size={size} color={color} />;
-}
-
 export default function TabLayout() {
   return (
     <Tabs
+      tabBar={(props) => <BottomTabBar {...props} />}
       screenOptions={{
-        tabBarStyle: {
-          backgroundColor: "#1c2538",
-          borderTopColor: "#2a3447",
-          borderTopWidth: 1,
-          height: Platform.OS === "ios" ? 88 : 64,
-          paddingBottom: Platform.OS === "ios" ? 28 : 8,
-          paddingTop: 8,
-        },
-        tabBarActiveTintColor: "#2563eb",
-        tabBarInactiveTintColor: "#475569",
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: "600",
-          letterSpacing: 0.2,
-        },
         headerStyle: {
           backgroundColor: "#1c2538",
         },
@@ -82,29 +47,10 @@ export default function TabLayout() {
               <Text style={styles.headerTitleText}>PARLAYCONCH</Text>
             </View>
           ),
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon name="grid-outline" focused={focused} color={color} size={size} />
-          ),
         }}
       />
-      <Tabs.Screen
-        name="picks"
-        options={{
-          title: "My Picks",
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon name="checkmark-circle-outline" focused={focused} color={color} size={size} />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="leagues"
-        options={{
-          title: "Leagues",
-          tabBarIcon: ({ color, size, focused }) => (
-            <TabIcon name="trophy-outline" focused={focused} color={color} size={size} />
-          ),
-        }}
-      />
+      <Tabs.Screen name="picks" options={{ title: "My Picks" }} />
+      <Tabs.Screen name="leagues" options={{ title: "Leagues" }} />
       <Tabs.Screen
         name="settings"
         options={{
@@ -112,7 +58,6 @@ export default function TabLayout() {
           href: null,
           headerRight: () => null,
           headerLeft: () => <BackButton />,
-          tabBarStyle: { display: "none" },
         }}
       />
     </Tabs>

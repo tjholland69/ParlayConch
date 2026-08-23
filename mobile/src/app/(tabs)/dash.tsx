@@ -4,10 +4,23 @@ import { useDashboardSummary, useDashboardPatterns, useDashboardPerformance } fr
 import { DashboardStack, DashboardLoading, DashboardEmptyState } from "@/components/DashboardSlider";
 import { SimpleLineChart } from "@/components/charts/SimpleLineChart";
 import { SimpleBarChart } from "@/components/charts/SimpleBarChart";
+import { InfoButton } from "@/components/InfoTip";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
-function StatTile({ icon, label, value, valueColor }: { icon: IconName; label: string; value: string; valueColor?: string }) {
+function StatTile({
+  icon,
+  label,
+  value,
+  valueColor,
+  info,
+}: {
+  icon: IconName;
+  label: string;
+  value: string;
+  valueColor?: string;
+  info?: { title: string; description: string };
+}) {
   return (
     <View style={styles.statTile}>
       <View style={styles.statTileHeader}>
@@ -15,6 +28,7 @@ function StatTile({ icon, label, value, valueColor }: { icon: IconName; label: s
         <Text style={styles.statTileLabel} numberOfLines={1}>
           {label}
         </Text>
+        {info && <InfoButton title={info.title} description={info.description} />}
       </View>
       <Text style={[styles.statTileValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
     </View>
@@ -39,12 +53,26 @@ function SummarySlide() {
         <StatTile icon="trophy-outline" label="Leg Wins" value={String(data.legWins)} />
         <StatTile icon="close-circle-outline" label="Leg Losses" value={String(data.legLosses)} />
         <StatTile icon="pulse-outline" label="Participation" value={`${(data.participationRate * 100).toFixed(0)}%`} />
-        <StatTile icon="flash-outline" label="Power Score" value={data.powerScore.toFixed(2)} />
+        <StatTile
+          icon="flash-outline"
+          label="Power Score"
+          value={data.powerScore.toFixed(2)}
+          info={{
+            title: "Power Score",
+            description:
+              "Average value earned per settled leg. Winning legs score based on their odds — a +150 underdog win scores 1.5, a -150 favorite win scores about 0.67 — while losing legs score 0. Pushes and voided legs don't count. It rewards value-weighted wins, not just win rate.",
+          }}
+        />
         <StatTile
           icon="bar-chart-outline"
           label="BAR"
           value={`${bar > 0 ? "+" : ""}${bar.toFixed(2)}`}
           valueColor={bar > 0 ? "#2563eb" : bar < 0 ? "#ef4444" : undefined}
+          info={{
+            title: "Bets Above Replacement",
+            description:
+              "How much value you're adding compared to an average bettor in your league — your Power Score weighted by how consistently you submit picks each week, minus the league average Power Score weighted by its average participation. Positive means you're outperforming the league average; negative means below it.",
+          }}
         />
       </View>
     </View>
