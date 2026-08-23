@@ -8,6 +8,13 @@ export function useLeagues() {
   });
 }
 
+/** All-time parlay_leg win rate + total parlays won per league, keyed by leagueId — same data web shows on its Leagues list. */
+export function useLeaguesOverviewStats() {
+  return useQuery<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number; parlaysWon: number }>>({
+    queryKey: ["/api/leagues/overview-stats"],
+  });
+}
+
 export function useLeagueStats(leagueId: number) {
   return useQuery<import("@shared/schema").LeagueStats[]>({
     queryKey: ["/api/leagues", leagueId, "stats"],

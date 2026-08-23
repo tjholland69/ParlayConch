@@ -25,6 +25,7 @@ export interface UserPatterns {
   favoriteTimeOfDay: { label: string; count: number } | null;
   favoriteTeam: { team: string; count: number } | null;
   overUnderPreference: { pick: "over" | "under"; overCount: number; underCount: number } | null;
+  slateBreakdown: { slate: string; count: number }[];
 }
 
 export interface WinRateTimeSeriesPoint {

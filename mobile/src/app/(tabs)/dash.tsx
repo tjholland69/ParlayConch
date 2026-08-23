@@ -145,8 +145,21 @@ function AnalyticsSlide() {
         {data.favoriteDay && (
           <StatRow icon="calendar-outline" label="Most Active Day" value={`${data.favoriteDay.day} (${data.favoriteDay.count})`} />
         )}
-        {data.favoriteTimeOfDay && (
-          <StatRow icon="time-outline" label="Most Active Slate" value={`${data.favoriteTimeOfDay.label} (${data.favoriteTimeOfDay.count})`} />
+        {data.slateBreakdown.some((s) => s.count > 0) && (
+          <View style={styles.slateCard}>
+            <View style={styles.slateCardHeader}>
+              <Ionicons name="time-outline" size={15} color="#94a3b8" />
+              <Text style={styles.slateCardTitle}>Slate Breakdown</Text>
+            </View>
+            <View style={{ gap: 6 }}>
+              {data.slateBreakdown.map((s) => (
+                <View key={s.slate} style={styles.slateRow}>
+                  <Text style={styles.slateRowLabel}>{s.slate}</Text>
+                  <Text style={styles.slateRowValue}>{s.count}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
         )}
       </View>
     </View>
@@ -253,4 +266,16 @@ const styles = StyleSheet.create({
   statRowLeft: { flexDirection: "row", alignItems: "center", gap: 8, flexShrink: 1 },
   statRowLabel: { fontSize: 13, color: "#94a3b8" },
   statRowValue: { fontSize: 13, fontWeight: "700", color: "#f1f5f9", flexShrink: 1, textAlign: "right" },
+  slateCard: {
+    backgroundColor: "#141926",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 12,
+    padding: 12,
+  },
+  slateCardHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
+  slateCardTitle: { fontSize: 13, color: "#94a3b8" },
+  slateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  slateRowLabel: { fontSize: 13, color: "#94a3b8" },
+  slateRowValue: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
 });

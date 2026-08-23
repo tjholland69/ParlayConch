@@ -15,13 +15,14 @@ import {
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLeagues, useCreateLeague, useJoinLeague } from "@/hooks/use-leagues";
+import { useLeagues, useLeaguesOverviewStats, useCreateLeague, useJoinLeague } from "@/hooks/use-leagues";
 import { LeagueCard } from "@/components/LeagueCard";
 
 type ModalType = "create" | "join" | null;
 
 export default function LeaguesScreen() {
   const { data: leagues, isLoading, refetch, isRefetching } = useLeagues();
+  const { data: overviewStats } = useLeaguesOverviewStats();
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
   const insets = useSafeAreaInsets();
@@ -117,7 +118,7 @@ export default function LeaguesScreen() {
               YOUR LEAGUES · {leagues.length}
             </Text>
             {leagues.map((league) => (
-              <LeagueCard key={league.id} league={league} />
+              <LeagueCard key={league.id} league={league} stat={overviewStats?.[league.id]} />
             ))}
           </View>
         )}
