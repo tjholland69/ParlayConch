@@ -177,7 +177,39 @@ export async function fetchUpcomingGames(): Promise<OddsGame[]> {
   return response.json();
 }
 
-export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: number; updated: number }> {
+/**
+ * Approximate the NFL calendar window for a season/week. OddsAPI's "upcoming"
+ * feed (fetchUpcomingGames) isn't season/week aware — it just returns
+ * whatever's currently on the board league-wide — so this is used purely as
+ * a sanity filter in syncGamesFromOddsApi to keep a sync targeted at one week
+ * from pulling in another week's (or another season's) games. Not exact
+ * schedule data: generously padded to comfortably cover early Thursday
+ * openers through Monday-night closers, including the rare Saturday/
+ * international game, without needing a real schedule source.
+ */
+export function estimateWeekDateRange(season: number, weekNumber: number): { start: Date; end: Date } {
+  // NFL Week 1 conventionally opens the Thursday after Labor Day (the first
+  // Monday in September).
+  const laborDay = new Date(Date.UTC(season, 8, 1)); // Sept 1, UTC
+  while (laborDay.getUTCDay() !== 1) laborDay.setUTCDate(laborDay.getUTCDate() + 1);
+  const week1Thursday = new Date(laborDay);
+  week1Thursday.setUTCDate(laborDay.getUTCDate() + 3); // Monday -> Thursday
+
+  const start = new Date(week1Thursday);
+  start.setUTCDate(week1Thursday.getUTCDate() + (weekNumber - 1) * 7 - 3); // 3 days padding before kickoff
+  const end = new Date(start);
+  end.setUTCDate(start.getUTCDate() + 7 + 6); // 7-day slate + 6 days padding after
+
+  return { start, end };
+}
+
+export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: number; updated: number; skippedOutOfRange: number }> {
+  const week = await db.select().from(weeks).where(eq(weeks.id, weekId)).limit(1);
+  if (!week[0]) {
+    throw new Error(`Week #${weekId} not found`);
+  }
+  const { start, end } = estimateWeekDateRange(week[0].season, week[0].weekNumber);
+
   const oddsGames = await fetchUpcomingGames();
 
   const existingGames = await db.select().from(games).where(eq(games.weekId, weekId));
@@ -188,14 +220,24 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
 
   let added = 0;
   let updated = 0;
+  let skippedOutOfRange = 0;
 
   for (const oddsGame of oddsGames) {
+    const gameTime = new Date(oddsGame.commence_time);
     const homeTeam = shortenTeamName(oddsGame.home_team);
     const awayTeam = shortenTeamName(oddsGame.away_team);
-    const gameTime = new Date(oddsGame.commence_time);
-    const lines = parseGameLines(oddsGame);
-
     const existing = existingByTeams.get(`${homeTeam}|${awayTeam}`);
+
+    // Games already recorded under this week are always allowed to have
+    // their lines refreshed, even if the date estimate is off — only new
+    // inserts are guarded by the window, since those are what misdirect a
+    // sync into the wrong week.
+    if (!existing && (gameTime < start || gameTime > end)) {
+      skippedOutOfRange++;
+      continue;
+    }
+
+    const lines = parseGameLines(oddsGame);
 
     if (existing) {
       await db.update(games)
@@ -215,7 +257,7 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
     }
   }
 
-  return { added, updated };
+  return { added, updated, skippedOutOfRange };
 }
 
 export async function getApiUsage(): Promise<{ remaining: number; used: number }> {
