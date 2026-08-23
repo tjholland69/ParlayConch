@@ -5,6 +5,7 @@ import { DashboardStack, DashboardLoading, DashboardEmptyState } from "@/compone
 import { SimpleLineChart } from "@/components/charts/SimpleLineChart";
 import { SimpleBarChart } from "@/components/charts/SimpleBarChart";
 import { InfoButton } from "@/components/InfoTip";
+import { shadows } from "@/lib/theme";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -14,15 +15,18 @@ function StatTile({
   value,
   valueColor,
   info,
+  glowColor,
 }: {
   icon: IconName;
   label: string;
   value: string;
   valueColor?: string;
   info?: { title: string; description: string };
+  /** Hero stats (Power Score, BAR) get a colored glow instead of a flat shadow. */
+  glowColor?: string;
 }) {
   return (
-    <View style={styles.statTile}>
+    <View style={[styles.statTile, glowColor ? shadows.glow(glowColor, 0.3) : shadows.card]}>
       <View style={styles.statTileHeader}>
         <Ionicons name={icon} size={13} color="#94a3b8" />
         <Text style={styles.statTileLabel} numberOfLines={1}>
@@ -57,6 +61,7 @@ function SummarySlide() {
           icon="flash-outline"
           label="Power Score"
           value={data.powerScore.toFixed(2)}
+          glowColor="#2563eb"
           info={{
             title: "Power Score",
             description:
@@ -68,6 +73,7 @@ function SummarySlide() {
           label="BAR"
           value={`${bar > 0 ? "+" : ""}${bar.toFixed(2)}`}
           valueColor={bar > 0 ? "#2563eb" : bar < 0 ? "#ef4444" : undefined}
+          glowColor={bar > 0 ? "#2563eb" : bar < 0 ? "#ef4444" : undefined}
           info={{
             title: "Bets Above Replacement",
             description:
@@ -183,7 +189,7 @@ function PerformanceSlide() {
   return (
     <View>
       <Text style={styles.slideTitle}>Performance Over Time</Text>
-      <SimpleLineChart points={points} />
+      <SimpleLineChart points={points} formatValue={(v) => `${v.toFixed(1)}%`} />
     </View>
   );
 }
@@ -205,7 +211,7 @@ function WeekOverWeekSlide() {
   return (
     <View>
       <Text style={styles.slideTitle}>Weekly</Text>
-      <SimpleBarChart points={points} />
+      <SimpleBarChart points={points} formatValue={(v) => `${v.toFixed(1)}%`} />
     </View>
   );
 }

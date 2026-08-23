@@ -44,6 +44,7 @@ import { SPORTSBOOK_PROVIDERS, pickDeepLinkGame, type SportsbookProvider } from 
 import type { ParlayWithLegs } from "@shared/schema";
 import { resolveResultDetail } from "@shared/legJustification";
 import { webLeagueSettingsUrl } from "@/lib/pickHelpers";
+import { shadows } from "@/lib/theme";
 
 type ParlayLegWithGame = ParlayWithLegs["legs"][number];
 
@@ -155,6 +156,7 @@ function ParlayCard({
   }
 
   return (
+    <View style={styles.parlayCardShadowWrap}>
     <View style={styles.parlayCard}>
       <View style={styles.parlayCardHeader}>
         <View style={styles.parlayCardMeta}>
@@ -243,15 +245,66 @@ function ParlayCard({
         </View>
       )}
     </View>
+    </View>
   );
 }
 
-function MemberCard({ member }: { member: any }) {
-  const name = member.user?.settings?.displayName
+function memberDisplayName(member: any): string {
+  return member.user?.settings?.displayName
     ? member.user.settings.displayName
     : member.user?.firstName
     ? `${member.user.firstName}${member.user.lastName ? " " + member.user.lastName : ""}`
     : member.user?.email ?? "Unknown";
+}
+
+const BET_TYPE_FILTERS: { key: string; label: string }[] = [
+  { key: "all", label: "All Types" },
+  { key: "spread", label: "Spread" },
+  { key: "moneyline", label: "ML" },
+  { key: "over", label: "Over" },
+  { key: "under", label: "Under" },
+  { key: "player_prop", label: "Prop" },
+];
+
+const RESULT_FILTERS: { key: string; label: string }[] = [
+  { key: "all", label: "All Results" },
+  { key: "win", label: "Won" },
+  { key: "loss", label: "Lost" },
+  { key: "push", label: "Push" },
+  { key: "pending", label: "Pending" },
+];
+
+function FilterChipRow({
+  options,
+  selected,
+  onSelect,
+}: {
+  options: { key: string; label: string }[];
+  selected: string;
+  onSelect: (key: string) => void;
+}) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
+      {options.map((opt) => {
+        const active = opt.key === selected;
+        return (
+          <Pressable
+            key={opt.key}
+            onPress={() => onSelect(opt.key)}
+            style={[styles.chip, active && styles.chipActive]}
+          >
+            <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
+              {opt.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+function MemberCard({ member }: { member: any }) {
+  const name = memberDisplayName(member);
 
   const roleColor =
     member.role === "admin"
@@ -341,6 +394,9 @@ export default function LeagueDetailScreen() {
   const [activeTab, setActiveTab] = useState<Tab>("parlays");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmails, setInviteEmails] = useState("");
+  const [memberFilter, setMemberFilter] = useState("all");
+  const [betTypeFilter, setBetTypeFilter] = useState("all");
+  const [resultFilter, setResultFilter] = useState("all");
   const activeWeek = useActiveWeek();
   const { user } = useAuth();
 
@@ -376,6 +432,27 @@ export default function LeagueDetailScreen() {
   const leagueName = league?.name ?? "League";
   const isLocked = !!lockStatus?.isLocked;
   const canBuild = !!activeWeek && !isLocked;
+
+  const memberOptions = [
+    { key: "all", label: "All Members" },
+    ...(members ?? []).map((m: any) => ({ key: m.userId, label: memberDisplayName(m) })),
+  ];
+  const filtersActive = memberFilter !== "all" || betTypeFilter !== "all" || resultFilter !== "all";
+  const filteredParlays = (parlays ?? []).filter((parlay: ParlayWithLegs) => {
+    const legs = parlay.legs ?? [];
+    if (memberFilter !== "all" && parlay.userId !== memberFilter && !legs.some((l) => l.userId === memberFilter)) {
+      return false;
+    }
+    if (betTypeFilter !== "all" && !legs.some((l) => l.betType === betTypeFilter)) return false;
+    if (resultFilter !== "all") {
+      if (resultFilter === "pending") {
+        if (!legs.some((l) => !l.result)) return false;
+      } else if (!legs.some((l) => l.result === resultFilter)) {
+        return false;
+      }
+    }
+    return true;
+  });
 
   function openManageOnWeb() {
     WebBrowser.openBrowserAsync(webLeagueSettingsUrl(leagueId, API_BASE_URL));
@@ -652,6 +729,28 @@ export default function LeagueDetailScreen() {
                   </Text>
                 </View>
               )}
+              {!parlaysLoading && parlays && parlays.length > 0 && (
+                <View style={styles.filterSection}>
+                  <View style={styles.filterSectionHeader}>
+                    <Text style={styles.filterSectionTitle}>Filter</Text>
+                    {filtersActive && (
+                      <Pressable
+                        onPress={() => {
+                          setMemberFilter("all");
+                          setBetTypeFilter("all");
+                          setResultFilter("all");
+                        }}
+                        hitSlop={8}
+                      >
+                        <Text style={styles.clearFiltersText}>Clear</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                  <FilterChipRow options={memberOptions} selected={memberFilter} onSelect={setMemberFilter} />
+                  <FilterChipRow options={BET_TYPE_FILTERS} selected={betTypeFilter} onSelect={setBetTypeFilter} />
+                  <FilterChipRow options={RESULT_FILTERS} selected={resultFilter} onSelect={setResultFilter} />
+                </View>
+              )}
               {parlaysLoading ? (
                 <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
               ) : !parlays || parlays.length === 0 ? (
@@ -666,8 +765,16 @@ export default function LeagueDetailScreen() {
                       : "No picks have been submitted for this week."}
                   </Text>
                 </View>
+              ) : filteredParlays.length === 0 ? (
+                <View style={styles.emptyState}>
+                  <View style={styles.emptyIcon}>
+                    <Ionicons name="filter-outline" size={28} color="#2563eb" />
+                  </View>
+                  <Text style={styles.emptyTitle}>No parlays match</Text>
+                  <Text style={styles.emptySubtitle}>Try clearing a filter.</Text>
+                </View>
               ) : (
-                parlays.map((parlay: ParlayWithLegs) => (
+                filteredParlays.map((parlay: ParlayWithLegs) => (
                   <ParlayCard
                     key={parlay.id}
                     parlay={parlay}
@@ -1015,6 +1122,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   modalConfirmText: { fontSize: 15, fontWeight: "700", color: "#ffffff" },
+  filterSection: { marginBottom: 14, gap: 6 },
+  filterSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
+  filterSectionTitle: { fontSize: 11, fontWeight: "700", color: "#475569", letterSpacing: 0.6, textTransform: "uppercase" },
+  clearFiltersText: { fontSize: 12, fontWeight: "600", color: "#2563eb" },
+  chipRow: { gap: 8, paddingRight: 8 },
+  chip: {
+    backgroundColor: "#1c2538",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chipActive: { backgroundColor: "#1e2a3b", borderColor: "#2563eb" },
+  chipText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
+  chipTextActive: { color: "#93c5fd" },
   emptyState: { alignItems: "center", paddingVertical: 48, gap: 10 },
   emptyIcon: {
     width: 64,
@@ -1030,13 +1153,19 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 16, fontWeight: "700", color: "#f1f5f9" },
   emptySubtitle: { fontSize: 13, color: "#94a3b8", textAlign: "center" },
 
-  /* Parlay card */
+  /* Parlay card — shadow lives on this outer, non-clipping wrapper since
+   * combining shadow* props with overflow:"hidden" (needed by parlayCard's
+   * rounded corners) breaks shadow rendering on iOS. */
+  parlayCardShadowWrap: {
+    marginBottom: 10,
+    borderRadius: 14,
+    ...shadows.card,
+  },
   parlayCard: {
     backgroundColor: "#1c2538",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#2a3447",
-    marginBottom: 10,
     overflow: "hidden",
   },
   parlayCardHeader: {

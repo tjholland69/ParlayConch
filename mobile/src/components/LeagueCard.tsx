@@ -1,6 +1,7 @@
 import { Pressable, View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { shadows } from "@/lib/theme";
 
 interface LeagueCardProps {
   league: {
@@ -122,11 +123,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignSelf: "stretch",
     minWidth: 0,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 4,
+    ...shadows.card,
   },
   card: {
     flexDirection: "row",
