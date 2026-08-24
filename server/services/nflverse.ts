@@ -572,6 +572,120 @@ export async function syncAllPlayerStatsForWeek(
   return upsertPlayerStatsRows(season, week, null);
 }
 
+// ─── Season rollover (auto-detect + import a newly-released schedule) ──────
+
+/**
+ * Checks the nflverse schedule feed for a season beyond the latest one we
+ * already have `weeks` rows for, and — if its regular-season schedule has
+ * been published (rows with real home/away teams, not just placeholders) —
+ * creates every regular-season week (and its games) for that season.
+ *
+ * Only regular season (`game_type === "REG"`) is imported; postseason weeks
+ * are still created manually via the admin panel. New weeks are created
+ * inactive — an admin still has to activate a week for it to go live, same
+ * as the existing manual flow.
+ *
+ * Safe to call repeatedly: an existing week is looked up via
+ * `getWeekBySeasonAndNumber` before falling back to `createWeek` (which is a
+ * plain insert with no dedup of its own), and games are matched by
+ * (weekId, homeTeam, awayTeam) before
+ * inserting so re-running never creates duplicates.
+ */
+export async function detectAndImportNewSeason(): Promise<{
+  checked: true;
+  newSeasonFound: number | null;
+  weeksCreated: number;
+  gamesCreated: number;
+}> {
+  const existingWeeks = await storage.getWeeks();
+  const latestKnownSeason = existingWeeks.reduce(
+    (max, w) => Math.max(max, w.season),
+    0,
+  );
+
+  logger.info(`[season-rollover] Latest season with weeks in our DB: ${latestKnownSeason || "none"}`);
+
+  const rows = (await fetchCsv(schedulesUrl())) as unknown as NflverseScheduleRow[];
+
+  const candidateSeasons = [...new Set(
+    rows
+      .filter((r) => r.game_type === "REG" && r.home_team && r.away_team)
+      .map((r) => parseInt(r.season))
+      .filter((s) => !isNaN(s) && s > latestKnownSeason)
+  )].sort((a, b) => a - b);
+
+  if (candidateSeasons.length === 0) {
+    logger.info("[season-rollover] No newer season schedule published yet.");
+    return { checked: true, newSeasonFound: null, weeksCreated: 0, gamesCreated: 0 };
+  }
+
+  // Import the earliest not-yet-imported season. If more than one is ahead
+  // (shouldn't normally happen), later seasons are picked up on the next run.
+  const season = candidateSeasons[0];
+  logger.info(`[season-rollover] New season ${season} schedule detected — importing…`);
+
+  const seasonRows = rows.filter(
+    (r) => r.game_type === "REG" && parseInt(r.season) === season && r.home_team && r.away_team
+  );
+
+  const weekNumbers = [...new Set(
+    seasonRows.map((r) => parseInt(r.week)).filter((w) => !isNaN(w))
+  )].sort((a, b) => a - b);
+
+  let weeksCreated = 0;
+  let gamesCreated = 0;
+
+  for (const weekNumber of weekNumbers) {
+    // storage.createWeek is a plain insert with no dedup — check for an
+    // existing row first (same pattern POST /api/admin/weeks uses) so a
+    // partial prior run (e.g. this loop throwing partway through) doesn't
+    // hit the weeks_season_week_uidx unique constraint on retry.
+    const week = (await storage.getWeekBySeasonAndNumber(season, weekNumber))
+      ?? await storage.createWeek({
+        season,
+        weekNumber,
+        label: `${season} Week ${weekNumber}`,
+        isActive: false,
+      });
+    weeksCreated++;
+
+    const existingGames = await storage.getGamesByWeek(week.id);
+    const existingByTeams = new Set(existingGames.map((g) => `${g.homeTeam}|${g.awayTeam}`));
+
+    const weekRows = seasonRows.filter((r) => parseInt(r.week) === weekNumber);
+    for (const row of weekRows) {
+      const homeTeam = abbrevToShort(row.home_team);
+      const awayTeam = abbrevToShort(row.away_team);
+      if (existingByTeams.has(`${homeTeam}|${awayTeam}`)) continue;
+
+      const spreadLine = parseFloat(row.spread_line);
+      const totalLine = parseFloat(row.total_line);
+      const gameTime = row.gameday
+        ? zonedWallTimeToUtc(row.gameday, row.gametime || "13:00", "America/New_York")
+        : null;
+
+      await storage.createGame({
+        weekId: week.id,
+        homeTeam,
+        awayTeam,
+        spread: !isNaN(spreadLine) ? spreadLine.toString() : null,
+        overUnder: !isNaN(totalLine) ? totalLine.toString() : null,
+        moneylineHome: row.home_moneyline || null,
+        moneylineAway: row.away_moneyline || null,
+        gameTime,
+        isFinished: false,
+      });
+      gamesCreated++;
+    }
+  }
+
+  logger.info(
+    `[season-rollover] Imported season ${season}: ${weeksCreated} weeks, ${gamesCreated} games.`
+  );
+
+  return { checked: true, newSeasonFound: season, weeksCreated, gamesCreated };
+}
+
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /** Parse int, returning null for blanks/NaN */

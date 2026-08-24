@@ -13,6 +13,19 @@ export const createParlayInputSchema = z.object({
   ),
 });
 
+// Body for POST /api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs — adds
+// one leg to (or starts) the caller's in-progress draft parlay for that
+// league/week. Same per-leg shape as createParlayInputSchema's `legs` array
+// element, just singular.
+export const draftParlayLegInputSchema = z.object({
+  gameId: z.number(),
+  betType: z.string().min(1),
+  pick: z.string().min(1),
+  line: z.string().optional(),
+});
+
+export type DraftParlayLegInput = z.infer<typeof draftParlayLegInputSchema>;
+
 export const updateParlayInputSchema = z
   .object({
     status: z.enum(["pending", "approved", "rejected", "win", "loss", "push"]).optional(),

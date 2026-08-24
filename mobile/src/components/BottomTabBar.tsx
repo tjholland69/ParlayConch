@@ -7,7 +7,7 @@ type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 const TAB_ICONS: Record<string, { outline: IconName; filled: IconName; label: string }> = {
   dash: { outline: "grid-outline", filled: "grid", label: "Dash" },
-  picks: { outline: "checkmark-circle-outline", filled: "checkmark-circle", label: "My Picks" },
+  picks: { outline: "checkmark-circle-outline", filled: "checkmark-circle", label: "Your Parlays" },
   leagues: { outline: "trophy-outline", filled: "trophy", label: "Leagues" },
 };
 

@@ -14,6 +14,7 @@ import {
   getNflverseSyncJobStatus,
   startNflverseSyncWorker,
 } from "./jobs/nflverse-sync-queue";
+import { startSeasonRolloverWorker, runSeasonRolloverCheckNow } from "./jobs/season-rollover-queue";
 import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
@@ -38,6 +39,7 @@ import { emptyToNull, normalizeAddParlayLegInput, normalizeImportLegFields, norm
 import {
   addParlayLegInputSchema,
   createParlayInputSchema,
+  draftParlayLegInputSchema,
   updateLeagueNotificationSettingsSchema,
   updateLeagueSettingsSchema,
   updateParlayInputSchema,
@@ -71,6 +73,7 @@ export async function registerRoutes(
   if (isRedisConfigured()) {
     startOddsSyncWorker();
     startNflverseSyncWorker();
+    await startSeasonRolloverWorker();
   }
   registerRealtimeWebSocket(httpServer, app);
 
@@ -616,6 +619,81 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs — adds ONE leg
+  // to (or starts) the caller's in-progress draft parlay for this league/week.
+  // Unlike POST /api/parlays (full-replace, requires minLegsPerParlay already
+  // met), this is the "pick one leg at a time, it joins a queue" flow — the
+  // draft can sit below minLegsPerParlay until /submit is called. Returns the
+  // full parlay (with legs) via the same shape as GET .../my-parlay.
+  app.post("/api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs", isAuthenticated, async (req, res) => {
+    try {
+      const leg = draftParlayLegInputSchema.parse(req.body);
+      const userId = (req.user as any).claims.sub;
+      const leagueId = Number(req.params.leagueId);
+      const weekId = Number(req.params.weekId);
+
+      const leagues = await storage.getUserLeagues(userId);
+      const league = leagues.find(l => l.id === leagueId);
+      if (!league) return res.status(403).json({ message: "Not a member of this league" });
+
+      await storage.addLegToDraftParlay(
+        userId,
+        leagueId,
+        weekId,
+        { gameId: leg.gameId, betType: leg.betType, pick: leg.pick, line: emptyToNull(leg.line) },
+        league.maxLegsPerParlay || 5,
+      );
+
+      const parlay = await storage.getUserParlayForWeek(userId, leagueId, weekId);
+      res.status(201).json(parlay);
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ message: err.errors[0].message });
+      }
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // DELETE /api/parlays/:id/legs/:legId — removes one leg from the caller's
+  // own draft parlay (only draft — once submitted, edits go through the
+  // existing full-replace POST /api/parlays flow instead).
+  app.delete("/api/parlays/:id/legs/:legId", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlay = await storage.removeDraftParlayLeg(userId, Number(req.params.id), Number(req.params.legId));
+      res.json({ parlay });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // POST /api/parlays/:id/submit — finalizes the caller's own draft parlay:
+  // enforces minLegsPerParlay (deferred until now) and flips it to 'pending',
+  // entering the normal approve/reject workflow.
+  app.post("/api/parlays/:id/submit", isAuthenticated, auditLog("parlay.submit_draft", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlayId = Number(req.params.id);
+
+      const existing = await storage.getParlay(parlayId);
+      if (!existing) return res.status(404).json({ message: "Parlay not found" });
+
+      const leagues = await storage.getUserLeagues(userId);
+      const league = leagues.find(l => l.id === existing.leagueId);
+      if (!league) return res.status(403).json({ message: "Not a member of this league" });
+
+      const parlay = await storage.submitDraftParlay(
+        userId,
+        parlayId,
+        league.minLegsPerParlay || 3,
+        league.maxLegsPerParlay || 5,
+      );
+      res.json(parlay);
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
   app.get("/api/parlays/my", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
@@ -659,6 +737,13 @@ export async function registerRoutes(
     const isAdmin = await storage.isLeagueAdmin(parlay.leagueId, userId);
     if (!isAdmin) {
       return res.status(403).json({ message: "Only the Parlay Maestro can approve parlays" });
+    }
+
+    // A draft (still being built, never hit submit) can't be approved — it
+    // may have fewer legs than minLegsPerParlay, which submitDraftParlay is
+    // the only path that's supposed to enforce.
+    if (parlay.status === "draft") {
+      return res.status(400).json({ message: "This parlay hasn't been submitted yet." });
     }
 
     const updated = await storage.approveParlay(parlayId, userId);
@@ -1301,6 +1386,23 @@ export async function registerRoutes(
       }
       await storage.setActiveWeek(Number(req.params.id));
       res.json({ message: "Active week updated" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/admin/check-new-season — manually triggers the same nflverse
+  // schedule check the weekly job runs automatically. Creates every
+  // regular-season week (+ games) for the next season if its schedule has
+  // been published and we don't have it yet. Safe to re-run.
+  app.post("/api/admin/check-new-season", isAuthenticated, auditLog("admin.season_rollover_check"), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      const result = await runSeasonRolloverCheckNow();
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

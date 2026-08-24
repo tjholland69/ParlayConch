@@ -143,6 +143,7 @@ function NeedsPickTile({ leagueId, weekId, leagueName }: { leagueId: number; wee
 }
 
 const STATUS_META: Record<string, { icon: IconName; iconColor: string; label: string; bg: string; border: string }> = {
+  draft: { icon: "add-circle-outline", iconColor: "#60a5fa", label: "In progress", bg: "#0a1526", border: "#1a2e4d" },
   win: { icon: "trophy", iconColor: "#22c55e", label: "Won", bg: "#0a1c14", border: "#22c55e" },
   loss: { icon: "close-circle", iconColor: "#ef4444", label: "Lost", bg: "#1c0a0a", border: "#3d1a1a" },
   void: { icon: "ban-outline", iconColor: "#475569", label: "Void", bg: "#141926", border: "#2a3447" },
@@ -158,6 +159,7 @@ function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueNam
   const router = useRouter();
   const meta = STATUS_META[parlay.status ?? "pending"] ?? STATUS_META.pending;
   const legCount = parlay.legs?.length ?? 0;
+  const isDraft = parlay.status === "draft";
 
   return (
     <ParlayTile
@@ -165,11 +167,20 @@ function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueNam
       iconColor={meta.iconColor}
       leagueName={leagueName}
       statusLabel={meta.label}
-      metaLabel={`${parlay.week?.label ?? "Week"} · ${legCount} ${legCount === 1 ? "leg" : "legs"}`}
+      metaLabel={
+        isDraft
+          ? `${legCount} ${legCount === 1 ? "leg" : "legs"} queued · Tap to continue`
+          : `${parlay.week?.label ?? "Week"} · ${legCount} ${legCount === 1 ? "leg" : "legs"}`
+      }
       bg={meta.bg}
       border={meta.border}
       glow={parlay.status === "win"}
-      onPress={() => router.push({ pathname: "/leagues/[id]", params: { id: String(parlay.leagueId) } })}
+      actionIcon={isDraft ? "create-outline" : undefined}
+      onPress={() =>
+        isDraft
+          ? router.push({ pathname: "/leagues/[id]/build", params: { id: String(parlay.leagueId) } })
+          : router.push({ pathname: "/leagues/[id]", params: { id: String(parlay.leagueId) } })
+      }
     />
   );
 }

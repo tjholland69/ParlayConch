@@ -102,6 +102,15 @@ export interface IStorage {
   // Parlays
   getParlay(id: number): Promise<Parlay | undefined>;
   createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId" | "userId">[]): Promise<Parlay>;
+  addLegToDraftParlay(
+    userId: string,
+    leagueId: number,
+    weekId: number,
+    leg: Omit<InsertParlayLeg, "parlayId" | "userId">,
+    maxLegsPerParlay: number,
+  ): Promise<Parlay>;
+  removeDraftParlayLeg(userId: string, parlayId: number, legId: number): Promise<Parlay | null>;
+  submitDraftParlay(userId: string, parlayId: number, minLegsPerParlay: number, maxLegsPerParlay: number): Promise<Parlay>;
   getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(
@@ -605,9 +614,13 @@ export class DatabaseStorage implements IStorage {
     if (!activeWeek) return {};
 
     const [parlayRows, lockRows, memberRows] = await Promise.all([
+      // Exclude 'draft' — an in-progress, not-yet-submitted parlay must not
+      // count toward submittedCount/allSubmitted/currentUserSubmitted, or a
+      // user who only started a pick (but never submitted) would be shown
+      // as having picked, and hide the "you still need to pick" prompt.
       db.select({ leagueId: parlays.leagueId, userId: parlays.userId, status: parlays.status })
         .from(parlays)
-        .where(and(eq(parlays.weekId, activeWeek.id), inArray(parlays.leagueId, leagueIds))),
+        .where(and(eq(parlays.weekId, activeWeek.id), inArray(parlays.leagueId, leagueIds), not(eq(parlays.status, 'draft')))),
       db.select({ leagueId: leagueWeekLocks.leagueId })
         .from(leagueWeekLocks)
         .where(and(eq(leagueWeekLocks.weekId, activeWeek.id), inArray(leagueWeekLocks.leagueId, leagueIds))),
@@ -960,6 +973,128 @@ export class DatabaseStorage implements IStorage {
       emitLeague(parlay.leagueId, parlay.weekId, "parlays_updated");
       return parlayRecord;
     });
+  }
+
+  /**
+   * Adds one leg to the caller's in-progress `status: 'draft'` parlay for
+   * this league/week, creating the draft row if none exists yet. Unlike
+   * `createParlay` (which always fully-replaces a parlay's legs in one
+   * call), this lets a user build a parlay one tap at a time — draft
+   * parlays may have fewer legs than `minLegsPerParlay`; that's only
+   * enforced at final submit (`submitDraftParlay`). `maxLegsPerParlay` is
+   * still enforced here since there's no useful reason to let a draft grow
+   * past what could ever be submitted.
+   */
+  async addLegToDraftParlay(
+    userId: string,
+    leagueId: number,
+    weekId: number,
+    leg: Omit<InsertParlayLeg, "parlayId" | "userId">,
+    maxLegsPerParlay: number,
+  ): Promise<Parlay> {
+    const parlayRecord = await db.transaction(async (tx) => {
+      // FOR UPDATE: without a row lock here, two concurrent adds (double-tap,
+      // two devices) can both read the same existingLegs count below, both
+      // pass the maxLegsPerParlay check, and both insert — overshooting the
+      // cap. Locking the parlay row serializes concurrent adds to the same
+      // draft so the second one always sees the first's insert.
+      const [existing] = await tx
+        .select()
+        .from(parlays)
+        .where(and(eq(parlays.userId, userId), eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)))
+        .for("update");
+
+      let record: Parlay;
+      if (existing) {
+        if (existing.status !== "draft") {
+          throw new Error("You already have a submitted parlay for this week.");
+        }
+        record = existing;
+      } else {
+        const [created] = await tx
+          .insert(parlays)
+          .values({ userId, leagueId, weekId, status: "draft" })
+          .returning();
+        record = created;
+      }
+
+      const existingLegs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, record.id));
+      if (existingLegs.length >= maxLegsPerParlay) {
+        throw new Error(`Parlay cannot have more than ${maxLegsPerParlay} legs`);
+      }
+
+      await tx.insert(parlayLegs).values({ ...leg, parlayId: record.id, userId });
+      return record;
+    });
+
+    emitLeague(leagueId, weekId, "parlays_updated");
+    return parlayRecord;
+  }
+
+  /**
+   * Removes one leg from the caller's own draft parlay. If that was the
+   * last leg, the empty draft row is deleted too (so a fresh draft can be
+   * started cleanly rather than leaving a lingering 0-leg parlay around).
+   * Returns the updated parlay, or null if the draft was deleted.
+   */
+  async removeDraftParlayLeg(userId: string, parlayId: number, legId: number): Promise<Parlay | null> {
+    const { parlay, leagueId, weekId } = await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
+      if (!existing || existing.userId !== userId) throw new Error("Parlay not found");
+      if (existing.status !== "draft") throw new Error("Only draft parlays can have legs removed this way");
+
+      const deleted = await tx
+        .delete(parlayLegs)
+        .where(and(eq(parlayLegs.id, legId), eq(parlayLegs.parlayId, parlayId)))
+        .returning({ id: parlayLegs.id });
+      if (deleted.length === 0) throw new Error("Leg not found on this parlay");
+
+      const remaining = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
+      if (remaining.length === 0) {
+        await tx.delete(parlays).where(eq(parlays.id, parlayId));
+        return { parlay: null, leagueId: existing.leagueId, weekId: existing.weekId };
+      }
+      return { parlay: existing, leagueId: existing.leagueId, weekId: existing.weekId };
+    });
+
+    emitLeague(leagueId, weekId, "parlays_updated");
+    return parlay;
+  }
+
+  /**
+   * Finalizes a draft parlay: enforces the league's min/max leg count (the
+   * min was deferred until now — see `addLegToDraftParlay`) and flips it to
+   * `status: 'pending'`, entering the normal approve/reject workflow.
+   */
+  async submitDraftParlay(
+    userId: string,
+    parlayId: number,
+    minLegsPerParlay: number,
+    maxLegsPerParlay: number,
+  ): Promise<Parlay> {
+    const updated = await db.transaction(async (tx) => {
+      const [existing] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
+      if (!existing || existing.userId !== userId) throw new Error("Parlay not found");
+      if (existing.status !== "draft") throw new Error("This parlay has already been submitted");
+
+      const legs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
+      if (legs.length < minLegsPerParlay) {
+        throw new Error(`Parlay must have at least ${minLegsPerParlay} legs`);
+      }
+      if (legs.length > maxLegsPerParlay) {
+        throw new Error(`Parlay cannot have more than ${maxLegsPerParlay} legs`);
+      }
+
+      const [record] = await tx
+        .update(parlays)
+        .set({ status: "pending", createdAt: new Date() })
+        .where(eq(parlays.id, parlayId))
+        .returning();
+      return record;
+    });
+
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
+    return updated;
   }
 
   async getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null> {
@@ -1659,8 +1794,10 @@ export class DatabaseStorage implements IStorage {
     // 'sent'/'placed' (sportsbook handoff states) are intentionally absent
     // here — they fall through to the same auto win/loss resolution as
     // 'approved', since a bet resolves whether or not the maestro ever
-    // confirms placement.
-    const terminalStatuses = ['win', 'loss', 'push', 'rejected', 'void'];
+    // confirms placement. 'draft' is excluded for the opposite reason: it's
+    // not a resolution-pending state, it's not-yet-submitted — a draft must
+    // never be auto-graded, even if its legs' games have already finished.
+    const terminalStatuses = ['draft', 'win', 'loss', 'push', 'rejected', 'void'];
     if (terminalStatuses.includes(parlay.status ?? '')) return;
 
     const legs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
@@ -1684,9 +1821,11 @@ export class DatabaseStorage implements IStorage {
    * updated vs skipped parlays.
    */
   async rollupLeagueParlayStatuses(leagueId?: number, recomputeTerminal = false): Promise<{ updated: number; skipped: number }> {
-    // Same 'sent'/'placed' fall-through as rollupParlayStatus above.
-    const terminalStatuses = ['win', 'loss', 'push', 'rejected', 'void'];
-    const excludedStatuses = recomputeTerminal ? ['rejected', 'void'] : terminalStatuses;
+    // Same 'sent'/'placed' fall-through as rollupParlayStatus above. 'draft'
+    // is always excluded, even with recomputeTerminal — a draft must never
+    // be auto-graded regardless of what its legs' games have done.
+    const terminalStatuses = ['draft', 'win', 'loss', 'push', 'rejected', 'void'];
+    const excludedStatuses = recomputeTerminal ? ['draft', 'rejected', 'void'] : terminalStatuses;
 
     const allParlays = leagueId
       ? await db.select({ id: parlays.id }).from(parlays)
@@ -1875,9 +2014,12 @@ export class DatabaseStorage implements IStorage {
       .where(eq(leagueMembers.leagueId, leagueId));
     const totalMembers = members.length;
 
-    // Count how many have a parlay for this week
+    // Count how many have a submitted parlay for this week — 'draft' (still
+    // being built, never hit submit) doesn't count, or allSubmitted could
+    // go true from in-progress drafts alone and the lock action would skip
+    // its "members without a pick will be void" warning for real non-submitters.
     const submitted = await db.select().from(parlays)
-      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
+      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId), not(eq(parlays.status, 'draft'))));
     const submittedCount = submitted.length;
 
     // Check for existing lock

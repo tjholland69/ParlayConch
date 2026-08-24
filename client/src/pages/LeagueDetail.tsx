@@ -842,9 +842,13 @@ export default function LeagueDetail() {
                 );
               })()}
 
-              {/* Void cards — members who didn't submit when parlay is locked */}
+              {/* Void cards — members who didn't submit when parlay is locked.
+                  A 'draft' parlay (still being built, never hit submit) doesn't
+                  count as having submitted — without this check, someone who
+                  only started a pick would be silently excluded from the void
+                  list instead of correctly landing on it. */}
               {lockStatus?.isLocked && league.members
-                ?.filter(m => !leagueParlays?.some(p => p.userId === m.userId))
+                ?.filter(m => !leagueParlays?.some(p => p.userId === m.userId && p.status !== 'draft'))
                 .map(m => (
                   <Card key={m.userId} className="bg-card/30 border-white/10 opacity-60" data-testid={`card-void-${m.userId}`}>
                     <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">

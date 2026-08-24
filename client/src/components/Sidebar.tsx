@@ -13,7 +13,8 @@ import {
   Shell,
   TrendingUp,
   ChevronDown,
-  Newspaper
+  Newspaper,
+  ShieldCheck
 } from "lucide-react";
 import { useState } from "react";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
@@ -61,6 +62,10 @@ export function Sidebar() {
   const toggleGroup = (label: string, next: boolean) =>
     setOpenGroups((prev) => ({ ...prev, [label]: next }));
 
+  const navItems: NavItem[] = user?.isSuperUser
+    ? [...NAV_ITEMS, { label: "Admin", href: "/admin", icon: ShieldCheck }]
+    : NAV_ITEMS;
+
   const NavContent = () => (
     <div className="flex flex-col h-full">
       <div className="p-6">
@@ -74,7 +79,7 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 px-4 space-y-2">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           if (!isGroup(item)) {
             return (
               <Link key={item.href} href={item.href}>
