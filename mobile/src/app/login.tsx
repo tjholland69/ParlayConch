@@ -166,16 +166,23 @@ export default function LoginScreen() {
             )}
           </Pressable>
 
+          <Text style={styles.switchModeText}>
+            {isLogin ? "Don't have an account?" : "Already have an account?"}
+          </Text>
+
           <Pressable
             onPress={() => {
               setError(null);
               setMode(isLogin ? "register" : "login");
             }}
-            style={styles.switchModeButton}
+            style={({ pressed }) => [
+              styles.switchModeButton,
+              pressed && styles.switchModeButtonPressed,
+            ]}
+            testID="button-switch-mode"
           >
-            <Text style={styles.switchModeText}>
-              {isLogin ? "Don't have an account? " : "Already have an account? "}
-              <Text style={styles.switchModeLink}>{isLogin ? "Sign up" : "Sign in"}</Text>
+            <Text style={styles.switchModeButtonText}>
+              {isLogin ? "Sign up" : "Sign in"}
             </Text>
           </Pressable>
         </View>
@@ -321,16 +328,29 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
 
-  switchModeButton: {
-    alignItems: "center",
-    paddingVertical: 8,
-  },
   switchModeText: {
     fontSize: 13,
     color: "#64748b",
+    marginTop: 20,
+    textAlign: "center",
   },
-  switchModeLink: {
+  switchModeButton: {
+    marginTop: 10,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#60a5fa",
+  },
+  switchModeButtonPressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
+  },
+  switchModeButtonText: {
     color: "#60a5fa",
-    fontWeight: "600",
+    fontSize: 15,
+    fontWeight: "700",
   },
 });

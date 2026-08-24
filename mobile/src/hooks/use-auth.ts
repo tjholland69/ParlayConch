@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Alert } from "react-native";
 import { apiRequest, clearSessionToken } from "@/lib/api";
 
 export type MobileUser = {
@@ -28,6 +29,9 @@ export function useAuth() {
     onSuccess: () => {
       queryClient.setQueryData(["/api/auth/user"], null);
       queryClient.clear();
+    },
+    onError: (error) => {
+      Alert.alert("Sign out failed", String((error as Error)?.message ?? error));
     },
   });
 

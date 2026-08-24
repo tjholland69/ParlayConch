@@ -82,4 +82,17 @@ export function setupAuth(app: Express) {
     });
     req.logout(() => res.redirect("/"));
   });
+
+  // Mobile clients call this with POST and expect a JSON response rather
+  // than the browser redirect the web app's GET /api/logout returns.
+  app.post("/api/logout", (req, res) => {
+    const actorUserId = (req.user as any)?.claims?.sub ?? null;
+    void recordAuditEvent({
+      eventType: "auth.logout",
+      actorUserId,
+      ip: req.ip,
+      userAgent: req.get("user-agent") ?? undefined,
+    });
+    req.logout(() => res.json({ success: true }));
+  });
 }
