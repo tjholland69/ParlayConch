@@ -49,7 +49,7 @@ export default function TabLayout() {
           ),
         }}
       />
-      <Tabs.Screen name="picks" options={{ title: "My Picks" }} />
+      <Tabs.Screen name="picks" options={{ title: "Your Parlays" }} />
       <Tabs.Screen name="leagues" options={{ title: "Leagues" }} />
       <Tabs.Screen
         name="settings"

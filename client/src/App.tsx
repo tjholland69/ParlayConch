@@ -30,6 +30,7 @@ const IndexAdvanced = lazy(() => import("@/pages/IndexAdvanced"));
 const CustomIndexes = lazy(() => import("@/pages/CustomIndexes"));
 const Exceptions = lazy(() => import("@/pages/Exceptions"));
 const SeasonAdmin = lazy(() => import("@/pages/SeasonAdmin"));
+const AdminHome = lazy(() => import("@/pages/AdminHome"));
 
 function useApplyPrimaryColor(primaryColor: string | undefined) {
   useEffect(() => {
@@ -134,6 +135,8 @@ function Router() {
               {/* Unlisted — no nav link; support staff navigate here directly. */}
               <Route path="/exceptions" component={Exceptions} />
               <Route path="/admin/season" component={SeasonAdmin} />
+              {/* Admin landing page — linked from the sidebar, but only when user.isSuperUser. */}
+              <Route path="/admin" component={AdminHome} />
               <Route component={NotFound} />
             </Switch>
           </Suspense>

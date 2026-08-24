@@ -15,7 +15,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiRequest } from "@/lib/api";
 import { useWeekLockStatus } from "@/hooks/use-leagues";
 import { useActiveWeek, useGames } from "@/hooks/use-weeks";
-import { useCreateParlay, useMyParlay } from "@/hooks/use-parlays";
+import {
+  useCreateParlay,
+  useMyParlay,
+  useAddDraftLeg,
+  useRemoveDraftLeg,
+  useSubmitDraftParlay,
+} from "@/hooks/use-parlays";
 import { GamePickCard } from "@/components/GamePickCard";
 import {
   getLineForBet,
@@ -45,16 +51,27 @@ export default function BuildPickScreen() {
   const { data: myParlay, isLoading: myParlayLoading } = useMyParlay(leagueId, weekId);
   const { data: games, isLoading: gamesLoading } = useGames(weekId);
   const createParlay = useCreateParlay(leagueId);
+  const addDraftLeg = useAddDraftLeg(leagueId, weekId);
+  const removeDraftLeg = useRemoveDraftLeg(leagueId, weekId);
+  const submitDraftParlay = useSubmitDraftParlay(leagueId, weekId);
 
   const minLegs = league?.minLegsPerParlay ?? 3;
   const maxLegs = league?.maxLegsPerParlay ?? 5;
+
+  // A parlay that's already been submitted (anything other than 'draft') is
+  // edited the old way — batch-select then one "Update pick" call — so an
+  // in-progress review/approval isn't churned leg-by-leg. A fresh pick (no
+  // parlay yet, or one still in 'draft') uses the new queue flow: tap once,
+  // it's added and persisted immediately, building up the parlay one leg at
+  // a time — this is what actually queues into the "Your Parlays" rollup tile.
+  const isEditingSubmitted = !!myParlay && myParlay.status !== "draft";
 
   const [selectedLegs, setSelectedLegs] = useState<SelectedLeg[]>([]);
   const [slipExpanded, setSlipExpanded] = useState(false);
   const [prefilled, setPrefilled] = useState(false);
 
   useEffect(() => {
-    if (prefilled || !myParlay?.legs?.length) return;
+    if (!isEditingSubmitted || prefilled || !myParlay?.legs?.length) return;
     const legs: SelectedLeg[] = myParlay.legs
       .filter((l) => l.gameId != null)
       .map((l) => ({
@@ -67,7 +84,7 @@ export default function BuildPickScreen() {
       setSelectedLegs(legs);
       setPrefilled(true);
     }
-  }, [myParlay, prefilled]);
+  }, [isEditingSubmitted, myParlay, prefilled]);
 
   useEffect(() => {
     if (!lockLoading && lockStatus?.isLocked) {
@@ -81,10 +98,29 @@ export default function BuildPickScreen() {
     return map;
   }, [games]);
 
-  const canSubmit =
-    selectedLegs.length >= minLegs && selectedLegs.length <= maxLegs && !lockStatus?.isLocked;
+  // Draft-mode legs, straight from the server (source of truth — each tap
+  // persists immediately, so there's no local mirror to keep in sync).
+  const draftLegs: SelectedLeg[] = useMemo(
+    () =>
+      (myParlay?.legs ?? [])
+        .filter((l) => l.gameId != null)
+        .map((l) => ({
+          gameId: l.gameId as number,
+          betType: l.betType,
+          pick: l.pick,
+          line: l.line ?? undefined,
+        })),
+    [myParlay?.legs],
+  );
 
-  function toggleLeg(game: Game, betType: string, pick: string) {
+  const activeLegs = isEditingSubmitted ? selectedLegs : draftLegs;
+  const legMutationPending = addDraftLeg.isPending || removeDraftLeg.isPending;
+
+  const canSubmit = isEditingSubmitted
+    ? selectedLegs.length >= minLegs && selectedLegs.length <= maxLegs && !lockStatus?.isLocked
+    : draftLegs.length >= minLegs && draftLegs.length <= maxLegs && !lockStatus?.isLocked;
+
+  function toggleLegSubmitted(game: Game, betType: string, pick: string) {
     const line = getLineForBet(game, betType, pick);
     setSelectedLegs((prev) => {
       const existing = prev.findIndex((l) => l.gameId === game.id);
@@ -104,31 +140,104 @@ export default function BuildPickScreen() {
     });
   }
 
-  function clearGame(gameId: number) {
+  async function toggleLegDraft(game: Game, betType: string, pick: string) {
+    if (legMutationPending) return;
+    const line = getLineForBet(game, betType, pick);
+    const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === game.id);
+
+    try {
+      if (existingLeg) {
+        // Same pick tapped again → remove it (deselect).
+        if (existingLeg.pick === pick && existingLeg.betType === betType) {
+          await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+          return;
+        }
+        // Different pick on the same game → swap: remove the old leg, add the new one.
+        await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+        try {
+          await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
+        } catch (addErr) {
+          // The remove succeeded but the new pick failed to add — restore the
+          // original pick rather than silently leaving the draft one leg
+          // short of what the user had before tapping.
+          try {
+            await addDraftLeg.mutateAsync({
+              gameId: game.id,
+              betType: existingLeg.betType,
+              pick: existingLeg.pick,
+              line: existingLeg.line ?? undefined,
+            });
+          } catch {
+            // Restore also failed — surface the original error below; the
+            // draft is left missing this leg, but the user sees why.
+          }
+          throw addErr;
+        }
+        return;
+      }
+
+      if (draftLegs.length >= maxLegs) {
+        Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
+        return;
+      }
+      await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
+    } catch (err) {
+      Alert.alert("Couldn't update pick", err instanceof Error ? err.message : "Please try again.");
+    }
+  }
+
+  function clearGameSubmitted(gameId: number) {
     setSelectedLegs((prev) => prev.filter((l) => l.gameId !== gameId));
+  }
+
+  async function clearGameDraft(gameId: number) {
+    const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === gameId);
+    if (!existingLeg || legMutationPending) return;
+    try {
+      await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+    } catch (err) {
+      Alert.alert("Couldn't remove leg", err instanceof Error ? err.message : "Please try again.");
+    }
   }
 
   function submit() {
     if (!weekId || !canSubmit) return;
-    createParlay.mutate(
-      { weekId, legs: selectedLegs },
-      {
-        onSuccess: () => {
-          Alert.alert("Pick submitted", "Your parlay is pending review.", [
-            { text: "OK", onPress: () => router.back() },
-          ]);
+
+    if (isEditingSubmitted) {
+      createParlay.mutate(
+        { weekId, legs: selectedLegs },
+        {
+          onSuccess: () => {
+            Alert.alert("Pick updated", "Your parlay is pending review.", [
+              { text: "OK", onPress: () => router.back() },
+            ]);
+          },
+          onError: (err: Error) => {
+            Alert.alert("Couldn't submit", err.message || "Please try again.");
+          },
         },
-        onError: (err: Error) => {
-          Alert.alert("Couldn't submit", err.message || "Please try again.");
-        },
+      );
+      return;
+    }
+
+    if (!myParlay) return;
+    submitDraftParlay.mutate(myParlay.id, {
+      onSuccess: () => {
+        Alert.alert("Pick submitted", "Your parlay is pending review.", [
+          { text: "OK", onPress: () => router.back() },
+        ]);
       },
-    );
+      onError: (err: Error) => {
+        Alert.alert("Couldn't submit", err.message || "Please try again.");
+      },
+    });
   }
 
-  const slipSummary = selectedLegs
+  const slipSummary = activeLegs
     .map((leg) => shortLegLabel(leg, gamesById.get(leg.gameId)))
     .join(" · ");
 
+  const submitPending = isEditingSubmitted ? createParlay.isPending : submitDraftParlay.isPending;
   const loading = leagueLoading || lockLoading || myParlayLoading || (weekId > 0 && gamesLoading);
 
   if (loading) {
@@ -154,19 +263,19 @@ export default function BuildPickScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
-          title: myParlay ? "Edit Pick" : "Build Pick",
+          title: isEditingSubmitted ? "Edit Pick" : "Build Pick",
           headerBackTitle: "Back",
         }}
       />
 
       <View style={styles.headerBar}>
         <Text style={styles.headerCount}>
-          {selectedLegs.length} / {maxLegs} legs
+          {activeLegs.length} / {maxLegs} legs
         </Text>
         <Text style={styles.headerHint}>
-          {selectedLegs.length < minLegs
+          {activeLegs.length < minLegs
             ? `Need at least ${minLegs}`
-            : selectedLegs.length > maxLegs
+            : activeLegs.length > maxLegs
               ? `Max ${maxLegs} legs`
               : "Ready to submit"}
         </Text>
@@ -183,13 +292,15 @@ export default function BuildPickScreen() {
           </View>
         }
         renderItem={({ item }: { item: GameWithBet }) => {
-          const selected = selectedLegs.find((l) => l.gameId === item.id);
+          const selected = activeLegs.find((l) => l.gameId === item.id);
           return (
             <GamePickCard
               game={item}
               selectedLeg={selected}
-              onSelect={({ betType, pick }) => toggleLeg(item, betType, pick)}
-              onClear={() => clearGame(item.id)}
+              onSelect={({ betType, pick }) =>
+                isEditingSubmitted ? toggleLegSubmitted(item, betType, pick) : toggleLegDraft(item, betType, pick)
+              }
+              onClear={() => (isEditingSubmitted ? clearGameSubmitted(item.id) : clearGameDraft(item.id))}
             />
           );
         }}
@@ -203,10 +314,10 @@ export default function BuildPickScreen() {
         >
           <View style={{ flex: 1 }}>
             <Text style={styles.slipCount}>
-              {selectedLegs.length} / {maxLegs} legs · min {minLegs}
+              {activeLegs.length} / {maxLegs} legs · min {minLegs}
             </Text>
             <Text style={styles.slipSummary} numberOfLines={slipExpanded ? undefined : 1}>
-              {selectedLegs.length === 0 ? "Tap markets to build your parlay" : slipSummary}
+              {activeLegs.length === 0 ? "Tap markets to build your parlay" : slipSummary}
             </Text>
           </View>
           <Ionicons
@@ -216,15 +327,23 @@ export default function BuildPickScreen() {
           />
         </Pressable>
 
-        {slipExpanded && selectedLegs.length > 0 && (
+        {slipExpanded && activeLegs.length > 0 && (
           <View style={styles.slipList}>
-            {selectedLegs.map((leg) => (
+            {activeLegs.map((leg) => (
               <View key={leg.gameId} style={styles.slipRow}>
                 <Text style={styles.slipRowText} numberOfLines={1}>
                   {shortLegLabel(leg, gamesById.get(leg.gameId))}
                 </Text>
-                <Pressable onPress={() => clearGame(leg.gameId)} hitSlop={8}>
-                  <Ionicons name="close-circle" size={20} color="#64748b" />
+                <Pressable
+                  onPress={() => (isEditingSubmitted ? clearGameSubmitted(leg.gameId) : clearGameDraft(leg.gameId))}
+                  hitSlop={8}
+                  disabled={legMutationPending}
+                >
+                  {legMutationPending && !isEditingSubmitted ? (
+                    <ActivityIndicator color="#64748b" size="small" />
+                  ) : (
+                    <Ionicons name="close-circle" size={20} color="#64748b" />
+                  )}
                 </Pressable>
               </View>
             ))}
@@ -233,20 +352,20 @@ export default function BuildPickScreen() {
 
         <Pressable
           onPress={submit}
-          disabled={!canSubmit || createParlay.isPending}
+          disabled={!canSubmit || submitPending}
           style={({ pressed }) => [
             styles.submitBtn,
-            (!canSubmit || createParlay.isPending) && styles.submitBtnDisabled,
-            pressed && canSubmit && !createParlay.isPending && { opacity: 0.85 },
+            (!canSubmit || submitPending) && styles.submitBtnDisabled,
+            pressed && canSubmit && !submitPending && { opacity: 0.85 },
           ]}
         >
-          {createParlay.isPending ? (
+          {submitPending ? (
             <ActivityIndicator color="#fff" />
           ) : (
             <Text style={styles.submitBtnText}>
-              {myParlay
-                ? `Update pick · ${selectedLegs.length} legs`
-                : `Submit pick · ${selectedLegs.length} legs`}
+              {isEditingSubmitted
+                ? `Update pick · ${activeLegs.length} legs`
+                : `Submit pick · ${activeLegs.length} legs`}
             </Text>
           )}
         </Pressable>

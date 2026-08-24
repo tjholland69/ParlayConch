@@ -1,6 +1,16 @@
 import { useMemo, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
-import { ModuleRegistry, AllCommunityModule, themeQuartz, type ColDef, type CellContextMenuEvent, type AutoSizeStrategy } from "ag-grid-community";
+import {
+  ModuleRegistry,
+  AllCommunityModule,
+  themeQuartz,
+  type ColDef,
+  type CellContextMenuEvent,
+  type AutoSizeStrategy,
+  type GetRowIdParams,
+  type SelectionChangedEvent,
+  type RowSelectionOptions,
+} from "ag-grid-community";
 import type { FlatParlayLegRow } from "@/lib/flattenParlayLegs";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Pencil, CloudDownload, Trash2, Copy, ClipboardCopy } from "lucide-react";
@@ -69,6 +79,20 @@ const defaultColDef: ColDef = {
   filter: true,
 };
 
+// Row-based multi-select (checkbox column + ctrl/cmd-click + shift-click range)
+// — this is Community-edition functionality. Cell *range* selection with
+// native clipboard copy is Enterprise-only (not installed here, see the
+// suppressContextMenu comment below), so multi-row copy/fetch is driven by
+// our own context menu below instead.
+const rowSelection: RowSelectionOptions<FlatParlayLegRow> = {
+  mode: "multiRow",
+  checkboxes: true,
+  headerCheckbox: true,
+  // Row click selects (ctrl/cmd-click toggles, shift-click range-selects),
+  // same as the checkbox column — not just checkbox clicks.
+  enableClickSelection: true,
+};
+
 // Auto-fits every column to its longest visible cell value on initial render
 // and whenever the row data changes, bounded by each colDef's minWidth/maxWidth
 // above ("within reason") instead of the fixed pixel widths used before.
@@ -108,24 +132,46 @@ function rowAsText(row: FlatParlayLegRow): string {
 export function ParlayLegsGrid({ rows, rowActions }: { rows: FlatParlayLegRow[]; rowActions?: ParlayLegRowActions }) {
   const rowData = useMemo(() => rows, [rows]);
   const [contextRow, setContextRow] = useState<FlatParlayLegRow | null>(null);
+  const [selectedRows, setSelectedRows] = useState<FlatParlayLegRow[]>([]);
   const { toast } = useToast();
+
+  const getRowId = (params: GetRowIdParams<FlatParlayLegRow>) => String(params.data.legId);
+
+  const onSelectionChanged = (e: SelectionChangedEvent<FlatParlayLegRow>) => {
+    setSelectedRows(e.api.getSelectedRows());
+  };
 
   const copyToClipboard = async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      toast({ title: `${label} copied`, description: text });
+      toast({ title: `${label} copied`, description: text.length > 200 ? `${text.slice(0, 200)}…` : text });
     } catch {
       toast({ title: "Copy failed", description: "Please copy manually.", variant: "destructive" });
     }
   };
+
+  // When right-clicking a row that's part of the current multi-selection,
+  // the menu acts on the whole selection (standard file-manager/spreadsheet
+  // behavior); right-clicking outside the selection acts on just that row.
+  const effectiveRows = (() => {
+    if (!contextRow) return [];
+    if (selectedRows.length > 1 && selectedRows.some((r) => r.legId === contextRow.legId)) {
+      return selectedRows;
+    }
+    return [contextRow];
+  })();
+  const isMultiSelection = effectiveRows.length > 1;
 
   const grid = (
     <div style={{ height: "70vh", width: "100%" }}>
       <AgGridReact<FlatParlayLegRow>
         theme={parlayConchGridTheme}
         rowData={rowData}
+        getRowId={getRowId}
         columnDefs={columnDefs}
         defaultColDef={defaultColDef}
+        rowSelection={rowSelection}
+        onSelectionChanged={onSelectionChanged}
         autoSizeStrategy={autoSizeStrategy}
         animateRows
         pagination
@@ -151,30 +197,38 @@ export function ParlayLegsGrid({ rows, rowActions }: { rows: FlatParlayLegRow[];
     <ContextMenu>
       <ContextMenuTrigger asChild>{grid}</ContextMenuTrigger>
       <ContextMenuContent className="w-56">
-        {contextRow && (
+        {effectiveRows.length > 0 && (
           <>
-            <ContextMenuItem onSelect={() => copyToClipboard(rowPickSummary(contextRow), "Pick")}>
-              <Copy className="w-3.5 h-3.5 mr-2" /> Copy pick
+            <ContextMenuItem onSelect={() => copyToClipboard(effectiveRows.map(rowPickSummary).join("\n"), isMultiSelection ? `${effectiveRows.length} picks` : "Pick")}>
+              <Copy className="w-3.5 h-3.5 mr-2" /> {isMultiSelection ? `Copy ${effectiveRows.length} picks` : "Copy pick"}
             </ContextMenuItem>
-            <ContextMenuItem onSelect={() => copyToClipboard(rowAsText(contextRow), "Row")}>
-              <ClipboardCopy className="w-3.5 h-3.5 mr-2" /> Copy row as text
+            <ContextMenuItem onSelect={() => copyToClipboard(effectiveRows.map(rowAsText).join("\n"), isMultiSelection ? `${effectiveRows.length} rows` : "Row")}>
+              <ClipboardCopy className="w-3.5 h-3.5 mr-2" /> {isMultiSelection ? `Copy ${effectiveRows.length} rows as text` : "Copy row as text"}
             </ContextMenuItem>
             {rowActions && (
               <>
                 <ContextMenuSeparator />
-                <ContextMenuItem onSelect={() => rowActions.onEdit(contextRow)}>
-                  <Pencil className="w-3.5 h-3.5 mr-2" /> Edit leg
-                </ContextMenuItem>
-                <ContextMenuItem onSelect={() => rowActions.onFetch(contextRow)}>
-                  <CloudDownload className="w-3.5 h-3.5 mr-2" /> Fetch historical data
-                </ContextMenuItem>
-                <ContextMenuSeparator />
-                <ContextMenuItem
-                  onSelect={() => rowActions.onDelete(contextRow)}
-                  className="text-destructive focus:text-destructive"
-                >
-                  <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete leg
-                </ContextMenuItem>
+                {isMultiSelection ? (
+                  <ContextMenuItem onSelect={() => effectiveRows.forEach((row) => rowActions.onFetch(row))}>
+                    <CloudDownload className="w-3.5 h-3.5 mr-2" /> Fetch historical data for {effectiveRows.length} legs
+                  </ContextMenuItem>
+                ) : (
+                  <>
+                    <ContextMenuItem onSelect={() => rowActions.onEdit(effectiveRows[0])}>
+                      <Pencil className="w-3.5 h-3.5 mr-2" /> Edit leg
+                    </ContextMenuItem>
+                    <ContextMenuItem onSelect={() => rowActions.onFetch(effectiveRows[0])}>
+                      <CloudDownload className="w-3.5 h-3.5 mr-2" /> Fetch historical data
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      onSelect={() => rowActions.onDelete(effectiveRows[0])}
+                      className="text-destructive focus:text-destructive"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 mr-2" /> Delete leg
+                    </ContextMenuItem>
+                  </>
+                )}
               </>
             )}
           </>

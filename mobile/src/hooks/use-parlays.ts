@@ -60,6 +60,53 @@ export function useCreateParlay(leagueId: number) {
   });
 }
 
+/**
+ * Adds ONE leg to (or starts) the caller's in-progress draft parlay for a
+ * league/week — the "queue" flow: tap a pick, it's added and persisted
+ * immediately, rather than batch-selecting several legs before one submit.
+ * Unlike `useCreateParlay`, a draft may sit below the league's
+ * `minLegsPerParlay` until `useSubmitDraftParlay` is called.
+ */
+export function useAddDraftLeg(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (leg: { gameId: number; betType: string; pick: string; line?: string }) =>
+      apiRequest<ParlayWithLegs>("POST", `/api/leagues/${leagueId}/weeks/${weekId}/draft-parlay/legs`, leg),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data);
+      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+    },
+  });
+}
+
+/** Removes one leg from the caller's own draft parlay (draft-only — see server route). */
+export function useRemoveDraftLeg(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ parlayId, legId }: { parlayId: number; legId: number }) =>
+      apiRequest<{ parlay: ParlayWithLegs | null }>("DELETE", `/api/parlays/${parlayId}/legs/${legId}`),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data.parlay ?? null);
+      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+    },
+  });
+}
+
+/** Finalizes a draft parlay — enforces minLegsPerParlay and flips it to 'pending'. */
+export function useSubmitDraftParlay(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (parlayId: number) => apiRequest<ParlayWithLegs>("POST", `/api/parlays/${parlayId}/submit`),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data);
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "lock"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues/active-week-status"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+    },
+  });
+}
+
 export function useApproveParlay(leagueId: number, weekId: number) {
   const queryClient = useQueryClient();
   return useMutation({

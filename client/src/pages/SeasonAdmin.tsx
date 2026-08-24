@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, ShieldAlert, CalendarPlus, RefreshCw, CheckCircle2 } from "lucide-react";
+import { Loader2, ShieldAlert, CalendarPlus, RefreshCw, CheckCircle2, Search } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useWeeks } from "@/hooks/use-bets";
 import { apiRequest } from "@/lib/queryClient";
@@ -58,6 +58,25 @@ export default function SeasonAdmin() {
     onError: (err: Error) => toast({ title: "Sync failed", description: err.message, variant: "destructive" }),
   });
 
+  const checkNewSeason = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/check-new-season");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/weeks"] });
+      if (data.newSeasonFound) {
+        toast({
+          title: `Season ${data.newSeasonFound} imported`,
+          description: `${data.weeksCreated} weeks, ${data.gamesCreated} games created (inactive — activate below when ready).`,
+        });
+      } else {
+        toast({ title: "No new season yet", description: "nflverse hasn't published a schedule beyond what we already have." });
+      }
+    },
+    onError: (err: Error) => toast({ title: "Check failed", description: err.message, variant: "destructive" }),
+  });
+
   const activateWeek = useMutation({
     mutationFn: async (weekId: number) => {
       const res = await apiRequest("POST", `/api/admin/weeks/${weekId}/activate`);
@@ -103,7 +122,26 @@ export default function SeasonAdmin() {
       </div>
 
       <Card className="border-white/5">
-        <CardHeader className="pb-2 font-semibold text-sm">1. Create week</CardHeader>
+        <CardHeader className="pb-2 font-semibold text-sm">Rolling schedule</CardHeader>
+        <CardContent className="space-y-2">
+          <p className="text-xs text-muted-foreground">
+            A weekly job automatically checks nflverse for a newly-published NFL schedule and
+            imports every regular-season week (inactive) as soon as it's released. Use this to
+            check right now instead of waiting for the weekly run.
+          </p>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => checkNewSeason.mutate()}
+            disabled={checkNewSeason.isPending}
+          >
+            {checkNewSeason.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Search className="w-4 h-4 mr-2" /> Check for new season now</>}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="border-white/5">
+        <CardHeader className="pb-2 font-semibold text-sm">Manually create a single week</CardHeader>
         <CardContent className="space-y-3">
           <div className="flex gap-3">
             <div className="flex-1 space-y-1">
@@ -124,7 +162,7 @@ export default function SeasonAdmin() {
       {createdWeek && (
         <Card className="border-white/5">
           <CardHeader className="pb-2 font-semibold text-sm flex items-center justify-between">
-            <span>2. Sync &amp; activate — {createdWeek.label}</span>
+            <span>Sync &amp; activate — {createdWeek.label}</span>
             {createdWeek.isActive && <Badge variant="outline" className="gap-1"><CheckCircle2 className="w-3 h-3" /> Active</Badge>}
           </CardHeader>
           <CardContent className="flex gap-3">

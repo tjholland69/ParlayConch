@@ -229,11 +229,12 @@ export const parlays = pgTable("parlays", {
   weekId: integer("week_id")
     .notNull()
     .references(() => weeks.id, { onDelete: "restrict" }),
-  status: text("status").default("pending"), // 'pending', 'approved', 'sent', 'placed', 'rejected', 'win', 'loss', 'push', 'void'
+  status: text("status").default("pending"), // 'draft', 'pending', 'approved', 'sent', 'placed', 'rejected', 'win', 'loss', 'push', 'void'
   // Derived, read-only grouping of `status` — Postgres GENERATED STORED column
   // (see migrations), never written to by the app. Not surfaced in the GUI;
   // exists purely so future features/logic can branch on group instead of
   // enumerating individual statuses.
+  //   draft:  'draft' — in-progress, legs still being added, not yet submitted
   //   open:   'approved', 'pending', 'sent', 'placed'
   //   closed: 'win', 'loss', 'rejected', 'push'
   //   void:   'void'
