@@ -43,8 +43,14 @@ import { format } from "date-fns";
 import { SPORTSBOOK_PROVIDERS, pickDeepLinkGame, type SportsbookProvider } from "@shared/sportsbook-providers";
 import type { ParlayWithLegs } from "@shared/schema";
 import { resolveResultDetail } from "@shared/legJustification";
+import { getSlate } from "@shared/slate";
 import { webLeagueSettingsUrl } from "@/lib/pickHelpers";
 import { shadows } from "@/lib/theme";
+import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
+import { getBustedLeg } from "@/lib/parlayLoser";
+import { getHeroLeg } from "@/lib/parlayHero";
+import { ParlayMixBar } from "@/components/ParlayMixBar";
+import { DisputeLegBadge } from "@/components/DisputeLegSheet";
 
 type ParlayLegWithGame = ParlayWithLegs["legs"][number];
 
@@ -62,30 +68,73 @@ const TAB_ICONS: Record<Tab, React.ComponentProps<typeof Ionicons>["name"]> = {
   stats: "bar-chart-outline",
 };
 
+const LOSER_LABEL_TEXT: Record<string, string> = {
+  parlay_loser: "Parlay Loser",
+  asshole: "Asshole",
+  jerry: "Jerry",
+  dud: "Dud",
+  doofus: "Doofus",
+};
+
+const HERO_LABEL_TEXT: Record<string, string> = {
+  parlay_hero: "Parlay Hero",
+  mvp: "MVP",
+  legend: "Legend",
+  big_time: "Big Time",
+};
+
 function ParlayCard({
   parlay,
   isAdmin,
   leagueId,
   weekId,
   preferredSportsbook,
+  loserLabel,
+  heroLabel,
 }: {
   parlay: ParlayWithLegs;
   isAdmin: boolean;
   leagueId: number;
   weekId: number;
   preferredSportsbook: SportsbookProvider | undefined;
+  loserLabel?: string | null;
+  heroLabel?: string | null;
 }) {
   const router = useRouter();
+  const { user } = useAuth();
   const approveParlay = useApproveParlay(leagueId, weekId);
   const rejectParlay = useRejectParlay(leagueId, weekId);
   const markParlaySent = useMarkParlaySent(leagueId, weekId);
   const [expandedLegIndex, setExpandedLegIndex] = useState<number | null>(null);
+  const [collapsed, setCollapsed] = useState(true);
 
   const name =
     parlay.user?.settings?.displayName ??
     parlay.user?.firstName ??
     parlay.user?.email ??
     "Unknown";
+
+  const legs = parlay.legs ?? [];
+  const wins = legs.filter((l) => l.result === "win").length;
+  const losses = legs.filter((l) => l.result === "loss").length;
+  const pushes = legs.filter((l) => l.result === "push").length;
+  const resolved = wins + losses + pushes;
+  const pending = legs.length - resolved;
+  const pct = resolved > 0 ? Math.round((wins / resolved) * 100) : null;
+  const visual = getParlayVisualStyle(pct, 1);
+  const pctColor = pct !== null ? (([r, g, b]) => `rgb(${r}, ${g}, ${b})`)(getWinPctColor(pct)) : "#64748b";
+
+  const bustedLeg = getBustedLeg(parlay);
+  const heroLeg = getHeroLeg(parlay);
+  const loserLabelText = LOSER_LABEL_TEXT[loserLabel ?? "parlay_loser"] ?? LOSER_LABEL_TEXT.parlay_loser;
+  const heroLabelText = HERO_LABEL_TEXT[heroLabel ?? "parlay_hero"] ?? HERO_LABEL_TEXT.parlay_hero;
+  const heroMemberName = heroLeg?.user
+    ? heroLeg.user.settings?.displayName ?? heroLeg.user.firstName ?? heroLeg.user.email ?? "Unknown"
+    : name;
+
+  const decisiveLeg = bustedLeg ?? heroLeg;
+  const decisiveFinishTime = decisiveLeg?.decidedAt ?? decisiveLeg?.game?.finishedAt ?? null;
+  const decidedSlate = decisiveFinishTime ? getSlate(new Date(decisiveFinishTime)) : null;
 
   const statusIcon =
     parlay.status === "approved"
@@ -157,18 +206,86 @@ function ParlayCard({
 
   return (
     <View style={styles.parlayCardShadowWrap}>
-    <View style={styles.parlayCard}>
+    <View style={[styles.parlayCard, { borderColor: visual.borderColor }]}>
       <View style={styles.parlayCardHeader}>
+        {/* Progress-bar background — flat fill sized to win%, RN has no cheap gradient without a native module. */}
+        {pct !== null && pct > 0 && (
+          <View
+            pointerEvents="none"
+            style={[styles.parlayCardProgressBar, { width: `${pct}%`, backgroundColor: visual.barColor }]}
+          />
+        )}
+
+        <Pressable
+          onPress={() => setCollapsed((c) => !c)}
+          hitSlop={8}
+          style={styles.collapseToggle}
+          accessibilityRole="button"
+          accessibilityLabel={collapsed ? "Expand parlay" : "Collapse parlay"}
+        >
+          <Ionicons name={collapsed ? "chevron-forward" : "chevron-down"} size={16} color="#64748b" />
+        </Pressable>
+
         <View style={styles.parlayCardMeta}>
-          <Text style={styles.parlayCardName} numberOfLines={1}>{name}</Text>
+          <View style={styles.parlayCardNameRow}>
+            <Text style={styles.parlayCardName} numberOfLines={1}>{name}</Text>
+            {collapsed && (
+              <View style={styles.legCountPill}>
+                <Text style={styles.legCountPillText}>
+                  {legs.length} leg{legs.length !== 1 ? "s" : ""}
+                </Text>
+              </View>
+            )}
+          </View>
+
+          {(bustedLeg || heroLeg || decidedSlate) && (
+            <View style={styles.badgeRow}>
+              {bustedLeg && (
+                <View style={[styles.resultChip, styles.resultChipDestructive]}>
+                  <Text style={[styles.resultChipText, styles.resultChipTextDestructive]} numberOfLines={1}>
+                    {loserLabelText}: {name}
+                  </Text>
+                </View>
+              )}
+              {heroLeg && (
+                <View style={[styles.resultChip, styles.resultChipSuccess]}>
+                  <Text style={[styles.resultChipText, styles.resultChipTextSuccess]} numberOfLines={1}>
+                    {heroLabelText}: {heroMemberName}
+                  </Text>
+                </View>
+              )}
+              {decidedSlate && (
+                <View style={styles.resultChip}>
+                  <Ionicons name="time-outline" size={10} color="#94a3b8" />
+                  <Text style={styles.resultChipText}>{decidedSlate}</Text>
+                </View>
+              )}
+            </View>
+          )}
+
           <Text style={styles.parlayCardStatus}>{statusLabel}</Text>
         </View>
+
+        {pct !== null && (
+          <Text style={[styles.parlayCardFraction, { color: pctColor }]}>
+            {wins}/{resolved}
+            {pct !== null ? ` (${pct}%)` : ""}
+            {pending > 0 ? ` · ${pending} pending` : ""}
+          </Text>
+        )}
+
         <Ionicons name={statusIcon} size={22} color={statusColor} />
       </View>
 
-      {parlay.legs && parlay.legs.length > 0 && (
+      {!collapsed && (
+        <View style={styles.mixBarWrap}>
+          <ParlayMixBar legs={legs} />
+        </View>
+      )}
+
+      {!collapsed && legs.length > 0 && (
         <View style={styles.legsSection}>
-          {parlay.legs.map((leg: ParlayLegWithGame, i: number) => {
+          {legs.map((leg: ParlayLegWithGame, i: number) => {
             const isWin = leg.result === "win";
             const isLoss = leg.result === "loss";
             const resultColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#cbd5e1";
@@ -191,6 +308,7 @@ function ParlayCard({
                   {/* leg.line already carries its own sign (e.g. "+3.5" for
                       underdog spreads, from game.spread) — don't add another. */}
                   {leg.line != null && <Text style={styles.legLine}>{leg.line}</Text>}
+                  {leg.userId === user?.id && <DisputeLegBadge legId={leg.id} />}
                 </Pressable>
                 {expanded && leg.result && (
                   <Animated.View
@@ -408,6 +526,8 @@ export default function LeagueDetailScreen() {
         isDemo?: boolean;
         inviteCode?: string;
         memberCount?: number;
+        loserLabel?: string | null;
+        heroLabel?: string | null;
       }>("GET", `/api/leagues/${leagueId}`),
     enabled: !!leagueId,
   });
@@ -741,13 +861,16 @@ export default function LeagueDetailScreen() {
                           setResultFilter("all");
                         }}
                         hitSlop={8}
+                        style={({ pressed }) => [styles.clearFiltersBtn, pressed && { opacity: 0.7 }]}
                       >
                         <Text style={styles.clearFiltersText}>Clear</Text>
                       </Pressable>
                     )}
                   </View>
                   <FilterChipRow options={memberOptions} selected={memberFilter} onSelect={setMemberFilter} />
+                  <View style={styles.filterRowDivider} />
                   <FilterChipRow options={BET_TYPE_FILTERS} selected={betTypeFilter} onSelect={setBetTypeFilter} />
+                  <View style={styles.filterRowDivider} />
                   <FilterChipRow options={RESULT_FILTERS} selected={resultFilter} onSelect={setResultFilter} />
                 </View>
               )}
@@ -782,6 +905,8 @@ export default function LeagueDetailScreen() {
                     leagueId={leagueId}
                     weekId={weekId}
                     preferredSportsbook={preferredSportsbook}
+                    loserLabel={league?.loserLabel}
+                    heroLabel={league?.heroLabel}
                   />
                 ))
               )}
@@ -801,13 +926,6 @@ export default function LeagueDetailScreen() {
                   <Ionicons name="chevron-forward" size={14} color="#2563eb" />
                 </Pressable>
               )}
-              <Pressable
-                style={({ pressed }) => [styles.webLinkRow, pressed && { opacity: 0.7 }]}
-                onPress={openManageOnWeb}
-              >
-                <Ionicons name="globe-outline" size={14} color="#64748b" />
-                <Text style={styles.webLinkText}>Manage roles & rules on the web</Text>
-              </Pressable>
               {membersLoading ? (
                 <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
               ) : !members || members.length === 0 ? (
@@ -819,6 +937,13 @@ export default function LeagueDetailScreen() {
                   <MemberCard key={member.userId} member={member} />
                 ))
               )}
+              <Pressable
+                style={({ pressed }) => [styles.webLinkRow, pressed && { opacity: 0.7 }]}
+                onPress={openManageOnWeb}
+              >
+                <Ionicons name="globe-outline" size={14} color="#64748b" />
+                <Text style={styles.webLinkText}>Manage roles & rules on the web</Text>
+              </Pressable>
             </>
           )}
 
@@ -1057,8 +1182,9 @@ const styles = StyleSheet.create({
   webLinkRow: {
     flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
     gap: 8,
-    marginBottom: 14,
+    marginTop: 14,
     paddingVertical: 4,
   },
   webLinkText: { fontSize: 13, color: "#64748b", fontWeight: "500" },
@@ -1125,8 +1251,20 @@ const styles = StyleSheet.create({
   filterSection: { marginBottom: 14, gap: 6 },
   filterSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
   filterSectionTitle: { fontSize: 11, fontWeight: "700", color: "#475569", letterSpacing: 0.6, textTransform: "uppercase" },
+  clearFiltersBtn: {
+    backgroundColor: "#1c2538",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
   clearFiltersText: { fontSize: 12, fontWeight: "600", color: "#2563eb" },
   chipRow: { gap: 8, paddingRight: 8 },
+  filterRowDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#2a3447",
+  },
   chip: {
     backgroundColor: "#1c2538",
     borderWidth: 1,
@@ -1173,10 +1311,47 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     padding: 14,
+    position: "relative",
+    overflow: "hidden",
   },
-  parlayCardMeta: { flex: 1 },
-  parlayCardName: { fontSize: 14, fontWeight: "700", color: "#f1f5f9" },
+  parlayCardProgressBar: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+  },
+  collapseToggle: { padding: 2 },
+  parlayCardMeta: { flex: 1, minWidth: 0 },
+  parlayCardNameRow: { flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
+  parlayCardName: { fontSize: 14, fontWeight: "700", color: "#f1f5f9", flexShrink: 1 },
   parlayCardStatus: { fontSize: 12, color: "#94a3b8", marginTop: 1, textTransform: "capitalize" },
+  parlayCardFraction: { fontSize: 12, fontWeight: "700", flexShrink: 0 },
+  legCountPill: {
+    backgroundColor: "#141926",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  legCountPillText: { fontSize: 10, fontWeight: "600", color: "#94a3b8" },
+  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 4, marginBottom: 2 },
+  resultChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  resultChipText: { fontSize: 10, fontWeight: "600", color: "#94a3b8" },
+  resultChipDestructive: { borderColor: "#ef444466" },
+  resultChipTextDestructive: { color: "#ef4444" },
+  resultChipSuccess: { borderColor: "#22c55e66" },
+  resultChipTextSuccess: { color: "#22c55e" },
+  mixBarWrap: { paddingHorizontal: 14, paddingBottom: 12 },
   legsSection: {
     borderTopWidth: 1,
     borderTopColor: "#2a3447",

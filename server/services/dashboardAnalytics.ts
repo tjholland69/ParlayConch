@@ -19,8 +19,9 @@ export interface UserSummary {
   bar: number;
 }
 
-/** Unweighted average of the user's Power / Part / BAR across each league they belong to. */
-async function getUserPowerMetrics(userId: string): Promise<{
+/** Unweighted average of the user's Power / Part / BAR across each league they belong to
+ *  (or just the one league, when `leagueId` scopes the view to it). */
+async function getUserPowerMetrics(userId: string, leagueId?: number): Promise<{
   powerScore: number;
   participationRate: number;
   bar: number;
@@ -28,7 +29,11 @@ async function getUserPowerMetrics(userId: string): Promise<{
   const memberships = await db
     .select({ leagueId: leagueMembers.leagueId })
     .from(leagueMembers)
-    .where(eq(leagueMembers.userId, userId));
+    .where(
+      leagueId
+        ? and(eq(leagueMembers.userId, userId), eq(leagueMembers.leagueId, leagueId))
+        : eq(leagueMembers.userId, userId)
+    );
 
   if (memberships.length === 0) {
     return { powerScore: 0, participationRate: 0, bar: 0 };
@@ -54,16 +59,25 @@ async function getUserPowerMetrics(userId: string): Promise<{
   };
 }
 
-export async function getUserSummary(userId: string): Promise<UserSummary> {
+/** @param leagueId Scope every stat to a single league. Omitted/undefined = combined across all the user's leagues (the default view). */
+export async function getUserSummary(userId: string, leagueId?: number): Promise<UserSummary> {
   const [{ leagueCount }] = await db
     .select({ leagueCount: sql<number>`count(*)` })
     .from(leagueMembers)
-    .where(eq(leagueMembers.userId, userId));
+    .where(
+      leagueId
+        ? and(eq(leagueMembers.userId, userId), eq(leagueMembers.leagueId, leagueId))
+        : eq(leagueMembers.userId, userId)
+    );
 
   const [{ parlaysPlaced }] = await db
     .select({ parlaysPlaced: sql<number>`count(*)` })
     .from(parlays)
-    .where(eq(parlays.userId, userId));
+    .where(
+      leagueId
+        ? and(eq(parlays.userId, userId), eq(parlays.leagueId, leagueId))
+        : eq(parlays.userId, userId)
+    );
 
   const [row] = await db
     .select({
@@ -72,12 +86,17 @@ export async function getUserSummary(userId: string): Promise<UserSummary> {
       legLosses: sql<number>`count(*) filter (where ${parlayLegs.result} = 'loss')`,
     })
     .from(parlayLegs)
-    .where(eq(parlayLegs.userId, userId));
+    .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+    .where(
+      leagueId
+        ? and(eq(parlayLegs.userId, userId), eq(parlays.leagueId, leagueId))
+        : eq(parlayLegs.userId, userId)
+    );
 
   const legWins = Number(row?.legWins ?? 0);
   const legLosses = Number(row?.legLosses ?? 0);
   const totalDecided = legWins + legLosses;
-  const powerMetrics = await getUserPowerMetrics(userId);
+  const powerMetrics = await getUserPowerMetrics(userId, leagueId);
 
   return {
     leagueCount: Number(leagueCount ?? 0),
@@ -123,7 +142,8 @@ function topEntry<T extends string>(counts: Record<T, number>): { key: T; count:
   return best;
 }
 
-export async function getUserPatterns(userId: string): Promise<UserPatterns> {
+/** @param leagueId Scope every pattern to a single league. Omitted/undefined = combined across all the user's leagues (the default view). */
+export async function getUserPatterns(userId: string, leagueId?: number): Promise<UserPatterns> {
   const rows = await db
     .select({
       result: parlayLegs.result,
@@ -137,7 +157,11 @@ export async function getUserPatterns(userId: string): Promise<UserPatterns> {
     .from(parlayLegs)
     .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
     .leftJoin(games, eq(parlayLegs.gameId, games.id))
-    .where(eq(parlayLegs.userId, userId));
+    .where(
+      leagueId
+        ? and(eq(parlayLegs.userId, userId), eq(parlays.leagueId, leagueId))
+        : eq(parlayLegs.userId, userId)
+    );
 
   let wins = 0;
   let losses = 0;

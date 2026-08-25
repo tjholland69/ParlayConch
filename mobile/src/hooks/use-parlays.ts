@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
-import type { ParlayWithLegs } from "@shared/schema";
+import type { ParlayWithLegs, ParlayLegDispute } from "@shared/schema";
 
 /**
  * Paginated league-wide parlays (`GET /api/leagues/:id/parlays?limit=&offset=`).
@@ -125,6 +125,35 @@ export function useRejectParlay(leagueId: number, weekId: number) {
       apiRequest("POST", `/api/parlays/${parlayId}/reject`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });
+    },
+  });
+}
+
+/** Open/resolved/dismissed disputes filed against one leg — a member can only see their own. */
+export function useLegDisputes(legId: number) {
+  return useQuery<ParlayLegDispute[]>({
+    queryKey: ["/api/parlay-legs", legId, "disputes"],
+    queryFn: async () => apiRequest("GET", `/api/parlay-legs/${legId}/disputes`),
+    enabled: !!legId,
+  });
+}
+
+/**
+ * Files a dispute on one of the caller's own legs. Mobile only supports the
+ * "result is wrong" reason — "entered incorrectly" requires a screenshot
+ * upload, which needs camera/photo-library access mobile doesn't have wired
+ * up yet (see web's DisputeLegDialog for that flow).
+ */
+export function useFileDispute(legId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (justification: string) =>
+      apiRequest<ParlayLegDispute>("POST", `/api/parlay-legs/${legId}/disputes`, {
+        reasonType: "result_wrong",
+        justification,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/parlay-legs", legId, "disputes"] });
     },
   });
 }

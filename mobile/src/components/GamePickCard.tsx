@@ -295,6 +295,13 @@ const styles = StyleSheet.create({
     minHeight: 44,
   },
   selectionLabel: { flex: 1, fontSize: 14, fontWeight: "600", color: "#f1f5f9" },
-  clearBtn: { paddingHorizontal: 8, paddingVertical: 6 },
-  clearBtnText: { fontSize: 14, fontWeight: "600", color: "#2563eb" },
+  clearBtn: {
+    backgroundColor: "#1c2538",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  clearBtnText: { fontSize: 13, fontWeight: "600", color: "#2563eb" },
 });

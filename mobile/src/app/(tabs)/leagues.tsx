@@ -16,6 +16,8 @@ import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLeagues, useLeaguesOverviewStats, useCreateLeague, useJoinLeague } from "@/hooks/use-leagues";
+import { useActiveWeek } from "@/hooks/use-weeks";
+import { useMyParlayHistory } from "@/hooks/use-parlays";
 import { LeagueCard } from "@/components/LeagueCard";
 
 type ModalType = "create" | "join" | null;
@@ -23,9 +25,14 @@ type ModalType = "create" | "join" | null;
 export default function LeaguesScreen() {
   const { data: leagues, isLoading, refetch, isRefetching } = useLeagues();
   const { data: overviewStats } = useLeaguesOverviewStats();
+  const activeWeek = useActiveWeek();
+  const { data: parlayHistory } = useMyParlayHistory();
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
   const insets = useSafeAreaInsets();
+
+  const needsPick = (leagueId: number) =>
+    !!activeWeek && !(parlayHistory ?? []).some((p) => p.leagueId === leagueId && p.weekId === activeWeek.id);
 
   const [modal, setModal] = useState<ModalType>(null);
   const [leagueName, setLeagueName] = useState("");
@@ -118,7 +125,13 @@ export default function LeaguesScreen() {
               YOUR LEAGUES · {leagues.length}
             </Text>
             {leagues.map((league) => (
-              <LeagueCard key={league.id} league={league} stat={overviewStats?.[league.id]} />
+              <LeagueCard
+                key={league.id}
+                league={league}
+                stat={overviewStats?.[league.id]}
+                needsPick={needsPick(league.id)}
+                activeWeekId={activeWeek?.id}
+              />
             ))}
           </View>
         )}

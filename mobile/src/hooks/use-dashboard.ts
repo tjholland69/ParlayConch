@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@shared/routes";
+import { apiRequest } from "@/lib/api";
 
 export interface UserSummary {
   leagueCount: number;
@@ -37,21 +38,37 @@ export interface WinRateTimeSeriesPoint {
   allWeekWinRate: number | null;
 }
 
-/** Mobile keeps the dashboard simple — no league/compare/date filters, just the default scope. */
-export function useDashboardSummary() {
+/** `leagueId` scopes every stat to one league; omitted/undefined = combined
+ * across all the user's leagues (the default view). */
+export function useDashboardSummary(leagueId?: number) {
   return useQuery<UserSummary>({
-    queryKey: [api.dashboard.summary.path],
+    queryKey: [api.dashboard.summary.path, leagueId ?? "all"],
+    queryFn: () =>
+      apiRequest<UserSummary>(
+        "GET",
+        leagueId ? `${api.dashboard.summary.path}?leagueId=${leagueId}` : api.dashboard.summary.path
+      ),
   });
 }
 
-export function useDashboardPatterns() {
+export function useDashboardPatterns(leagueId?: number) {
   return useQuery<UserPatterns>({
-    queryKey: [api.dashboard.patterns.path],
+    queryKey: [api.dashboard.patterns.path, leagueId ?? "all"],
+    queryFn: () =>
+      apiRequest<UserPatterns>(
+        "GET",
+        leagueId ? `${api.dashboard.patterns.path}?leagueId=${leagueId}` : api.dashboard.patterns.path
+      ),
   });
 }
 
-export function useDashboardPerformance() {
+export function useDashboardPerformance(leagueId?: number) {
   return useQuery<{ points: WinRateTimeSeriesPoint[] }>({
-    queryKey: [api.dashboard.performance.path],
+    queryKey: [api.dashboard.performance.path, leagueId ?? "all"],
+    queryFn: () =>
+      apiRequest<{ points: WinRateTimeSeriesPoint[] }>(
+        "GET",
+        leagueId ? `${api.dashboard.performance.path}?leagueId=${leagueId}` : api.dashboard.performance.path
+      ),
   });
 }
