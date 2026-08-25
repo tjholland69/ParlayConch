@@ -8,3 +8,7 @@ expo-env.d.ts
 
 # App Store Connect API key — never commit this secret
 AuthKey*.p8
+
+# Local API URL override — commit would force everyone's build to your
+# local server; falls back to app.json's extra.apiUrl (production) when absent.
+.env
