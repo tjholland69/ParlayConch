@@ -87,6 +87,44 @@ export default function LoginScreen() {
 
         {/* Form */}
         <View style={styles.form}>
+          {/* Log In / Sign Up toggle */}
+          <View style={styles.modeToggle}>
+            <Pressable
+              onPress={() => {
+                setError(null);
+                setMode("login");
+              }}
+              style={[styles.modeButton, isLogin && styles.modeButtonActive]}
+              testID="button-mode-login"
+            >
+              <Text
+                style={[
+                  styles.modeButtonText,
+                  isLogin && styles.modeButtonTextActive,
+                ]}
+              >
+                Log In
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => {
+                setError(null);
+                setMode("register");
+              }}
+              style={[styles.modeButton, !isLogin && styles.modeButtonActive]}
+              testID="button-mode-signup"
+            >
+              <Text
+                style={[
+                  styles.modeButtonText,
+                  !isLogin && styles.modeButtonTextActive,
+                ]}
+              >
+                Sign Up
+              </Text>
+            </Pressable>
+          </View>
+
           {!isLogin && (
             <View style={styles.field}>
               <Text style={styles.label}>First name</Text>
@@ -164,26 +202,6 @@ export default function LoginScreen() {
                 {isLogin ? "Sign In" : "Create Account"}
               </Text>
             )}
-          </Pressable>
-
-          <Text style={styles.switchModeText}>
-            {isLogin ? "Don't have an account?" : "Already have an account?"}
-          </Text>
-
-          <Pressable
-            onPress={() => {
-              setError(null);
-              setMode(isLogin ? "register" : "login");
-            }}
-            style={({ pressed }) => [
-              styles.switchModeButton,
-              pressed && styles.switchModeButtonPressed,
-            ]}
-            testID="button-switch-mode"
-          >
-            <Text style={styles.switchModeButtonText}>
-              {isLogin ? "Sign up" : "Sign in"}
-            </Text>
           </Pressable>
         </View>
       </ScrollView>
@@ -264,6 +282,34 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     gap: 16,
   },
+  modeToggle: {
+    flexDirection: "row",
+    alignSelf: "center",
+    backgroundColor: "#1c2538",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 14,
+    padding: 4,
+    gap: 4,
+  },
+  modeButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 28,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modeButtonActive: {
+    backgroundColor: "#2563eb",
+  },
+  modeButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#64748b",
+  },
+  modeButtonTextActive: {
+    color: "#ffffff",
+  },
   field: {
     gap: 6,
   },
@@ -326,31 +372,5 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: "700",
     letterSpacing: 0.3,
-  },
-
-  switchModeText: {
-    fontSize: 13,
-    color: "#64748b",
-    marginTop: 20,
-    textAlign: "center",
-  },
-  switchModeButton: {
-    marginTop: 10,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 12,
-    paddingHorizontal: 24,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    borderColor: "#60a5fa",
-  },
-  switchModeButtonPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-  switchModeButtonText: {
-    color: "#60a5fa",
-    fontSize: 15,
-    fontWeight: "700",
   },
 });
