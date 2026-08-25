@@ -248,20 +248,22 @@ export async function registerRoutes(
   // ===== DASHBOARD =====
   app.get("/api/dashboard/summary", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
-    const cacheKey = `dashboard:summary:${userId}`;
+    const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+    const cacheKey = `dashboard:summary:${userId}:${leagueId ?? "all"}`;
     const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserSummary>>>(cacheKey);
     if (cached) return res.json(cached);
-    const summary = await getUserSummary(userId);
+    const summary = await getUserSummary(userId, leagueId);
     await cacheSetJson(cacheKey, summary, 60);
     res.json(summary);
   });
 
   app.get("/api/dashboard/patterns", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
-    const cacheKey = `dashboard:patterns:v2:${userId}`;
+    const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+    const cacheKey = `dashboard:patterns:v2:${userId}:${leagueId ?? "all"}`;
     const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserPatterns>>>(cacheKey);
     if (cached) return res.json(cached);
-    const patterns = await getUserPatterns(userId);
+    const patterns = await getUserPatterns(userId, leagueId);
     await cacheSetJson(cacheKey, patterns, 60);
     res.json(patterns);
   });

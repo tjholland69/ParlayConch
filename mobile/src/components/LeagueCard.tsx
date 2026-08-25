@@ -2,6 +2,7 @@ import { Pressable, View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { shadows } from "@/lib/theme";
+import { useWeekLockStatus } from "@/hooks/use-leagues";
 
 interface LeagueCardProps {
   league: {
@@ -16,10 +17,16 @@ interface LeagueCardProps {
   };
   /** All-time win rate + total parlays won — same top-level stats web shows on its Leagues list. */
   stat?: { winRate: number; totalDecided: number; parlaysWon: number };
+  /** Shows a "Create New Parlay" button on the card when this league still needs a pick for the active week. */
+  needsPick?: boolean;
+  /** Active week id, used to hold the button back once that week's deadline has locked. */
+  activeWeekId?: number;
 }
 
-export function LeagueCard({ league, stat }: LeagueCardProps) {
+export function LeagueCard({ league, stat, needsPick, activeWeekId }: LeagueCardProps) {
   const router = useRouter();
+  const { data: lockStatus } = useWeekLockStatus(league.id, activeWeekId ?? 0);
+  const showCreateParlay = needsPick && !lockStatus?.isLocked;
 
   const statColor =
     stat && stat.winRate >= 60 ? "#4ade80" : stat && stat.winRate >= 40 ? "#facc15" : "#f87171";
@@ -109,6 +116,17 @@ export function LeagueCard({ league, stat }: LeagueCardProps) {
               </View>
             </View>
           )}
+
+          {showCreateParlay && (
+            <Pressable
+              onPress={() => router.push(`/leagues/${league.id}/build`)}
+              style={({ pressed }) => [styles.createParlayBtn, pressed && { opacity: 0.85 }]}
+              testID={`button-create-parlay-${league.id}`}
+            >
+              <Ionicons name="add-circle-outline" size={15} color="#ffffff" />
+              <Text style={styles.createParlayBtnText}>Create New Parlay</Text>
+            </Pressable>
+          )}
         </View>
       </View>
     </Pressable>
@@ -119,7 +137,7 @@ const styles = StyleSheet.create({
   /* Shadow lives on this outer, non-clipping wrapper — combining shadow*
    * props with overflow:"hidden" on the same view breaks rendering on iOS. */
   shadowWrap: {
-    marginBottom: 14,
+    marginBottom: 20,
     borderRadius: 18,
     alignSelf: "stretch",
     minWidth: 0,
@@ -226,4 +244,15 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     flexShrink: 1,
   },
+  createParlayBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 12,
+    backgroundColor: "#2563eb",
+    borderRadius: 10,
+    paddingVertical: 10,
+  },
+  createParlayBtnText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
 });

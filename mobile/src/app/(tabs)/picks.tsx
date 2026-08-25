@@ -34,6 +34,7 @@ function ParlayTile({
   onPress,
   actionIcon,
   glow,
+  ctaLabel,
 }: {
   icon: IconName;
   iconColor: string;
@@ -47,6 +48,9 @@ function ParlayTile({
   /** Won parlays pulse with a soft green glow — the mobile take on the web
    * app's animated "perfect week" glow (see client/src/lib/parlayVisuals.ts). */
   glow?: boolean;
+  /** Explicit CTA button below the tile's meta text — same action as tapping
+   * the card, kept for tiles where the action shouldn't be implicit-only. */
+  ctaLabel?: string;
 }) {
   const pulse = useSharedValue(0);
 
@@ -86,6 +90,15 @@ function ParlayTile({
                   {metaLabel}
                 </Text>
               </View>
+            ) : null}
+
+            {ctaLabel ? (
+              <Pressable
+                onPress={onPress}
+                style={({ pressed }) => [styles.tileCtaBtn, pressed && { opacity: 0.85 }]}
+              >
+                <Text style={styles.tileCtaBtnText}>{ctaLabel}</Text>
+              </Pressable>
             ) : null}
           </View>
         </View>
@@ -133,10 +146,10 @@ function NeedsPickTile({ leagueId, weekId, leagueName }: { leagueId: number; wee
       iconColor="#f59e0b"
       leagueName={leagueName}
       statusLabel="Not submitted"
-      metaLabel="Tap to build your pick"
       bg="#1c1a0a"
       border="#3d2e00"
       actionIcon="create-outline"
+      ctaLabel="Create New Parlay"
       onPress={() => router.push({ pathname: "/leagues/[id]/build", params: { id: String(leagueId) } })}
     />
   );
@@ -322,6 +335,7 @@ export default function PicksScreen() {
       {leagues.length > 1 && (
         <FilterChipRow options={leagueOptions} selected={leagueFilter} onSelect={setLeagueFilter} />
       )}
+      {leagues.length > 1 && hasAnyPast && <View style={styles.filterRowDivider} />}
       {hasAnyPast && (
         <FilterChipRow options={RESULT_FILTERS} selected={resultFilter} onSelect={setResultFilter} />
       )}
@@ -426,6 +440,11 @@ const styles = StyleSheet.create({
   },
   noWeekText: { fontSize: 13, color: "#94a3b8" },
   chipRow: { gap: 8, paddingRight: 8, marginBottom: 14 },
+  filterRowDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: "#2a3447",
+    marginBottom: 14,
+  },
   chip: {
     backgroundColor: "#1c2538",
     borderWidth: 1,
@@ -491,4 +510,13 @@ const styles = StyleSheet.create({
   parlayStatusLabel: { fontSize: 13, color: "#94a3b8", marginBottom: 10, lineHeight: 18 },
   metaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10, minWidth: 0 },
   parlaySubLabel: { fontSize: 12, color: "#475569", fontWeight: "600", flexShrink: 1 },
+  tileCtaBtn: {
+    marginTop: 12,
+    backgroundColor: "#2563eb",
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tileCtaBtnText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
 });

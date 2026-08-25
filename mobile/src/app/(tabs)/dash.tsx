@@ -1,6 +1,9 @@
-import { View, Text, ScrollView, RefreshControl, StyleSheet } from "react-native";
+import { View, Text, ScrollView, RefreshControl, Pressable, Modal, StyleSheet } from "react-native";
+import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDashboardSummary, useDashboardPatterns, useDashboardPerformance } from "@/hooks/use-dashboard";
+import { useLeagues } from "@/hooks/use-leagues";
 import { DashboardStack, DashboardLoading, DashboardEmptyState } from "@/components/DashboardSlider";
 import { SimpleLineChart } from "@/components/charts/SimpleLineChart";
 import { SimpleBarChart } from "@/components/charts/SimpleBarChart";
@@ -39,8 +42,8 @@ function StatTile({
   );
 }
 
-function SummarySlide() {
-  const { data, isLoading, error } = useDashboardSummary();
+function SummarySlide({ leagueId }: { leagueId?: number }) {
+  const { data, isLoading, error } = useDashboardSummary(leagueId);
 
   if (isLoading) return <DashboardLoading message="Loading summary…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load your summary right now." />;
@@ -107,8 +110,8 @@ const BET_TYPE_LABELS: Record<string, string> = {
   player_prop: "Player Prop",
 };
 
-function AnalyticsSlide() {
-  const { data, isLoading, error } = useDashboardPatterns();
+function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
+  const { data, isLoading, error } = useDashboardPatterns(leagueId);
 
   if (isLoading) return <DashboardLoading message="Loading analytics…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load your analytics right now." />;
@@ -172,8 +175,8 @@ function AnalyticsSlide() {
   );
 }
 
-function PerformanceSlide() {
-  const { data, isLoading, error } = useDashboardPerformance();
+function PerformanceSlide({ leagueId }: { leagueId?: number }) {
+  const { data, isLoading, error } = useDashboardPerformance(leagueId);
 
   if (isLoading) return <DashboardLoading message="Loading performance…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load performance data right now." />;
@@ -194,8 +197,8 @@ function PerformanceSlide() {
   );
 }
 
-function WeekOverWeekSlide() {
-  const { data, isLoading, error } = useDashboardPerformance();
+function WeekOverWeekSlide({ leagueId }: { leagueId?: number }) {
+  const { data, isLoading, error } = useDashboardPerformance(leagueId);
 
   if (isLoading) return <DashboardLoading message="Loading performance…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load performance data right now." />;
@@ -216,7 +219,83 @@ function WeekOverWeekSlide() {
   );
 }
 
+/** Dropdown filter — defaults to "All Leagues" (combined across every league
+ * the user belongs to) and scopes every slide's data to one league when set. */
+function LeagueFilter({
+  leagues,
+  selectedLeagueId,
+  onSelect,
+}: {
+  leagues: { id: number; name: string }[];
+  selectedLeagueId?: number;
+  onSelect: (leagueId: number | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const insets = useSafeAreaInsets();
+  const selectedName = leagues.find((l) => l.id === selectedLeagueId)?.name ?? "All Leagues";
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [styles.leagueFilterBtn, pressed && { opacity: 0.85 }]}
+        testID="button-dashboard-league-filter"
+      >
+        <View style={styles.leagueFilterRow}>
+          <Ionicons name="people-outline" size={16} color="#ffffff" />
+          <Text style={styles.leagueFilterText} numberOfLines={1}>
+            {selectedName}
+          </Text>
+          <Ionicons name="chevron-down" size={16} color="#ffffff" />
+        </View>
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
+        <View style={styles.modalWrap}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setOpen(false)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Filter by League</Text>
+
+            <Pressable
+              onPress={() => {
+                onSelect(undefined);
+                setOpen(false);
+              }}
+              style={({ pressed }) => [styles.leagueOption, pressed && { opacity: 0.7 }]}
+              testID="option-league-all"
+            >
+              <Text style={styles.leagueOptionText}>All Leagues</Text>
+              {selectedLeagueId === undefined && <Ionicons name="checkmark" size={18} color="#2563eb" />}
+            </Pressable>
+
+            {leagues.map((league) => (
+              <Pressable
+                key={league.id}
+                onPress={() => {
+                  onSelect(league.id);
+                  setOpen(false);
+                }}
+                style={({ pressed }) => [styles.leagueOption, pressed && { opacity: 0.7 }]}
+                testID={`option-league-${league.id}`}
+              >
+                <Text style={styles.leagueOptionText} numberOfLines={1}>
+                  {league.name}
+                </Text>
+                {selectedLeagueId === league.id && <Ionicons name="checkmark" size={18} color="#2563eb" />}
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
 export default function DashScreen() {
+  const { data: leagues } = useLeagues();
+  const [selectedLeagueId, setSelectedLeagueId] = useState<number | undefined>(undefined);
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -224,12 +303,22 @@ export default function DashScreen() {
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={false} onRefresh={() => {}} tintColor="#2563eb" />}
       >
+        {leagues && leagues.length > 1 && (
+          <View style={styles.leagueFilterWrap}>
+            <LeagueFilter
+              leagues={leagues}
+              selectedLeagueId={selectedLeagueId}
+              onSelect={setSelectedLeagueId}
+            />
+          </View>
+        )}
+
         <DashboardStack
           slides={[
-            { label: "Summary", content: <SummarySlide /> },
-            { label: "My Analytics", content: <AnalyticsSlide /> },
-            { label: "Performance", content: <PerformanceSlide /> },
-            { label: "Weekly", content: <WeekOverWeekSlide /> },
+            { label: "Summary", content: <SummarySlide leagueId={selectedLeagueId} /> },
+            { label: "My Analytics", content: <AnalyticsSlide leagueId={selectedLeagueId} /> },
+            { label: "Performance", content: <PerformanceSlide leagueId={selectedLeagueId} /> },
+            { label: "Weekly", content: <WeekOverWeekSlide leagueId={selectedLeagueId} /> },
           ]}
         />
       </ScrollView>
@@ -285,4 +374,74 @@ const styles = StyleSheet.create({
   slateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   slateRowLabel: { fontSize: 13, color: "#94a3b8" },
   slateRowValue: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
+
+  leagueFilterWrap: {
+    width: "100%",
+    marginHorizontal: -20,
+    alignItems: "center",
+    paddingHorizontal: 20,
+  },
+  leagueFilterBtn: {
+    flexDirection: "row",
+    flexWrap: "nowrap",
+    alignSelf: "center",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#2563eb",
+    borderWidth: 2,
+    borderColor: "#93c5fd",
+    borderRadius: 12,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    marginBottom: 20,
+    maxWidth: "100%",
+    shadowColor: "#2563eb",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 12,
+    elevation: 5,
+  },
+  leagueFilterRow: {
+    flexDirection: "row",
+    flexWrap: "nowrap",
+    alignItems: "center",
+    gap: 8,
+  },
+  leagueFilterText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#ffffff",
+    flexShrink: 1,
+    letterSpacing: 0.2,
+  },
+  modalWrap: { flex: 1, justifyContent: "flex-end" },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)" },
+  sheet: {
+    backgroundColor: "#1c2538",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderColor: "#2a3447",
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#374151",
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  sheetTitle: { fontSize: 18, fontWeight: "700", color: "#f1f5f9", marginBottom: 12 },
+  leagueOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#2a3447",
+  },
+  leagueOptionText: { fontSize: 15, color: "#f1f5f9", flex: 1, marginRight: 12 },
 });

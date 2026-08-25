@@ -10,13 +10,20 @@ import {
   ScrollView,
 } from "react-native";
 import { Shell } from "lucide-react-native";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { apiRequest, setSessionToken } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
 
 type Mode = "login" | "register";
+
+// Dev-only auto-login — set EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL/PASSWORD in your
+// local (gitignored) mobile/.env to skip the form on `npm run ios`. Both the
+// __DEV__ guard and the missing-by-default env vars keep this out of
+// production and other devs' machines.
+const DEV_AUTOLOGIN_EMAIL = process.env.EXPO_PUBLIC_DEV_AUTOLOGIN_EMAIL;
+const DEV_AUTOLOGIN_PASSWORD = process.env.EXPO_PUBLIC_DEV_AUTOLOGIN_PASSWORD;
 
 export default function LoginScreen() {
   const [mode, setMode] = useState<Mode>("login");
@@ -30,10 +37,12 @@ export default function LoginScreen() {
 
   const isLogin = mode === "login";
 
-  async function handleSubmit() {
+  async function handleSubmit(overrides?: { email: string; password: string }) {
+    const loginEmail = overrides?.email ?? email;
+    const loginPassword = overrides?.password ?? password;
     setError(null);
 
-    if (!email.trim() || !password) {
+    if (!loginEmail.trim() || !loginPassword) {
       setError("Enter your email and password.");
       return;
     }
@@ -41,7 +50,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       const endpoint = isLogin ? "/api/auth/login-local" : "/api/auth/register";
-      const body: Record<string, string> = { email: email.trim(), password };
+      const body: Record<string, string> = { email: loginEmail.trim(), password: loginPassword };
       if (!isLogin && firstName.trim()) body.firstName = firstName.trim();
 
       const data = await apiRequest<{ message: string; sessionToken: string }>(
@@ -58,6 +67,17 @@ export default function LoginScreen() {
       setLoading(false);
     }
   }
+
+  const didAutoLogin = useRef(false);
+  useEffect(() => {
+    if (!__DEV__ || didAutoLogin.current) return;
+    if (!DEV_AUTOLOGIN_EMAIL || !DEV_AUTOLOGIN_PASSWORD) return;
+    didAutoLogin.current = true;
+    setEmail(DEV_AUTOLOGIN_EMAIL);
+    setPassword(DEV_AUTOLOGIN_PASSWORD);
+    handleSubmit({ email: DEV_AUTOLOGIN_EMAIL, password: DEV_AUTOLOGIN_PASSWORD });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <KeyboardAvoidingView
@@ -187,7 +207,7 @@ export default function LoginScreen() {
           {error && <Text style={styles.error}>{error}</Text>}
 
           <Pressable
-            onPress={handleSubmit}
+            onPress={() => handleSubmit()}
             disabled={loading}
             style={({ pressed }) => [
               styles.primaryButton,
