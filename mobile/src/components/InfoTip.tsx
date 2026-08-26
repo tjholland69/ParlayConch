@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { Button } from "@/components/ui/Button";
+import { IconButton } from "@/components/ui/IconButton";
 
 /** Small "i" button that pops a bottom-sheet explaining a stat — e.g. how
  * Power Score or BAR are calculated. Self-contained (owns its own modal
@@ -11,13 +12,13 @@ export function InfoButton({ title, description }: { title: string; description:
 
   return (
     <>
-      <Pressable
-        hitSlop={8}
+      <IconButton
         onPress={() => setOpen(true)}
-        style={({ pressed }) => [styles.button, pressed && { opacity: 0.6 }]}
+        accessibilityLabel={`About ${title}`}
+        style={styles.infoHit}
       >
-        <Ionicons name="information-circle-outline" size={14} color="#64748b" />
-      </Pressable>
+        <Ionicons name="information-circle-outline" size={18} color="#64748b" />
+      </IconButton>
 
       <Modal visible={open} animationType="fade" transparent onRequestClose={() => setOpen(false)}>
         <Pressable style={styles.backdrop} onPress={() => setOpen(false)}>
@@ -35,7 +36,7 @@ export function InfoButton({ title, description }: { title: string; description:
 }
 
 const styles = StyleSheet.create({
-  button: { marginLeft: "auto", padding: 2 },
+  infoHit: { marginLeft: "auto" },
   backdrop: {
     flex: 1,
     backgroundColor: "rgba(0,0,0,0.6)",

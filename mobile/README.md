@@ -29,7 +29,8 @@ mobile/
 │       ├── api.ts         # apiRequest helper + session token (SecureStore)
 │       └── query-client.ts
 ├── app.json               # Expo config — set extra.apiUrl to your server URL
-├── tailwind.config.js     # NativeWind — matches web app color palette
+├── eas.json               # EAS build/submit profiles (pin sdk-54)
+├── .easignore             # Trim monorepo upload; keep ../shared
 └── package.json
 ```
 
@@ -80,11 +81,22 @@ npx expo start
 - Scan the QR code with Expo Go on your phone
 
 ### Build for App Store (EAS)
+Always run from `mobile/` (not the repo root — root `app.json` / `eas.json` are stale).
+
 ```bash
 cd mobile
 eas build --platform ios --profile production
-eas submit --platform ios
+eas submit --platform ios --profile production
 ```
+
+**JS-only changes:** prefer OTA instead of a full native rebuild when possible:
+
+```bash
+cd mobile
+eas update --channel production --message "describe the change"
+```
+
+iOS builds pin `ios.image` to `sdk-54` in `eas.json` for cache stability. Upload excludes web/server via `.easignore` (keeps `../shared`).
 
 ## Authentication Notes
 
@@ -94,12 +106,7 @@ The web app uses Replit's OpenID Connect with HTTP session cookies. On iOS, the 
 
 ## Styling
 
-NativeWind 4 is used for Tailwind-compatible class names in React Native. The color palette in `tailwind.config.js` mirrors the web app's dark theme:
-
-- `background`: `#09090b`
-- `card`: `#18181b`  
-- `primary`: `#22c55e` (green)
-- `accent`: `#f59e0b` (amber)
+StyleSheet-first (no NativeWind). Shared tokens live in `src/lib/theme.ts` (`BUTTON_MIN_HEIGHT`, `ICON_HIT_SIZE`, colors, shadows). Use `Button` / `IconButton` for tappable controls.
 
 ## What Comes Next (Future Sprints)
 

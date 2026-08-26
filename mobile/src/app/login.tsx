@@ -15,6 +15,7 @@ import { apiRequest, setSessionToken } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
 import { Button } from "@/components/ui/Button";
+import { IconButton } from "@/components/ui/IconButton";
 
 type Mode = "login" | "register";
 
@@ -190,17 +191,17 @@ export default function LoginScreen() {
                 autoCorrect={false}
                 testID="input-password"
               />
-              <Pressable
+              <IconButton
                 onPress={() => setShowPassword((v) => !v)}
                 style={styles.eyeButton}
-                hitSlop={8}
+                accessibilityLabel={showPassword ? "Hide password" : "Show password"}
               >
                 <Ionicons
                   name={showPassword ? "eye-off-outline" : "eye-outline"}
                   size={18}
                   color="#64748b"
                 />
-              </Pressable>
+              </IconButton>
             </View>
           </View>
 
@@ -351,7 +352,7 @@ const styles = StyleSheet.create({
   },
   eyeButton: {
     position: "absolute",
-    right: 12,
+    right: 4,
   },
   error: {
     fontSize: 13,

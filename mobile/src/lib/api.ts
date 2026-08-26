@@ -1,5 +1,6 @@
 import Constants from "expo-constants";
 import * as SecureStore from "expo-secure-store";
+import { requestJson } from "@/lib/request-json";
 
 /**
  * The base URL of the Parlay.Conch API server.
@@ -37,32 +38,13 @@ export async function apiRequest<T = unknown>(
   body?: unknown
 ): Promise<T> {
   const token = await getSessionToken();
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-  };
-
-  if (token) {
-    // Native iOS overrides a manually-set `Cookie` header via its own
-    // NSURLSession cookie jar, so we send the session token as a Bearer
-    // header instead; the server translates it back into the session cookie.
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  return requestJson<T>({
+    baseUrl: API_BASE_URL,
     method,
-    headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    path,
+    body,
+    token,
   });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({ message: response.statusText }));
-    throw new Error(error.message || `${response.status} ${response.statusText}`);
-  }
-
-  if (response.status === 204) return undefined as T;
-  return response.json() as Promise<T>;
 }
 
 /**

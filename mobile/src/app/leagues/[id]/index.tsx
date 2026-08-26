@@ -207,7 +207,12 @@ function ParlayCard({
   return (
     <View style={styles.parlayCardShadowWrap}>
     <View style={[styles.parlayCard, { borderColor: visual.borderColor }]}>
-      <View style={styles.parlayCardHeader}>
+      <Pressable
+        onPress={() => setCollapsed((c) => !c)}
+        style={({ pressed }) => [styles.parlayCardHeader, pressed && styles.headerPressed]}
+        accessibilityRole="button"
+        accessibilityLabel={collapsed ? "Expand parlay" : "Collapse parlay"}
+      >
         {/* Progress-bar background — flat fill sized to win%, RN has no cheap gradient without a native module. */}
         {pct !== null && pct > 0 && (
           <View
@@ -216,15 +221,9 @@ function ParlayCard({
           />
         )}
 
-        <Pressable
-          onPress={() => setCollapsed((c) => !c)}
-          hitSlop={8}
-          style={styles.collapseToggle}
-          accessibilityRole="button"
-          accessibilityLabel={collapsed ? "Expand parlay" : "Collapse parlay"}
-        >
+        <View style={styles.collapseChevron}>
           <Ionicons name={collapsed ? "chevron-forward" : "chevron-down"} size={16} color="#64748b" />
-        </Pressable>
+        </View>
 
         <View style={styles.parlayCardMeta}>
           <View style={styles.parlayCardNameRow}>
@@ -275,7 +274,7 @@ function ParlayCard({
         )}
 
         <Ionicons name={statusIcon} size={22} color={statusColor} />
-      </View>
+      </Pressable>
 
       {!collapsed && (
         <View style={styles.mixBarWrap}>
@@ -519,8 +518,10 @@ function MembersTable({
             <Pressable
               key={col.key}
               onPress={() => handleSortPress(col.key)}
-              style={styles.memberHeaderCol}
-              hitSlop={4}
+              style={({ pressed }) => [styles.memberHeaderCol, pressed && { opacity: 0.7 }]}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`Sort by ${col.label}`}
             >
               <Text style={[styles.memberHeaderText, active && styles.memberHeaderTextActive]} numberOfLines={1}>
                 {col.label}
@@ -1211,8 +1212,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#2563eb",
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    minHeight: 36,
+    paddingVertical: 10,
+    minHeight: 44,
   },
   adminActionReady: { backgroundColor: "#16a34a" },
   adminActionMuted: { backgroundColor: "#334155" },
@@ -1346,8 +1347,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a3447",
     borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 12,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   clearFiltersText: { fontSize: 12, fontWeight: "600", color: "#2563eb" },
   chipRow: { gap: 8, paddingRight: 8 },
@@ -1410,7 +1413,13 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
   },
-  collapseToggle: { padding: 2 },
+  collapseChevron: {
+    width: 28,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  headerPressed: { opacity: 0.85 },
   parlayCardMeta: { flex: 1, minWidth: 0 },
   parlayCardNameRow: { flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
   parlayCardName: { fontSize: 14, fontWeight: "700", color: "#f1f5f9", flexShrink: 1 },
@@ -1477,7 +1486,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 5,
-    paddingVertical: 9,
+    paddingVertical: 12,
+    minHeight: 44,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: "#ef4444",
@@ -1489,7 +1499,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 5,
-    paddingVertical: 9,
+    paddingVertical: 12,
+    minHeight: 44,
     borderRadius: 10,
     backgroundColor: "#22c55e",
   },
@@ -1500,7 +1511,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 6,
-    paddingVertical: 9,
+    paddingVertical: 12,
+    minHeight: 44,
     borderRadius: 10,
     backgroundColor: "#2563eb",
   },
@@ -1517,7 +1529,7 @@ const styles = StyleSheet.create({
   },
   memberHeaderCol: {
     flex: 1,
-    minHeight: 24,
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",

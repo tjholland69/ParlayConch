@@ -10,7 +10,6 @@ interface ButtonProps extends PressableProps {
   variant?: ButtonVariant;
   size?: ButtonSize;
   loading?: boolean;
-  className?: string;
   /** Stretches to the width of its parent (e.g. a full-bleed form CTA).
    * Defaults to false — the button shrinks to fit its content/padding,
    * which is almost always what you want for a tappable control. */
@@ -30,13 +29,8 @@ export function Button({
   ...props
 }: ButtonProps) {
   const isDisabled = disabled || loading;
-  // Pressed state is tracked here (rather than via Pressable's style-callback
-  // render prop) and baked into one plain style object below — on this app's
-  // Metro/nativewind setup, handing Pressable a *function* for `style` gets
-  // its resolved value silently dropped, even though the same function
-  // correctly computes a style array. A precomputed plain object always
-  // renders correctly, so pressed/disabled/variant/size/caller overrides are
-  // all merged into a single flat object up front instead.
+  // Track pressed via state + a flat style object so callers can still pass
+  // a style callback without fighting Pressable's own style function merge.
   const [pressed, setPressed] = useState(false);
 
   const resolvedCallerStyle = typeof style === "function" ? style({ pressed, hovered: false }) : style;
@@ -97,11 +91,6 @@ const styles = StyleSheet.create({
   text: { fontWeight: "600" },
 });
 
-// Plain object lookup maps, not run through StyleSheet.create — this app's
-// Metro/nativewind setup doesn't reliably resolve computed key access (e.g.
-// `styles[\`variant_${variant}\`]`) into a StyleSheet.create() result, which
-// silently dropped every variant/size style. Static dot-access into
-// StyleSheet.create (styles.base, styles.pressed, ...) above is unaffected.
 const VARIANT_STYLES: Record<ButtonVariant, object> = {
   default: { backgroundColor: "#2563eb" },
   outline: { backgroundColor: "transparent", borderWidth: 1, borderColor: "#2a3447" },

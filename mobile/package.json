@@ -7,6 +7,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
+    "typecheck": "tsc --noEmit",
     "postinstall": "patch-package"
   },
   "dependencies": {
@@ -25,7 +26,6 @@
     "expo-updates": "~29.0.19",
     "expo-web-browser": "~15.0.11",
     "lucide-react-native": "^1.14.0",
-    "nativewind": "^4.0.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
@@ -37,7 +37,6 @@
     "react-native-web": "^0.21.0",
     "react-native-worklets": "0.5.1",
     "resolve": "1.22.12",
-    "tailwindcss": "^3.3.2",
     "zod": "^3.22.0"
   },
   "devDependencies": {

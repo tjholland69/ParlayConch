@@ -1,7 +1,8 @@
 import { Pressable, View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { shadows } from "@/lib/theme";
+import { Button } from "@/components/ui/Button";
+import { BUTTON_MIN_HEIGHT, shadows } from "@/lib/theme";
 import { useWeekLockStatus } from "@/hooks/use-leagues";
 
 interface LeagueCardProps {
@@ -44,98 +45,104 @@ export function LeagueCard({ league, stat, needsPick, activeWeekId }: LeagueCard
     : "#475569";
 
   return (
-    <Pressable
-      onPress={() => router.push(`/leagues/${league.id}`)}
-      style={({ pressed }) => [styles.shadowWrap, pressed && styles.pressed]}
-      testID={`card-league-${league.id}`}
-    >
+    /* Shadow on a non-clipping wrapper — shadow* + overflow:"hidden" breaks on iOS. */
+    <View style={styles.shadowWrap}>
       <View style={styles.card}>
-        {/* Left accent bar */}
-        <View style={[styles.accentBar, { backgroundColor: roleColor }]} />
+        <View style={styles.accentBar} />
+        <View style={[styles.accentBarFill, { backgroundColor: roleColor }]} />
 
         <View style={styles.body}>
-          <View style={styles.topRow}>
-            <View style={styles.titleBlock}>
-              <Text style={styles.name} numberOfLines={1}>
-                {league.name}
+          <Pressable
+            onPress={() => router.push(`/leagues/${league.id}`)}
+            style={({ pressed }) => [styles.mainPress, pressed && styles.pressed]}
+            testID={`card-league-${league.id}`}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${league.name}`}
+          >
+            <View style={styles.topRow}>
+              <View style={styles.titleBlock}>
+                <Text style={styles.name} numberOfLines={1}>
+                  {league.name}
+                </Text>
+                {league.isDemo && (
+                  <View style={styles.demoPill}>
+                    <Text style={styles.demoPillText}>DEMO</Text>
+                  </View>
+                )}
+              </View>
+              <Ionicons name="chevron-forward" size={16} color="#374151" style={styles.chevron} />
+            </View>
+
+            {league.description ? (
+              <Text style={styles.description} numberOfLines={2}>
+                {league.description}
               </Text>
-              {league.isDemo && (
-                <View style={styles.demoPill}>
-                  <Text style={styles.demoPillText}>DEMO</Text>
+            ) : null}
+
+            <View style={styles.metaRow}>
+              <View style={styles.metaItem}>
+                <View style={[styles.roleDot, { backgroundColor: roleColor }]} />
+                <Text style={[styles.metaText, { color: roleColor }]} numberOfLines={1}>
+                  {roleLabel}
+                </Text>
+              </View>
+
+              {league.memberCount !== undefined && (
+                <View style={styles.metaItem}>
+                  <Ionicons name="people-outline" size={13} color="#475569" />
+                  <Text style={styles.metaTextMuted} numberOfLines={1}>
+                    {league.memberCount}{" "}
+                    {league.memberCount === 1 ? "member" : "members"}
+                  </Text>
+                </View>
+              )}
+
+              {league.isAdmin && (
+                <View style={styles.metaItem}>
+                  <Ionicons name="key-outline" size={13} color="#475569" />
+                  <Text style={styles.inviteCode}>{league.inviteCode}</Text>
                 </View>
               )}
             </View>
-            <Ionicons name="chevron-forward" size={16} color="#374151" style={styles.chevron} />
-          </View>
 
-          {league.description ? (
-            <Text style={styles.description} numberOfLines={2}>
-              {league.description}
-            </Text>
-          ) : null}
-
-          <View style={styles.metaRow}>
-            <View style={styles.metaItem}>
-              <View style={[styles.roleDot, { backgroundColor: roleColor }]} />
-              <Text style={[styles.metaText, { color: roleColor }]} numberOfLines={1}>
-                {roleLabel}
-              </Text>
-            </View>
-
-            {league.memberCount !== undefined && (
-              <View style={styles.metaItem}>
-                <Ionicons name="people-outline" size={13} color="#475569" />
-                <Text style={styles.metaTextMuted} numberOfLines={1}>
-                  {league.memberCount}{" "}
-                  {league.memberCount === 1 ? "member" : "members"}
-                </Text>
+            {stat && stat.totalDecided > 0 && (
+              <View style={styles.statRow}>
+                <View style={styles.metaItem}>
+                  <Ionicons name="trending-up-outline" size={13} color={statColor} />
+                  <Text style={[styles.statText, { color: statColor }]} numberOfLines={1}>
+                    {stat.winRate.toFixed(1)}% picks won
+                  </Text>
+                </View>
+                <View style={styles.metaItem}>
+                  <Ionicons name="trophy-outline" size={13} color="#475569" />
+                  <Text style={styles.metaTextMuted} numberOfLines={1}>
+                    {stat.parlaysWon} parlay{stat.parlaysWon !== 1 ? "s" : ""} won
+                  </Text>
+                </View>
               </View>
             )}
+          </Pressable>
 
-            {league.isAdmin && (
-              <View style={styles.metaItem}>
-                <Ionicons name="key-outline" size={13} color="#475569" />
-                <Text style={styles.inviteCode}>{league.inviteCode}</Text>
-              </View>
-            )}
-          </View>
-
-          {stat && stat.totalDecided > 0 && (
-            <View style={styles.statRow}>
-              <View style={styles.metaItem}>
-                <Ionicons name="trending-up-outline" size={13} color={statColor} />
-                <Text style={[styles.statText, { color: statColor }]} numberOfLines={1}>
-                  {stat.winRate.toFixed(1)}% picks won
-                </Text>
-              </View>
-              <View style={styles.metaItem}>
-                <Ionicons name="trophy-outline" size={13} color="#475569" />
-                <Text style={styles.metaTextMuted} numberOfLines={1}>
-                  {stat.parlaysWon} parlay{stat.parlaysWon !== 1 ? "s" : ""} won
-                </Text>
-              </View>
-            </View>
-          )}
-
+          {/* Sibling of the card Pressable — nested Pressables were flaky. */}
           {showCreateParlay && (
-            <Pressable
+            <Button
+              fullWidth
+              size="sm"
+              style={styles.createParlayBtn}
               onPress={() => router.push(`/leagues/${league.id}/build`)}
-              style={({ pressed }) => [styles.createParlayBtn, pressed && { opacity: 0.85 }]}
               testID={`button-create-parlay-${league.id}`}
             >
               <Ionicons name="add-circle-outline" size={15} color="#ffffff" />
               <Text style={styles.createParlayBtnText}>Create New Parlay</Text>
-            </Pressable>
+            </Button>
           )}
         </View>
       </View>
-    </Pressable>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  /* Shadow lives on this outer, non-clipping wrapper — combining shadow*
-   * props with overflow:"hidden" on the same view breaks rendering on iOS. */
   shadowWrap: {
     marginBottom: 20,
     borderRadius: 18,
@@ -152,18 +159,30 @@ const styles = StyleSheet.create({
     overflow: "hidden",
     minWidth: 0,
   },
-  pressed: { opacity: 0.85, transform: [{ scale: 0.99 }] },
+  /* Invisible spacer + absolute fill so the accent spans full card height
+   * without living inside the Pressable (CTA is a sibling below). */
   accentBar: {
+    width: 5,
+    flexShrink: 0,
+  },
+  accentBarFill: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
     width: 5,
     borderTopLeftRadius: 18,
     borderBottomLeftRadius: 18,
-    flexShrink: 0,
   },
   body: {
     flex: 1,
     padding: 20,
+    paddingLeft: 15,
     minWidth: 0,
+    gap: 12,
   },
+  mainPress: { minWidth: 0 },
+  pressed: { opacity: 0.85 },
   topRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -245,14 +264,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   createParlayBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 12,
-    backgroundColor: "#2563eb",
+    minHeight: BUTTON_MIN_HEIGHT,
     borderRadius: 10,
-    paddingVertical: 10,
   },
   createParlayBtnText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
 });
