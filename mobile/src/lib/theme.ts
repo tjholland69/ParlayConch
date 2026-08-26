@@ -15,6 +15,12 @@ export const colors = {
  * little headroom to match the app's existing best-formed buttons. */
 export const BUTTON_MIN_HEIGHT = 48;
 
+/** Minimum square hit target for icon-only controls (info, eye, flag, etc.). */
+export const ICON_HIT_SIZE = 44;
+
+/** Compact chip / filter control — still at the 44pt HIG floor. */
+export const CHIP_MIN_HEIGHT = 44;
+
 export const shadows = {
   /** Neutral card lift — use on any surface without overflow:"hidden" set
    * (combining shadow* with overflow:"hidden" breaks rendering on iOS; wrap

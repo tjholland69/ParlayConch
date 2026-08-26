@@ -1,5 +1,6 @@
 {
   "expo": {
+    "_comment": "STALE — do not use for builds. Canonical Expo config is mobile/app.json (com.parlayclub.app).",
     "extra": {
       "eas": {
         "projectId": "a038f53c-8103-4faf-b211-94267ce199aa"

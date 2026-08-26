@@ -1,7 +1,7 @@
 import {
   View,
   Text,
-  ScrollView,
+  FlatList,
   RefreshControl,
   Pressable,
   Modal,
@@ -20,6 +20,7 @@ import { useActiveWeek } from "@/hooks/use-weeks";
 import { useMyParlayHistory } from "@/hooks/use-parlays";
 import { LeagueCard } from "@/components/LeagueCard";
 import { Button } from "@/components/ui/Button";
+import { IconButton } from "@/components/ui/IconButton";
 
 type ModalType = "create" | "join" | null;
 
@@ -70,63 +71,63 @@ export default function LeaguesScreen() {
     }
   }
 
+  const listHeader = (
+    <View style={styles.actionRow}>
+      <Button variant="outline" style={[styles.actionBtn, styles.actionBtnOutline]} onPress={() => setModal("join")}>
+        <Ionicons name="enter-outline" size={16} color="#93c5fd" />
+        <Text style={styles.actionBtnOutlineText}>Join League</Text>
+      </Button>
+      <Button style={styles.actionBtn} onPress={() => setModal("create")}>
+        <Ionicons name="add" size={16} color="#ffffff" />
+        <Text style={styles.actionBtnPrimaryText}>New League</Text>
+      </Button>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefetching}
-            onRefresh={refetch}
-            tintColor="#2563eb"
-          />
-        }
-      >
-        {/* Action buttons */}
-        <View style={styles.actionRow}>
-          <Button variant="outline" style={[styles.actionBtn, styles.actionBtnOutline]} onPress={() => setModal("join")}>
-            <Ionicons name="enter-outline" size={16} color="#93c5fd" />
-            <Text style={styles.actionBtnOutlineText}>Join League</Text>
-          </Button>
-          <Button style={styles.actionBtn} onPress={() => setModal("create")}>
-            <Ionicons name="add" size={16} color="#ffffff" />
-            <Text style={styles.actionBtnPrimaryText}>New League</Text>
-          </Button>
+      {isLoading ? (
+        <View style={styles.centered}>
+          <ActivityIndicator color="#2563eb" size="large" />
         </View>
-
-        {/* Leagues list */}
-        {isLoading ? (
-          <View style={styles.centered}>
-            <ActivityIndicator color="#2563eb" size="large" />
-          </View>
-        ) : !leagues || leagues.length === 0 ? (
-          <View style={styles.emptyState}>
-            <View style={styles.emptyIcon}>
-              <Ionicons name="trophy-outline" size={32} color="#2563eb" />
+      ) : (
+        <FlatList
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          data={leagues ?? []}
+          keyExtractor={(item) => String(item.id)}
+          ListHeaderComponent={
+            <>
+              {listHeader}
+              {(leagues?.length ?? 0) > 0 ? (
+                <Text style={styles.sectionLabel}>YOUR LEAGUES · {leagues!.length}</Text>
+              ) : null}
+            </>
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyState}>
+              <View style={styles.emptyIcon}>
+                <Ionicons name="trophy-outline" size={32} color="#2563eb" />
+              </View>
+              <Text style={styles.emptyTitle}>No leagues yet</Text>
+              <Text style={styles.emptySubtitle}>
+                Create a league or join one with an invite code to get started.
+              </Text>
             </View>
-            <Text style={styles.emptyTitle}>No leagues yet</Text>
-            <Text style={styles.emptySubtitle}>
-              Create a league or join one with an invite code to get started.
-            </Text>
-          </View>
-        ) : (
-          <View>
-            <Text style={styles.sectionLabel}>
-              YOUR LEAGUES · {leagues.length}
-            </Text>
-            {leagues.map((league) => (
-              <LeagueCard
-                key={league.id}
-                league={league}
-                stat={overviewStats?.[league.id]}
-                needsPick={needsPick(league.id)}
-                activeWeekId={activeWeek?.id}
-              />
-            ))}
-          </View>
-        )}
-      </ScrollView>
+          }
+          renderItem={({ item: league }) => (
+            <LeagueCard
+              league={league}
+              stat={overviewStats?.[league.id]}
+              needsPick={needsPick(league.id)}
+              activeWeekId={activeWeek?.id}
+            />
+          )}
+          refreshControl={
+            <RefreshControl refreshing={isRefetching} onRefresh={refetch} tintColor="#2563eb" />
+          }
+        />
+      )}
 
       {/* Create League Sheet */}
       <Modal
@@ -144,9 +145,9 @@ export default function LeaguesScreen() {
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>Create League</Text>
-              <Pressable onPress={closeModal} hitSlop={12} testID="button-close-create">
+              <IconButton onPress={closeModal} testID="button-close-create" accessibilityLabel="Close">
                 <Ionicons name="close" size={22} color="#475569" />
-              </Pressable>
+              </IconButton>
             </View>
 
             <Text style={styles.inputLabel}>League Name</Text>
@@ -203,9 +204,9 @@ export default function LeaguesScreen() {
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <Text style={styles.sheetTitle}>Join League</Text>
-              <Pressable onPress={closeModal} hitSlop={12} testID="button-close-join">
+              <IconButton onPress={closeModal} testID="button-close-join" accessibilityLabel="Close">
                 <Ionicons name="close" size={22} color="#475569" />
-              </Pressable>
+              </IconButton>
             </View>
 
             <Text style={styles.inputLabel}>Invite Code</Text>

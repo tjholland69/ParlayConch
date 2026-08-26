@@ -1,7 +1,8 @@
-import { View, Pressable, StyleSheet } from "react-native";
+import { View, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "@/hooks/use-auth";
 import { Avatar } from "@/components/ui/Avatar";
+import { IconButton } from "@/components/ui/IconButton";
 
 /** Tapping the initials circle is how Profile & Settings are reached — they're
  * intentionally off the bottom tab bar to keep it to Dash / My Picks / Leagues. */
@@ -15,19 +16,17 @@ export function HeaderAvatarButton() {
 
   return (
     <View style={styles.wrap}>
-      <Pressable
+      <IconButton
         onPress={() => router.push("/(tabs)/settings")}
-        hitSlop={10}
-        style={({ pressed }) => [pressed && styles.pressed]}
+        accessibilityLabel="Profile and settings"
         testID="button-header-avatar"
       >
         <Avatar src={user?.profileImageUrl} name={displayName} size={32} />
-      </Pressable>
+      </IconButton>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { paddingRight: 16 },
-  pressed: { opacity: 0.7 },
+  wrap: { paddingRight: 12 },
 });

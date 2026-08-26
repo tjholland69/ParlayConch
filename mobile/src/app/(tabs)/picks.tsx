@@ -5,8 +5,9 @@ import {
   ActivityIndicator,
   StyleSheet,
   Pressable,
+  SectionList,
 } from "react-native";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from "react-native-reanimated";
@@ -15,7 +16,7 @@ import { useActiveWeek } from "@/hooks/use-weeks";
 import { useMyParlay, useMyParlayHistory } from "@/hooks/use-parlays";
 import { format, formatDistanceToNow, isPast } from "date-fns";
 import type { ParlayWithLegs } from "@shared/schema";
-import { shadows } from "@/lib/theme";
+import { CHIP_MIN_HEIGHT, shadows } from "@/lib/theme";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -92,13 +93,11 @@ function ParlayTile({
               </View>
             ) : null}
 
+            {/* Visual CTA only — same onPress as the card (no nested Pressable). */}
             {ctaLabel ? (
-              <Pressable
-                onPress={onPress}
-                style={({ pressed }) => [styles.tileCtaBtn, pressed && { opacity: 0.85 }]}
-              >
+              <View style={styles.tileCtaBtn}>
                 <Text style={styles.tileCtaBtnText}>{ctaLabel}</Text>
-              </Pressable>
+              </View>
             ) : null}
           </View>
         </View>
@@ -222,7 +221,11 @@ function FilterChipRow({
           <Pressable
             key={opt.key}
             onPress={() => onSelect(opt.key)}
-            style={[styles.chip, active && styles.chipActive]}
+            style={({ pressed }) => [
+              styles.chip,
+              active && styles.chipActive,
+              pressed && styles.chipPressed,
+            ]}
           >
             <Text style={[styles.chipText, active && styles.chipTextActive]} numberOfLines={1}>
               {opt.label}
@@ -300,8 +303,46 @@ export default function PicksScreen() {
   const hasPast = pastHistory.length > 0;
   const hasAnyPast = (parlayHistory ?? []).some((p) => PAST_STATUSES.has(p.status ?? ""));
 
-  return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+  type ListRow =
+    | { kind: "need"; leagueId: number; weekId: number; leagueName: string; key: string }
+    | { kind: "history"; parlay: ParlayWithLegs; key: string };
+
+  const sections = useMemo(() => {
+    const result: { title: string; data: ListRow[] }[] = [];
+    if (hasOpen) {
+      result.push({
+        title: "OPEN PARLAYS",
+        data: [
+          ...leaguesNeedingPick.map((league) => ({
+            kind: "need" as const,
+            leagueId: league.id,
+            weekId: activeWeek!.id,
+            leagueName: league.name,
+            key: `need-${league.id}`,
+          })),
+          ...openHistory.map((parlay) => ({
+            kind: "history" as const,
+            parlay,
+            key: `open-${parlay.id}`,
+          })),
+        ],
+      });
+    }
+    if (hasPast) {
+      result.push({
+        title: "PAST PARLAYS",
+        data: pastHistory.map((parlay) => ({
+          kind: "history" as const,
+          parlay,
+          key: `past-${parlay.id}`,
+        })),
+      });
+    }
+    return result;
+  }, [hasOpen, hasPast, leaguesNeedingPick, openHistory, pastHistory, activeWeek]);
+
+  const listHeader = (
+    <>
       {activeWeek ? (
         <View style={styles.weekBanner}>
           <View style={styles.weekBannerLeft}>
@@ -339,41 +380,48 @@ export default function PicksScreen() {
       {hasAnyPast && (
         <FilterChipRow options={RESULT_FILTERS} selected={resultFilter} onSelect={setResultFilter} />
       )}
+    </>
+  );
 
-      {hasOpen && (
-        <>
-          <Text style={styles.sectionLabel}>OPEN PARLAYS</Text>
-          {leaguesNeedingPick.map((league) => (
-            <NeedsPickTile
-              key={`need-${league.id}`}
-              leagueId={league.id}
-              weekId={activeWeek!.id}
-              leagueName={league.name}
-            />
-          ))}
-          {openHistory.map((parlay) => (
-            <HistoryTile key={`open-${parlay.id}`} parlay={parlay} leagueName={leagueName(parlay.leagueId)} />
-          ))}
-        </>
+  return (
+    <SectionList
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      sections={sections}
+      keyExtractor={(item) => item.key}
+      stickySectionHeadersEnabled={false}
+      ListHeaderComponent={listHeader}
+      ListEmptyComponent={
+        !hasOpen && !hasPast && (leagueFilter !== "all" || resultFilter !== "all") ? (
+          <View style={styles.listEmpty}>
+            <Ionicons name="filter-outline" size={28} color="#2563eb" />
+            <Text style={styles.emptyTitle}>No parlays match</Text>
+            <Text style={styles.emptySubtitle}>Try clearing a filter.</Text>
+          </View>
+        ) : null
+      }
+      renderSectionHeader={({ section }) => (
+        <Text
+          style={[
+            styles.sectionLabel,
+            section.title === "PAST PARLAYS" && hasOpen && styles.sectionLabelSpaced,
+          ]}
+        >
+          {section.title}
+        </Text>
       )}
-
-      {!hasOpen && !hasPast && (leagueFilter !== "all" || resultFilter !== "all") && (
-        <View style={styles.centered}>
-          <Ionicons name="filter-outline" size={28} color="#2563eb" />
-          <Text style={styles.emptyTitle}>No parlays match</Text>
-          <Text style={styles.emptySubtitle}>Try clearing a filter.</Text>
-        </View>
-      )}
-
-      {hasPast && (
-        <>
-          <Text style={[styles.sectionLabel, hasOpen && styles.sectionLabelSpaced]}>PAST PARLAYS</Text>
-          {pastHistory.map((parlay) => (
-            <HistoryTile key={`past-${parlay.id}`} parlay={parlay} leagueName={leagueName(parlay.leagueId)} />
-          ))}
-        </>
-      )}
-    </ScrollView>
+      renderItem={({ item }) =>
+        item.kind === "need" ? (
+          <NeedsPickTile
+            leagueId={item.leagueId}
+            weekId={item.weekId}
+            leagueName={item.leagueName}
+          />
+        ) : (
+          <HistoryTile parlay={item.parlay} leagueName={leagueName(item.parlay.leagueId)} />
+        )
+      }
+    />
   );
 }
 
@@ -450,12 +498,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#2a3447",
     borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: 14,
+    minHeight: CHIP_MIN_HEIGHT,
+    alignItems: "center",
+    justifyContent: "center",
   },
   chipActive: { backgroundColor: "#1e2a3b", borderColor: "#2563eb" },
+  chipPressed: { opacity: 0.75 },
   chipText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
   chipTextActive: { color: "#93c5fd" },
+  listEmpty: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 40,
+    gap: 12,
+  },
+  tileCtaBtn: {
+    marginTop: 12,
+    backgroundColor: "#2563eb",
+    borderRadius: 10,
+    minHeight: 44,
+    paddingVertical: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  tileCtaBtnText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   sectionLabel: {
     fontSize: 11,
     fontWeight: "700",
@@ -510,13 +577,4 @@ const styles = StyleSheet.create({
   parlayStatusLabel: { fontSize: 13, color: "#94a3b8", marginBottom: 10, lineHeight: 18 },
   metaRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10, minWidth: 0 },
   parlaySubLabel: { fontSize: 12, color: "#475569", fontWeight: "600", flexShrink: 1 },
-  tileCtaBtn: {
-    marginTop: 12,
-    backgroundColor: "#2563eb",
-    borderRadius: 10,
-    paddingVertical: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  tileCtaBtnText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
 });

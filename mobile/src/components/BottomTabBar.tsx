@@ -65,7 +65,7 @@ export function BottomTabBar({ state, descriptors, navigation }: BottomTabBarPro
             accessibilityRole="button"
             accessibilityState={isFocused ? { selected: true } : {}}
             accessibilityLabel={options.title ?? meta.label}
-            style={styles.tab}
+            style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}
           >
             <Ionicons name={isFocused ? meta.filled : meta.outline} size={24} color={isFocused ? "#2563eb" : "#475569"} />
             <Text style={[styles.label, isFocused && styles.labelActive]}>{meta.label}</Text>
@@ -91,7 +91,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     paddingTop: 6,
+    minHeight: 48,
+    justifyContent: "center",
   },
+  tabPressed: { opacity: 0.7 },
   label: {
     fontSize: 11,
     fontWeight: "600",

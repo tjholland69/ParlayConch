@@ -37,7 +37,7 @@ export function getLineForBet(game: Game, betType: string, pick: string): string
 
 export function awaySpreadDisplay(spread: string | null | undefined): string | null {
   if (!spread) return null;
-  return `+${spread.replace("-", "")}`;
+  return `+${spread.replace(/^[+-]/, "")}`;
 }
 
 export function shortLegLabel(leg: SelectedLeg, game: Game | undefined): string {

@@ -5,13 +5,14 @@ import {
   Text,
   TextInput,
   Pressable,
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { IconButton } from "@/components/ui/IconButton";
+import { Button } from "@/components/ui/Button";
 import { useLegDisputes, useFileDispute } from "@/hooks/use-parlays";
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -59,14 +60,9 @@ export function DisputeLegBadge({ legId }: { legId: number }) {
 
   return (
     <>
-      <Pressable
-        onPress={() => setOpen(true)}
-        hitSlop={8}
-        accessibilityRole="button"
-        accessibilityLabel="Dispute this bet"
-      >
-        <Ionicons name="flag-outline" size={15} color="#64748b" />
-      </Pressable>
+      <IconButton onPress={() => setOpen(true)} accessibilityLabel="Dispute this bet">
+        <Ionicons name="flag-outline" size={18} color="#64748b" />
+      </IconButton>
 
       <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalWrap}>
@@ -95,21 +91,14 @@ export function DisputeLegBadge({ legId }: { legId: number }) {
               autoFocus
             />
 
-            <Pressable
+            <Button
+              fullWidth
               onPress={handleSubmit}
               disabled={!justification.trim() || fileDispute.isPending}
-              style={({ pressed }) => [
-                styles.submitBtn,
-                (!justification.trim() || fileDispute.isPending) && styles.submitBtnDisabled,
-                pressed && { opacity: 0.85 },
-              ]}
+              loading={fileDispute.isPending}
             >
-              {fileDispute.isPending ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.submitBtnText}>Submit Dispute</Text>
-              )}
-            </Pressable>
+              Submit Dispute
+            </Button>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -170,12 +159,4 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
     marginBottom: 20,
   },
-  submitBtn: {
-    backgroundColor: "#2563eb",
-    borderRadius: 14,
-    paddingVertical: 15,
-    alignItems: "center",
-  },
-  submitBtnDisabled: { opacity: 0.45 },
-  submitBtnText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
 });

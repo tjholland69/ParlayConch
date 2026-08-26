@@ -1,0 +1,30 @@
+# Keep EAS upload lean for the monorepo. Metro still needs ../shared.
+# Paths are relative to this file (mobile/).
+
+# Web / server / tooling not needed for the mobile JS bundle
+../client/
+../server/
+../tests/
+../migrations/
+../dist/
+../script/
+../attached_assets/
+../.github/
+../.cursor/
+../docs/
+
+# Root web app leftovers (stale Expo project — real config is mobile/)
+../app.json
+../eas.json
+
+# Local / generated
+.expo/
+node_modules/
+ios/Pods/
+ios/build/
+android/app/build/
+android/.gradle/
+*.jks
+*.p8
+.env
+.env.*

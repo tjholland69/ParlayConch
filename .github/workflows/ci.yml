@@ -36,6 +36,12 @@ jobs:
       - name: Typecheck
         run: npm run check
 
+      - name: Mobile typecheck
+        working-directory: mobile
+        run: |
+          npm ci
+          npm run typecheck
+
       - name: Integration tests (applies migrations in test harness)
         env:
           DATABASE_URL: postgresql://test:test@localhost:5432/test
