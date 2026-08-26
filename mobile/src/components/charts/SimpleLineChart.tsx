@@ -13,9 +13,17 @@ interface SimpleLineChartProps {
   height?: number;
   /** How to format the tooltip's value line, e.g. (v) => `${v.toFixed(1)}%`. */
   formatValue?: (value: number) => string;
+  /** Optional benchmark/index series drawn as a dashed line in a lightened
+   * shade of `color` — same point count and order as `points`, entries can
+   * be `null` where the index has no value for that slot. */
+  indexPoints?: (number | null)[];
 }
 
 const PADDING = 24;
+/** Roughly the narrowest a short axis label can get before it starts
+ * overlapping its neighbors — used to space out ticks by available width
+ * instead of a fixed "every other point" rule. */
+const MIN_LABEL_WIDTH = 34;
 
 /** Finds the point whose x-coordinate is closest to the touch. */
 function nearestIndex(touchX: number, coordsX: number[]): number {
@@ -31,21 +39,44 @@ function nearestIndex(touchX: number, coordsX: number[]): number {
   return best;
 }
 
-export function SimpleLineChart({ points, color = "#2563eb", height = 180, formatValue }: SimpleLineChartProps) {
+/** How many points to skip between rendered x-axis labels so they fit the
+ * measured chart width without overlapping. */
+function computeLabelStep(pointCount: number, width: number): number {
+  if (pointCount <= 1) return 1;
+  const maxLabels = Math.max(1, Math.floor(width / MIN_LABEL_WIDTH));
+  return Math.max(1, Math.ceil(pointCount / maxLabels));
+}
+
+/** Lightens a `#rrggbb` color for a benchmark/index line that should read as
+ * "linked to" the primary series without competing with it visually. */
+function lighten(hex: string, amount = 0.35): string {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const r = Math.min(255, (num >> 16) + Math.round(255 * amount));
+  const g = Math.min(255, ((num >> 8) & 0xff) + Math.round(255 * amount));
+  const b = Math.min(255, (num & 0xff) + Math.round(255 * amount));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+export function SimpleLineChart({ points, color = "#2563eb", height = 180, formatValue, indexPoints }: SimpleLineChartProps) {
   const [width, setWidth] = useState(320);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-  const values = points.map((p) => p.value);
+  const indexValues = (indexPoints ?? []).filter((v): v is number => v != null);
+  const values = [...points.map((p) => p.value), ...indexValues];
   const max = Math.max(100, ...values);
   const min = Math.min(0, ...values);
   const range = max - min || 1;
 
-  const step = points.length > 1 ? (width - PADDING * 2) / (points.length - 1) : 0;
+  const xStep = points.length > 1 ? (width - PADDING * 2) / (points.length - 1) : 0;
   const coords = points.map((p, i) => {
-    const x = PADDING + i * step;
+    const x = PADDING + i * xStep;
     const y = height - PADDING - ((p.value - min) / range) * (height - PADDING * 2);
     return { x, y };
   });
+  const indexCoords = (indexPoints ?? []).map((v, i) =>
+    v == null ? null : { x: PADDING + i * xStep, y: height - PADDING - ((v - min) / range) * (height - PADDING * 2) },
+  );
+  const labelStep = computeLabelStep(points.length, width);
 
   // PanResponder's closures are created once — keep the latest coordsX
   // reachable via a ref rather than recreating the responder every render.
@@ -90,6 +121,18 @@ export function SimpleLineChart({ points, color = "#2563eb", height = 180, forma
         {activeCoord && (
           <Line x1={activeCoord.x} y1={PADDING / 2} x2={activeCoord.x} y2={height - PADDING} stroke="#475569" strokeWidth={1} strokeDasharray="3,3" />
         )}
+        {indexCoords.some((c) => c != null) && (
+          <Polyline
+            points={indexCoords
+              .map((c, i) => (c ? `${c.x},${c.y}` : null))
+              .filter((p): p is string => p != null)
+              .join(" ")}
+            fill="none"
+            stroke={lighten(color)}
+            strokeWidth={2}
+            strokeDasharray="4 4"
+          />
+        )}
         <Polyline points={coords.map((c) => `${c.x},${c.y}`).join(" ")} fill="none" stroke={color} strokeWidth={2.5} />
         {coords.map((c, i) => (
           <Circle
@@ -114,7 +157,7 @@ export function SimpleLineChart({ points, color = "#2563eb", height = 180, forma
       <View style={styles.labelRow}>
         {points.map((p, i) => (
           <Text key={i} style={[styles.label, i === activeIndex && styles.labelActive]} numberOfLines={1}>
-            {points.length > 6 && i % 2 === 1 ? "" : p.label}
+            {i % labelStep === 0 || i === points.length - 1 ? p.label : ""}
           </Text>
         ))}
       </View>

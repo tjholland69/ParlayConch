@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { Button } from "@/components/ui/Button";
 
 /** Small "i" button that pops a bottom-sheet explaining a stat — e.g. how
  * Power Score or BAR are calculated. Self-contained (owns its own modal
@@ -23,9 +24,9 @@ export function InfoButton({ title, description }: { title: string; description:
           <Pressable style={styles.sheet} onPress={() => {}}>
             <Text style={styles.title}>{title}</Text>
             <Text style={styles.description}>{description}</Text>
-            <Pressable style={({ pressed }) => [styles.closeButton, pressed && { opacity: 0.85 }]} onPress={() => setOpen(false)}>
-              <Text style={styles.closeButtonText}>Got it</Text>
-            </Pressable>
+            <Button fullWidth style={styles.closeButton} onPress={() => setOpen(false)}>
+              Got it
+            </Button>
           </Pressable>
         </Pressable>
       </Modal>
@@ -50,12 +51,5 @@ const styles = StyleSheet.create({
   },
   title: { fontSize: 15, fontWeight: "700", color: "#f1f5f9", marginBottom: 8 },
   description: { fontSize: 13, color: "#94a3b8", lineHeight: 19 },
-  closeButton: {
-    marginTop: 16,
-    backgroundColor: "#2563eb",
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  closeButtonText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  closeButton: { marginTop: 16 },
 });

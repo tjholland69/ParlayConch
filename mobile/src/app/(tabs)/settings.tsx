@@ -4,19 +4,48 @@ import {
   ScrollView,
   Pressable,
   Switch,
+  TextInput,
   Alert,
   ActivityIndicator,
   StyleSheet,
 } from "react-native";
+import { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
 import { useAuth } from "@/hooks/use-auth";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
 import { Avatar } from "@/components/ui/Avatar";
+import { Button } from "@/components/ui/Button";
 import { SPORTSBOOK_PROVIDERS, type SportsbookProvider } from "@shared/sportsbook-providers";
+import { useActingAs, useSuperUserSearch, useSetActAs, useClearActAs } from "@/hooks/use-acting-as";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
+
+type NotificationPreferences = { email: boolean; sms: boolean; push: boolean; phone?: string };
+const DEFAULT_NOTIF_PREFS: NotificationPreferences = { email: true, sms: false, push: true };
+
+type ThemeMode = "dark" | "light" | "system";
+
+/** Same 8 accent presets as the web app's Settings page (HSL triples, so a
+ * future app-wide theming pass can share the exact values). */
+const ACCENT_PRESETS: { label: string; value: string; swatch: string }[] = [
+  { label: "Blue", value: "221 83% 53%", swatch: "#2563eb" },
+  { label: "Green", value: "142 70% 50%", swatch: "#22c55e" },
+  { label: "Purple", value: "262 80% 60%", swatch: "#8b5cf6" },
+  { label: "Orange", value: "25 90% 55%", swatch: "#f2762e" },
+  { label: "Red", value: "0 72% 55%", swatch: "#ef4444" },
+  { label: "Teal", value: "175 70% 45%", swatch: "#22b8a3" },
+  { label: "Pink", value: "330 80% 60%", swatch: "#ec4899" },
+  { label: "Amber", value: "38 92% 50%", swatch: "#f59e0b" },
+];
+const DEFAULT_ACCENT = ACCENT_PRESETS[0].value;
+
+const THEME_OPTIONS: { key: ThemeMode; label: string; icon: IconName }[] = [
+  { key: "dark", label: "Dark", icon: "moon-outline" },
+  { key: "light", label: "Light", icon: "sunny-outline" },
+  { key: "system", label: "System", icon: "phone-portrait-outline" },
+];
 
 interface RowProps {
   icon: IconName;
@@ -74,6 +103,103 @@ function Section({ label }: { label: string }) {
   return <Text style={styles.sectionLabel}>{label.toUpperCase()}</Text>;
 }
 
+/** Super-user-only "act as" panel — mirrors the web app's ActForBar, using
+ * the same /api/superuser/* endpoints (no backend changes needed). */
+function ActForSection() {
+  const { data: actingAsData } = useActingAs();
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const { data: results = [], isFetching } = useSuperUserSearch(query, searchOpen);
+  const setActAs = useSetActAs();
+  const clearActAs = useClearActAs();
+
+  const actingAs = actingAsData?.actingAs;
+
+  if (actingAs) {
+    const name = actingAs.settings?.displayName || actingAs.firstName || actingAs.email || "Unknown";
+    return (
+      <>
+        <Section label="Super User" />
+        <View style={styles.card}>
+          <View style={styles.actingAsBanner}>
+            <Ionicons name="person-circle-outline" size={18} color="#f59e0b" />
+            <Text style={styles.actingAsText} numberOfLines={1}>Acting as {name}</Text>
+            <Pressable
+              onPress={() => clearActAs.mutate(undefined, { onError: () => Alert.alert("Error", "Couldn't return to your account.") })}
+              disabled={clearActAs.isPending}
+              style={styles.actingAsExitBtn}
+              testID="button-settings-exit-act-as"
+            >
+              {clearActAs.isPending ? (
+                <ActivityIndicator size="small" color="#f59e0b" />
+              ) : (
+                <Text style={styles.actingAsExitText}>Exit</Text>
+              )}
+            </Pressable>
+          </View>
+        </View>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Section label="Super User" />
+      <View style={styles.card}>
+        <View style={styles.actForSearchRow}>
+          <Ionicons name="search-outline" size={16} color="#64748b" />
+          <TextInput
+            style={styles.actForSearchInput}
+            value={query}
+            onChangeText={(v) => {
+              setQuery(v);
+              setSearchOpen(true);
+            }}
+            onFocus={() => setSearchOpen(true)}
+            placeholder="Act for user (name or email)…"
+            placeholderTextColor="#475569"
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="input-settings-act-for-search"
+          />
+        </View>
+        {searchOpen && (
+          <View>
+            {isFetching ? (
+              <ActivityIndicator size="small" color="#2563eb" style={styles.actForLoading} />
+            ) : results.length === 0 ? (
+              <Text style={styles.actForEmpty}>{query ? `No users found for "${query}"` : "No users found"}</Text>
+            ) : (
+              results.map((u) => {
+                const name = u.settings?.displayName || u.firstName || u.email || "Unknown";
+                return (
+                  <Pressable
+                    key={u.id}
+                    onPress={() =>
+                      setActAs.mutate(u.id, {
+                        onSuccess: () => {
+                          setSearchOpen(false);
+                          setQuery("");
+                        },
+                        onError: () => Alert.alert("Error", "Couldn't switch to that user."),
+                      })
+                    }
+                    disabled={setActAs.isPending}
+                    style={({ pressed }) => [styles.actForResultRow, pressed && { opacity: 0.7 }]}
+                  >
+                    <Text style={styles.actForResultName} numberOfLines={1}>{name}</Text>
+                    <Text style={styles.actForResultEmail} numberOfLines={1}>{u.email}</Text>
+                  </Pressable>
+                );
+              })
+            )}
+          </View>
+        )}
+      </View>
+    </>
+  );
+}
+
 export default function SettingsScreen() {
   const { user, logout, isLoggingOut } = useAuth();
   const queryClient = useQueryClient();
@@ -87,13 +213,22 @@ export default function SettingsScreen() {
       Alert.alert("Error", "Could not update demo mode. Please try again."),
   });
 
-  const updateSportsbookMutation = useMutation({
-    mutationFn: (preferredSportsbook: SportsbookProvider) =>
-      apiRequest("PATCH", "/api/users/me/settings", { preferredSportsbook }),
+  const updateSettingsMutation = useMutation({
+    mutationFn: (settings: Record<string, unknown>) =>
+      apiRequest("PATCH", "/api/users/me/settings", settings),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] }),
     onError: () =>
-      Alert.alert("Error", "Could not update your sportsbook. Please try again."),
+      Alert.alert("Error", "Could not save settings. Please try again."),
+  });
+
+  const updateNotifPrefsMutation = useMutation({
+    mutationFn: (prefs: NotificationPreferences) =>
+      apiRequest("PATCH", "/api/users/me/notification-preferences", prefs),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] }),
+    onError: () =>
+      Alert.alert("Error", "Could not save notification preferences. Please try again."),
   });
 
   const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as
@@ -107,16 +242,42 @@ export default function SettingsScreen() {
       [
         ...Object.values(SPORTSBOOK_PROVIDERS).map((provider) => ({
           text: provider.label,
-          onPress: () => updateSportsbookMutation.mutate(provider.id),
+          onPress: () => updateSettingsMutation.mutate({ preferredSportsbook: provider.id }),
         })),
         { text: "Cancel", style: "cancel" as const },
       ],
     );
   }
 
-  const displayName = user?.firstName
-    ? `${user.firstName}${user.lastName ? " " + user.lastName : ""}`
-    : user?.email ?? "Unknown";
+  const savedDisplayName = (user?.settings as any)?.displayName || user?.firstName || "";
+  const [displayName, setDisplayName] = useState(savedDisplayName);
+  const [editingName, setEditingName] = useState(false);
+  useEffect(() => setDisplayName(savedDisplayName), [savedDisplayName]);
+
+  function saveDisplayName() {
+    if (!displayName.trim()) return;
+    updateSettingsMutation.mutate(
+      { displayName: displayName.trim() },
+      { onSuccess: () => setEditingName(false) },
+    );
+  }
+
+  const savedAccent = (user?.settings as any)?.primaryColor || DEFAULT_ACCENT;
+  const savedTheme = ((user?.settings as any)?.theme as ThemeMode) || "dark";
+
+  const [notifPrefs, setNotifPrefs] = useState<NotificationPreferences>(DEFAULT_NOTIF_PREFS);
+  useEffect(() => {
+    const stored = (user?.settings as any)?.notificationPreferences as NotificationPreferences | undefined;
+    if (stored) setNotifPrefs({ ...DEFAULT_NOTIF_PREFS, ...stored });
+  }, [user]);
+
+  function updateNotifPref(patch: Partial<NotificationPreferences>) {
+    const next = { ...notifPrefs, ...patch };
+    setNotifPrefs(next);
+    updateNotifPrefsMutation.mutate(next);
+  }
+
+  const nameForAvatar = savedDisplayName || user?.email || "Unknown";
 
   function confirmLogout() {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
@@ -136,9 +297,9 @@ export default function SettingsScreen() {
     >
       {/* Profile hero */}
       <View style={styles.profileCard}>
-        <Avatar src={user?.profileImageUrl} name={displayName} size={68} />
+        <Avatar src={user?.profileImageUrl} name={nameForAvatar} size={68} />
         <View style={styles.profileText}>
-          <Text style={styles.profileName}>{displayName}</Text>
+          <Text style={styles.profileName}>{nameForAvatar}</Text>
           {user?.email && (
             <Text style={styles.profileEmail}>{user.email}</Text>
           )}
@@ -150,10 +311,36 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      {/* Account */}
-      <Section label="Account" />
+      {/* Profile */}
+      <Section label="Profile" />
       <View style={styles.card}>
-        <Row icon="person-outline" label="Name" value={displayName} />
+        {editingName ? (
+          <View style={styles.editNameRow}>
+            <TextInput
+              style={styles.editNameInput}
+              value={displayName}
+              onChangeText={setDisplayName}
+              placeholder="Display name"
+              placeholderTextColor="#475569"
+              autoFocus
+              testID="input-settings-display-name"
+            />
+            <Button
+              size="sm"
+              loading={updateSettingsMutation.isPending}
+              disabled={!displayName.trim() || displayName.trim() === savedDisplayName}
+              onPress={saveDisplayName}
+              testID="button-settings-save-name"
+            >
+              Save
+            </Button>
+            <Pressable onPress={() => { setEditingName(false); setDisplayName(savedDisplayName); }} hitSlop={8}>
+              <Ionicons name="close" size={20} color="#64748b" />
+            </Pressable>
+          </View>
+        ) : (
+          <Row icon="person-outline" label="Name" value={nameForAvatar} onPress={() => setEditingName(true)} />
+        )}
         <Divider />
         <Row
           icon="mail-outline"
@@ -166,6 +353,109 @@ export default function SettingsScreen() {
           iconColor="#2563eb"
           label="Sign-in method"
           value="Email & password"
+        />
+      </View>
+
+      {/* Appearance */}
+      <Section label="Appearance" />
+      <View style={styles.card}>
+        <View style={styles.appearanceBlock}>
+          <Text style={styles.appearanceLabel}>Accent Color</Text>
+          <View style={styles.accentRow}>
+            {ACCENT_PRESETS.map((preset) => {
+              const active = savedAccent === preset.value;
+              return (
+                <Pressable
+                  key={preset.value}
+                  onPress={() => updateSettingsMutation.mutate({ primaryColor: preset.value })}
+                  style={[styles.accentSwatch, { backgroundColor: preset.swatch }, active && styles.accentSwatchActive]}
+                  testID={`button-settings-accent-${preset.label.toLowerCase()}`}
+                >
+                  {active && <Ionicons name="checkmark" size={16} color="#ffffff" />}
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+        <Divider />
+        <View style={styles.appearanceBlock}>
+          <Text style={styles.appearanceLabel}>Theme</Text>
+          <View style={styles.themeRow}>
+            {THEME_OPTIONS.map((opt) => {
+              const active = savedTheme === opt.key;
+              return (
+                <Pressable
+                  key={opt.key}
+                  onPress={() => updateSettingsMutation.mutate({ theme: opt.key })}
+                  style={[styles.themeChip, active && styles.themeChipActive]}
+                  testID={`button-settings-theme-${opt.key}`}
+                >
+                  <Ionicons name={opt.icon} size={15} color={active ? "#93c5fd" : "#94a3b8"} />
+                  <Text style={[styles.themeChipText, active && styles.themeChipTextActive]}>{opt.label}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+      </View>
+
+      {/* Notifications */}
+      <Section label="Notifications" />
+      <View style={styles.card}>
+        <Row
+          icon="mail-outline"
+          label="Email"
+          right={
+            <Switch
+              value={notifPrefs.email}
+              onValueChange={(val) => updateNotifPref({ email: val })}
+              trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+              thumbColor="#ffffff"
+              testID="switch-notif-email"
+            />
+          }
+        />
+        <Divider />
+        <Row
+          icon="chatbubble-outline"
+          label="SMS"
+          right={
+            <Switch
+              value={notifPrefs.sms}
+              onValueChange={(val) => updateNotifPref({ sms: val })}
+              trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+              thumbColor="#ffffff"
+              testID="switch-notif-sms"
+            />
+          }
+        />
+        {notifPrefs.sms && (
+          <View style={styles.phoneRow}>
+            <TextInput
+              style={styles.phoneInput}
+              value={notifPrefs.phone ?? ""}
+              onChangeText={(v) => setNotifPrefs((p) => ({ ...p, phone: v }))}
+              onEndEditing={() => updateNotifPrefsMutation.mutate(notifPrefs)}
+              placeholder="Phone number"
+              placeholderTextColor="#475569"
+              keyboardType="phone-pad"
+              testID="input-notif-phone"
+            />
+          </View>
+        )}
+        <Divider />
+        <Row
+          icon="notifications-outline"
+          label="Push"
+          right={
+            <Switch
+              value={notifPrefs.push}
+              onValueChange={(val) => updateNotifPref({ push: val })}
+              trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+              thumbColor="#ffffff"
+              testID="switch-notif-push"
+            />
+          }
         />
       </View>
 
@@ -198,7 +488,7 @@ export default function SettingsScreen() {
           iconColor="#2563eb"
           label="Preferred Sportsbook"
           value={
-            updateSportsbookMutation.isPending
+            updateSettingsMutation.isPending
               ? "Updating…"
               : preferredSportsbook
               ? SPORTSBOOK_PROVIDERS[preferredSportsbook].label
@@ -207,6 +497,9 @@ export default function SettingsScreen() {
           onPress={choosePreferredSportsbook}
         />
       </View>
+
+      {/* Super user act-as */}
+      {user?.isSuperUser && <ActForSection />}
 
       {/* App info */}
       <Section label="About" />
@@ -299,4 +592,98 @@ const styles = StyleSheet.create({
   rowValue: { fontSize: 13, color: "#94a3b8", marginTop: 1 },
   rowPressed: { opacity: 0.7 },
   divider: { height: 1, backgroundColor: "#1e2a3b", marginLeft: 62 },
+
+  editNameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  editNameInput: {
+    flex: 1,
+    backgroundColor: "#141926",
+    color: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    fontSize: 15,
+  },
+
+  appearanceBlock: { padding: 16, gap: 10 },
+  appearanceLabel: { fontSize: 13, fontWeight: "600", color: "#94a3b8" },
+  accentRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  accentSwatch: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  accentSwatchActive: { borderWidth: 2, borderColor: "#f1f5f9" },
+  themeRow: { flexDirection: "row", gap: 8 },
+  themeChip: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    backgroundColor: "#141926",
+  },
+  themeChipActive: { borderColor: "#2563eb", backgroundColor: "#1e2a3b" },
+  themeChipText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
+  themeChipTextActive: { color: "#93c5fd" },
+
+  phoneRow: { paddingHorizontal: 16, paddingBottom: 12 },
+  phoneInput: {
+    backgroundColor: "#141926",
+    color: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+  },
+
+  actingAsBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 14,
+  },
+  actingAsText: { flex: 1, fontSize: 14, fontWeight: "600", color: "#fbbf24" },
+  actingAsExitBtn: {
+    backgroundColor: "#2d2000",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minHeight: 32,
+    justifyContent: "center",
+  },
+  actingAsExitText: { fontSize: 12, fontWeight: "700", color: "#f59e0b" },
+  actForSearchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  actForSearchInput: { flex: 1, fontSize: 14, color: "#f1f5f9" },
+  actForLoading: { paddingVertical: 12 },
+  actForEmpty: { fontSize: 13, color: "#64748b", textAlign: "center", paddingVertical: 16 },
+  actForResultRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#1e2a3b",
+  },
+  actForResultName: { fontSize: 14, fontWeight: "600", color: "#f1f5f9" },
+  actForResultEmail: { fontSize: 12, color: "#64748b", marginTop: 1 },
 });

@@ -274,10 +274,10 @@ export default function BuildPickScreen() {
         </Text>
         <Text style={styles.headerHint}>
           {activeLegs.length < minLegs
-            ? `Need at least ${minLegs}`
-            : activeLegs.length > maxLegs
-              ? `Max ${maxLegs} legs`
-              : "Ready to submit"}
+            ? `${minLegs - activeLegs.length} more needed`
+            : activeLegs.length >= maxLegs
+              ? "Max reached"
+              : `${maxLegs - activeLegs.length} picks left`}
         </Text>
       </View>
 
@@ -315,6 +315,7 @@ export default function BuildPickScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.slipCount}>
               {activeLegs.length} / {maxLegs} legs · min {minLegs}
+              {activeLegs.length < maxLegs ? ` · ${maxLegs - activeLegs.length} picks left` : ""}
             </Text>
             <Text style={styles.slipSummary} numberOfLines={slipExpanded ? undefined : 1}>
               {activeLegs.length === 0 ? "Tap markets to build your parlay" : slipSummary}

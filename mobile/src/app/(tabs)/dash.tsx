@@ -1,13 +1,14 @@
-import { View, Text, ScrollView, RefreshControl, Pressable, Modal, StyleSheet } from "react-native";
+import { View, Text, ScrollView, RefreshControl, Pressable, Modal, TextInput, StyleSheet } from "react-native";
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useDashboardSummary, useDashboardPatterns, useDashboardPerformance } from "@/hooks/use-dashboard";
+import { useDashboardSummary, useDashboardPatterns, useDashboardPerformance, type DashboardDateRange } from "@/hooks/use-dashboard";
 import { useLeagues } from "@/hooks/use-leagues";
 import { DashboardStack, DashboardLoading, DashboardEmptyState } from "@/components/DashboardSlider";
 import { SimpleLineChart } from "@/components/charts/SimpleLineChart";
 import { SimpleBarChart } from "@/components/charts/SimpleBarChart";
 import { InfoButton } from "@/components/InfoTip";
+import { Button } from "@/components/ui/Button";
 import { shadows } from "@/lib/theme";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
@@ -123,7 +124,7 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
     <View>
       <View style={styles.slideTitleRow}>
         <Text style={styles.slideTitle}>My Analytics</Text>
-        <Text style={styles.slideTitleMeta}>{data.totalLegs} submitted</Text>
+        <Text style={styles.slideTitleMeta}>{data.totalLegs} submissions</Text>
       </View>
       <View style={styles.statRowList}>
         <StatRow
@@ -175,15 +176,15 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
   );
 }
 
-function PerformanceSlide({ leagueId }: { leagueId?: number }) {
-  const { data, isLoading, error } = useDashboardPerformance(leagueId);
+function PerformanceSlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
+  const { data, isLoading, error } = useDashboardPerformance(leagueId, dateRange);
 
   if (isLoading) return <DashboardLoading message="Loading performance…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load performance data right now." />;
 
-  const points = data.points
-    .filter((p) => p.myWinRate !== null)
-    .map((p) => ({ label: p.weekLabel, value: p.myWinRate as number }));
+  const decided = data.points.filter((p) => p.myWinRate !== null);
+  const points = decided.map((p) => ({ label: p.weekLabel, value: p.myWinRate as number }));
+  const indexPoints = decided.map((p) => p.indexWinRate);
 
   if (points.length === 0) {
     return <DashboardEmptyState message="No decided parlay legs yet — check back once some weeks are settled." />;
@@ -192,20 +193,20 @@ function PerformanceSlide({ leagueId }: { leagueId?: number }) {
   return (
     <View>
       <Text style={styles.slideTitle}>Performance Over Time</Text>
-      <SimpleLineChart points={points} formatValue={(v) => `${v.toFixed(1)}%`} />
+      <SimpleLineChart points={points} indexPoints={indexPoints} formatValue={(v) => `${v.toFixed(1)}%`} />
     </View>
   );
 }
 
-function WeekOverWeekSlide({ leagueId }: { leagueId?: number }) {
-  const { data, isLoading, error } = useDashboardPerformance(leagueId);
+function WeekOverWeekSlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
+  const { data, isLoading, error } = useDashboardPerformance(leagueId, dateRange);
 
   if (isLoading) return <DashboardLoading message="Loading performance…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load performance data right now." />;
 
-  const points = data.points
-    .filter((p) => p.allWeekWinRate !== null)
-    .map((p) => ({ label: p.weekLabel, value: p.allWeekWinRate as number }));
+  const decided = data.points.filter((p) => p.allWeekWinRate !== null);
+  const points = decided.map((p) => ({ label: p.weekLabel, value: p.allWeekWinRate as number }));
+  const indexPoints = decided.map((p) => p.indexWeekWinRate);
 
   if (points.length === 0) {
     return <DashboardEmptyState message="No decided parlay legs yet — check back once some weeks are settled." />;
@@ -214,7 +215,7 @@ function WeekOverWeekSlide({ leagueId }: { leagueId?: number }) {
   return (
     <View>
       <Text style={styles.slideTitle}>Weekly</Text>
-      <SimpleBarChart points={points} formatValue={(v) => `${v.toFixed(1)}%`} />
+      <SimpleBarChart points={points} indexPoints={indexPoints} formatValue={(v) => `${v.toFixed(1)}%`} />
     </View>
   );
 }
@@ -292,9 +293,139 @@ function LeagueFilter({
   );
 }
 
+type DateRangeMode = "all" | "year" | "priorYear" | "custom";
+
+const DATE_RANGE_LABELS: Record<DateRangeMode, string> = {
+  all: "All Time",
+  year: "Current Year",
+  priorYear: "Prior Year",
+  custom: "Custom",
+};
+
+/** yyyy-mm-dd, matching the server's expected startDate/endDate query format. */
+function toISODate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function resolveDateRange(mode: DateRangeMode, customRange: DashboardDateRange): DashboardDateRange | undefined {
+  const now = new Date();
+  if (mode === "year") {
+    return { startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) };
+  }
+  if (mode === "priorYear") {
+    return {
+      startDate: toISODate(new Date(now.getFullYear() - 1, 0, 1)),
+      endDate: toISODate(new Date(now.getFullYear() - 1, 11, 31)),
+    };
+  }
+  if (mode === "custom") {
+    return customRange.startDate || customRange.endDate ? customRange : undefined;
+  }
+  return undefined;
+}
+
+/** Matches YYYY-MM-DD, e.g. "2026-01-31". */
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function DateRangeFilter({
+  mode,
+  customRange,
+  onModeChange,
+  onCustomRangeChange,
+}: {
+  mode: DateRangeMode;
+  customRange: DashboardDateRange;
+  onModeChange: (mode: DateRangeMode) => void;
+  onCustomRangeChange: (range: DashboardDateRange) => void;
+}) {
+  const [customOpen, setCustomOpen] = useState(false);
+  const [draftStart, setDraftStart] = useState(customRange.startDate ?? "");
+  const [draftEnd, setDraftEnd] = useState(customRange.endDate ?? "");
+  const insets = useSafeAreaInsets();
+
+  function openCustom() {
+    setDraftStart(customRange.startDate ?? "");
+    setDraftEnd(customRange.endDate ?? "");
+    setCustomOpen(true);
+  }
+
+  function applyCustom() {
+    const startValid = !draftStart || ISO_DATE_RE.test(draftStart);
+    const endValid = !draftEnd || ISO_DATE_RE.test(draftEnd);
+    if (!startValid || !endValid) return;
+    onCustomRangeChange({ startDate: draftStart || undefined, endDate: draftEnd || undefined });
+    onModeChange("custom");
+    setCustomOpen(false);
+  }
+
+  return (
+    <>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.dateFilterRow}>
+        {(Object.keys(DATE_RANGE_LABELS) as DateRangeMode[]).map((key) => {
+          const active = mode === key;
+          return (
+            <Pressable
+              key={key}
+              onPress={() => (key === "custom" ? openCustom() : onModeChange(key))}
+              style={[styles.dateChip, active && styles.dateChipActive]}
+              testID={`button-dashboard-date-${key}`}
+            >
+              <Text style={[styles.dateChipText, active && styles.dateChipTextActive]} numberOfLines={1}>
+                {key === "custom" && mode === "custom" && (customRange.startDate || customRange.endDate)
+                  ? `${customRange.startDate ?? "…"} → ${customRange.endDate ?? "…"}`
+                  : DATE_RANGE_LABELS[key]}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+
+      <Modal visible={customOpen} transparent animationType="slide" onRequestClose={() => setCustomOpen(false)}>
+        <View style={styles.modalWrap}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setCustomOpen(false)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Custom Date Range</Text>
+            <Text style={styles.dateInputLabel}>Start date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={styles.dateInput}
+              value={draftStart}
+              onChangeText={setDraftStart}
+              placeholder="2026-01-01"
+              placeholderTextColor="#475569"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="numbers-and-punctuation"
+              testID="input-dashboard-date-start"
+            />
+            <Text style={styles.dateInputLabel}>End date (YYYY-MM-DD)</Text>
+            <TextInput
+              style={styles.dateInput}
+              value={draftEnd}
+              onChangeText={setDraftEnd}
+              placeholder="2026-12-31"
+              placeholderTextColor="#475569"
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="numbers-and-punctuation"
+              testID="input-dashboard-date-end"
+            />
+            <Button fullWidth style={styles.dateApplyBtn} onPress={applyCustom} testID="button-dashboard-date-apply">
+              Apply
+            </Button>
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
 export default function DashScreen() {
   const { data: leagues } = useLeagues();
   const [selectedLeagueId, setSelectedLeagueId] = useState<number | undefined>(undefined);
+  const [dateMode, setDateMode] = useState<DateRangeMode>("all");
+  const [customRange, setCustomRange] = useState<DashboardDateRange>({});
+  const dateRange = resolveDateRange(dateMode, customRange);
 
   return (
     <View style={styles.container}>
@@ -313,12 +444,19 @@ export default function DashScreen() {
           </View>
         )}
 
+        <DateRangeFilter
+          mode={dateMode}
+          customRange={customRange}
+          onModeChange={setDateMode}
+          onCustomRangeChange={setCustomRange}
+        />
+
         <DashboardStack
           slides={[
             { label: "Summary", content: <SummarySlide leagueId={selectedLeagueId} /> },
             { label: "My Analytics", content: <AnalyticsSlide leagueId={selectedLeagueId} /> },
-            { label: "Performance", content: <PerformanceSlide leagueId={selectedLeagueId} /> },
-            { label: "Weekly", content: <WeekOverWeekSlide leagueId={selectedLeagueId} /> },
+            { label: "Performance", content: <PerformanceSlide leagueId={selectedLeagueId} dateRange={dateRange} /> },
+            { label: "Weekly", content: <WeekOverWeekSlide leagueId={selectedLeagueId} dateRange={dateRange} /> },
           ]}
         />
       </ScrollView>
@@ -377,14 +515,11 @@ const styles = StyleSheet.create({
 
   leagueFilterWrap: {
     width: "100%",
-    marginHorizontal: -20,
-    alignItems: "center",
-    paddingHorizontal: 20,
   },
   leagueFilterBtn: {
     flexDirection: "row",
     flexWrap: "nowrap",
-    alignSelf: "center",
+    width: "100%",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
@@ -392,10 +527,9 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: "#93c5fd",
     borderRadius: 12,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingVertical: 12,
-    marginBottom: 20,
-    maxWidth: "100%",
+    marginBottom: 14,
     shadowColor: "#2563eb",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.5,
@@ -406,15 +540,45 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     flexWrap: "nowrap",
     alignItems: "center",
+    justifyContent: "center",
     gap: 8,
+    minWidth: 0,
+    maxWidth: "100%",
   },
   leagueFilterText: {
     fontSize: 15,
     fontWeight: "800",
     color: "#ffffff",
     flexShrink: 1,
+    minWidth: 0,
     letterSpacing: 0.2,
   },
+  dateFilterRow: { gap: 8, paddingRight: 8, marginBottom: 16 },
+  dateChip: {
+    backgroundColor: "#1c2538",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minHeight: 36,
+    justifyContent: "center",
+  },
+  dateChipActive: { backgroundColor: "#1e2a3b", borderColor: "#2563eb" },
+  dateChipText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
+  dateChipTextActive: { color: "#93c5fd" },
+  dateInputLabel: { fontSize: 13, fontWeight: "600", color: "#94a3b8", marginBottom: 6, marginTop: 12 },
+  dateInput: {
+    backgroundColor: "#141926",
+    color: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+  },
+  dateApplyBtn: { marginTop: 20 },
   modalWrap: { flex: 1, justifyContent: "flex-end" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)" },
   sheet: {

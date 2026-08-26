@@ -421,30 +421,122 @@ function FilterChipRow({
   );
 }
 
-function MemberCard({ member }: { member: any }) {
-  const name = memberDisplayName(member);
+function roleMeta(role: string | undefined) {
+  const roleColor = role === "admin" ? "#2563eb" : role === "lieutenant" ? "#0ea5e9" : "#475569";
+  const roleLabel = role === "admin" ? "Parlay Maestro" : role === "lieutenant" ? "Parlay Lieutenant" : "Member";
+  return { roleColor, roleLabel };
+}
 
-  const roleColor =
-    member.role === "admin"
-      ? "#2563eb"
-      : member.role === "lieutenant"
-      ? "#0ea5e9"
-      : "#475569";
+type MemberSortKey = "powerScore" | "winRate" | "record";
+type SortDir = "asc" | "desc";
 
-  const roleLabel =
-    member.role === "admin"
-      ? "Parlay Maestro"
-      : member.role === "lieutenant"
-      ? "Parlay Lieutenant"
-      : "Member";
+const MEMBER_SORT_COLUMNS: { key: MemberSortKey; label: string }[] = [
+  { key: "powerScore", label: "Power" },
+  { key: "winRate", label: "Win %" },
+  { key: "record", label: "Record" },
+];
+
+function MemberRow({
+  member,
+}: {
+  member: {
+    userId: string;
+    name: string;
+    role?: string;
+    wins: number;
+    losses: number;
+    winRate: number;
+    powerScore: number;
+  };
+}) {
+  const { roleColor, roleLabel } = roleMeta(member.role);
 
   return (
-    <View style={styles.memberCard}>
-      <Avatar src={member.user?.profileImageUrl} name={name} size={40} />
-      <View style={styles.memberMeta}>
-        <Text style={styles.memberName} numberOfLines={1}>{name}</Text>
+    <View style={styles.memberRow}>
+      <View style={styles.memberIdentityCol}>
+        <Text style={styles.memberName} numberOfLines={1}>{member.name}</Text>
         <Text style={[styles.memberRole, { color: roleColor }]}>{roleLabel}</Text>
       </View>
+      <Text style={styles.memberStatCol} numberOfLines={1}>{member.powerScore.toFixed(2)}</Text>
+      <Text style={styles.memberStatCol} numberOfLines={1}>{Math.round(member.winRate)}%</Text>
+      <Text style={styles.memberStatCol} numberOfLines={1}>{member.wins}-{member.losses}</Text>
+    </View>
+  );
+}
+
+function MembersTable({
+  members,
+  stats,
+}: {
+  members: any[];
+  stats: any[] | undefined;
+}) {
+  const [sortKey, setSortKey] = useState<MemberSortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir | null>(null);
+
+  const statsByUserId = new Map((stats ?? []).map((s: any) => [s.userId, s]));
+
+  const rows = members.map((member) => {
+    const stat = statsByUserId.get(member.userId);
+    return {
+      userId: member.userId,
+      name: memberDisplayName(member),
+      role: member.role,
+      wins: stat?.wins ?? 0,
+      losses: stat?.losses ?? 0,
+      winRate: stat?.winRate ?? 0,
+      powerScore: stat?.powerScore ?? 0,
+    };
+  });
+
+  const sortedRows = sortKey
+    ? [...rows].sort((a, b) => {
+        const aVal = sortKey === "record" ? a.wins - a.losses : a[sortKey];
+        const bVal = sortKey === "record" ? b.wins - b.losses : b[sortKey];
+        return sortDir === "asc" ? aVal - bVal : bVal - aVal;
+      })
+    : rows;
+
+  function handleSortPress(key: MemberSortKey) {
+    if (sortKey !== key) {
+      setSortKey(key);
+      setSortDir("asc");
+    } else if (sortDir === "asc") {
+      setSortDir("desc");
+    } else {
+      setSortKey(null);
+      setSortDir(null);
+    }
+  }
+
+  return (
+    <View>
+      <View style={styles.memberHeaderRow}>
+        <View style={styles.memberIdentityCol} />
+        {MEMBER_SORT_COLUMNS.map((col) => {
+          const active = sortKey === col.key;
+          return (
+            <Pressable
+              key={col.key}
+              onPress={() => handleSortPress(col.key)}
+              style={styles.memberHeaderCol}
+              hitSlop={4}
+            >
+              <Text style={[styles.memberHeaderText, active && styles.memberHeaderTextActive]} numberOfLines={1}>
+                {col.label}
+              </Text>
+              <Ionicons
+                name={active && sortDir === "asc" ? "caret-up" : active && sortDir === "desc" ? "caret-down" : "swap-vertical"}
+                size={11}
+                color={active ? "#2563eb" : "#475569"}
+              />
+            </Pressable>
+          );
+        })}
+      </View>
+      {sortedRows.map((row) => (
+        <MemberRow key={row.userId} member={row} />
+      ))}
     </View>
   );
 }
@@ -933,9 +1025,7 @@ export default function LeagueDetailScreen() {
                   <Text style={styles.emptySubtitle}>No members found</Text>
                 </View>
               ) : (
-                members.map((member: any) => (
-                  <MemberCard key={member.userId} member={member} />
-                ))
+                <MembersTable members={members} stats={stats} />
               )}
               <Pressable
                 style={({ pressed }) => [styles.webLinkRow, pressed && { opacity: 0.7 }]}
@@ -1417,19 +1507,44 @@ const styles = StyleSheet.create({
   sendButtonText: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
   moderationButtonPressed: { opacity: 0.7 },
 
-  /* Member card */
-  memberCard: {
+  /* Member rows / sortable table */
+  memberHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    paddingHorizontal: 14,
+    paddingBottom: 8,
+    gap: 8,
+  },
+  memberHeaderCol: {
+    flex: 1,
+    minHeight: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  memberHeaderText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#475569",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  memberHeaderTextActive: { color: "#2563eb" },
+  memberRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
     backgroundColor: "#1c2538",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#2a3447",
-    padding: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
     marginBottom: 8,
   },
-  memberMeta: { flex: 1 },
+  memberIdentityCol: { flex: 1.6, minWidth: 0 },
+  memberStatCol: { flex: 1, fontSize: 13, fontWeight: "700", color: "#f1f5f9", textAlign: "center" },
   memberName: { fontSize: 15, fontWeight: "600", color: "#f1f5f9" },
   memberRole: { fontSize: 12, fontWeight: "600", marginTop: 2 },
 

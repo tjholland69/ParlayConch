@@ -9,6 +9,7 @@ export type MobileUser = {
   lastName?: string | null;
   profileImageUrl?: string | null;
   isDemo?: boolean | null;
+  isSuperUser?: boolean | null;
   settings?: Record<string, unknown> | null;
 };
 
