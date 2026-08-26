@@ -1,17 +1,7 @@
 import type { ParlayWithLegs } from "@shared/schema";
+import { decidedTime } from "./decidedTime";
 
 type LegWithGameAndUser = ParlayWithLegs["legs"][number];
-
-/**
- * Best available "when was this leg decided" timestamp — see parlayLoser.ts's
- * copy of this helper for the full rationale (decidedAt is more precise than
- * games.finishedAt when the decision-detection job has populated it).
- */
-function decidedTime(leg: LegWithGameAndUser): number | null {
-  if (leg.decidedAt) return new Date(leg.decidedAt).getTime();
-  if (leg.game?.finishedAt) return new Date(leg.game.finishedAt).getTime();
-  return null;
-}
 
 /**
  * The "Parlay Hero" for a winning parlay: among the legs that won, the one

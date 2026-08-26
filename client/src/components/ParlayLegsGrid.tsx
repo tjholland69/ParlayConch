@@ -12,6 +12,7 @@ import {
   type RowSelectionOptions,
 } from "ag-grid-community";
 import type { FlatParlayLegRow } from "@/lib/flattenParlayLegs";
+import { CheckboxSetFilter } from "@/components/grid/CheckboxSetFilter";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
 import { Pencil, CloudDownload, Trash2, Copy, ClipboardCopy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -43,17 +44,17 @@ const parlayConchGridTheme = themeQuartz.withParams({
 const columnDefs: ColDef<FlatParlayLegRow>[] = [
   { field: "parlayId", headerName: "Parlay #", minWidth: 90, maxWidth: 140, filter: "agNumberColumnFilter" },
   { field: "season", headerName: "Year", minWidth: 70, maxWidth: 100, filter: "agNumberColumnFilter" },
-  { field: "weekLabel", headerName: "Week", minWidth: 90, maxWidth: 140, filter: "agTextColumnFilter" },
-  { field: "member", headerName: "Member", minWidth: 100, maxWidth: 220, filter: "agTextColumnFilter" },
-  { field: "legOwner", headerName: "Leg Owner", minWidth: 100, maxWidth: 220, filter: "agTextColumnFilter" },
-  { field: "status", headerName: "Parlay Status", minWidth: 100, maxWidth: 160, filter: "agTextColumnFilter" },
-  { field: "betType", headerName: "Bet Type", minWidth: 90, maxWidth: 140, filter: "agTextColumnFilter" },
+  { field: "weekLabel", headerName: "Week", minWidth: 90, maxWidth: 140, filter: CheckboxSetFilter },
+  { field: "member", headerName: "Member", minWidth: 100, maxWidth: 220, filter: CheckboxSetFilter },
+  { field: "legOwner", headerName: "Leg Owner", minWidth: 100, maxWidth: 220, filter: CheckboxSetFilter },
+  { field: "status", headerName: "Parlay Status", minWidth: 100, maxWidth: 160, filter: CheckboxSetFilter },
+  { field: "betType", headerName: "Bet Type", minWidth: 90, maxWidth: 140, filter: CheckboxSetFilter },
   { field: "matchup", headerName: "Matchup / Player", minWidth: 160, maxWidth: 340, filter: "agTextColumnFilter" },
   { field: "pick", headerName: "Pick", minWidth: 120, maxWidth: 320, filter: "agTextColumnFilter" },
   { field: "line", headerName: "Line", minWidth: 70, maxWidth: 110, filter: "agTextColumnFilter" },
   { field: "odds", headerName: "Odds", minWidth: 70, maxWidth: 110, filter: "agTextColumnFilter" },
-  { field: "oddsSource", headerName: "Book", minWidth: 90, maxWidth: 150, filter: "agTextColumnFilter" },
-  { field: "result", headerName: "Result", minWidth: 80, maxWidth: 130, filter: "agTextColumnFilter" },
+  { field: "oddsSource", headerName: "Book", minWidth: 90, maxWidth: 150, filter: CheckboxSetFilter },
+  { field: "result", headerName: "Result", minWidth: 80, maxWidth: 130, filter: CheckboxSetFilter },
   {
     field: "gameTime",
     headerName: "Game Time",
@@ -62,7 +63,7 @@ const columnDefs: ColDef<FlatParlayLegRow>[] = [
     filter: "agDateColumnFilter",
     valueFormatter: (p) => (p.value ? new Date(p.value).toLocaleString("en-US", { timeZone: "America/New_York", month: "2-digit", day: "2-digit", hour: "numeric", minute: "2-digit" }) : "—"),
   },
-  { field: "slate", headerName: "Slate", minWidth: 90, maxWidth: 160, filter: "agTextColumnFilter" },
+  { field: "slate", headerName: "Slate", minWidth: 90, maxWidth: 160, filter: CheckboxSetFilter },
   {
     field: "decidedAt",
     headerName: "Settled At",

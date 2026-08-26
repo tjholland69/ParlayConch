@@ -5,9 +5,10 @@
  *
  * This just calls the same detection functions the nflverse sync job
  * already runs after every score sync (see server/jobs/nflverse-sync-queue.ts)
- * — detectExactDecisionMoments() for won over/player-prop legs, then
- * detectHeuristicDecisionMoments() for won spread/moneyline/under legs —
- * but across every league in one pass, without touching scores/players.
+ * — detectExactDecisionMoments() for over-win/under-loss and won player-prop
+ * legs, then detectHeuristicDecisionMoments() for spread/moneyline win-or-loss
+ * and under-win/over-loss legs — but across every league in one pass,
+ * without touching scores/players.
  *
  * Both functions only ever act on legs with decidedAt still null, so this
  * is safe to re-run — it will never re-decide or overwrite a leg that

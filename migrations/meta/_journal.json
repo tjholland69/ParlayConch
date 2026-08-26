@@ -148,6 +148,13 @@
       "when": 1787540000000,
       "tag": "0020_parlay_draft_status",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1787718242832,
+      "tag": "0021_rich_karen_page",
+      "breakpoints": true
     }
   ]
 }

@@ -25,6 +25,11 @@ function invalidateParlaysForLeague(
     qc.invalidateQueries({
       queryKey: [api.parlays.forWeek.path, leagueId, weekId],
     });
+    // Picks-grid exclusivity set — a submit/add/remove anywhere in the
+    // league this week can change which tiles other members see as taken.
+    qc.invalidateQueries({
+      queryKey: ["/api/leagues", leagueId, "weeks", weekId, "taken-picks"],
+    });
   } else {
     qc.invalidateQueries({
       predicate: (q) =>
@@ -32,6 +37,13 @@ function invalidateParlaysForLeague(
         (q.queryKey[0] === api.parlays.myForWeek.path ||
           q.queryKey[0] === api.parlays.forWeek.path) &&
         q.queryKey[1] === leagueId,
+    });
+    qc.invalidateQueries({
+      predicate: (q) =>
+        Array.isArray(q.queryKey) &&
+        q.queryKey[0] === "/api/leagues" &&
+        q.queryKey[1] === leagueId &&
+        q.queryKey[4] === "taken-picks",
     });
   }
 }

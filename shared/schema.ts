@@ -140,6 +140,7 @@ export const leagues = pgTable("leagues", {
   maxParlaysPerWeek: integer("max_parlays_per_week").default(1),
   minLegsPerParlay: integer("min_legs_per_parlay").default(3),
   maxLegsPerParlay: integer("max_legs_per_parlay").default(5),
+  maxBetsPerGame: integer("max_bets_per_game").default(1),
   isDemo: boolean("is_demo").default(false),
   useDemoWeekData: boolean("use_demo_week_data").default(false),
   insightsEnabled: boolean("insights_enabled").default(false),
@@ -828,4 +829,21 @@ export type PopularPick = {
   playerName?: string | null;
   propType?: string | null;
   count: number;
+};
+
+// A specific pick already locked in by another league member this week —
+// unlike PopularPick (a same-shape popularity ranking across everyone,
+// including still-drafting picks), this is the exclusivity set: only
+// picks from non-draft (submitted) parlays, used to gray out tiles other
+// members have already claimed.
+export type TakenPick = {
+  gameId: number | null;
+  betType: string;
+  pick: string;
+  playerName?: string | null;
+  propType?: string | null;
+  // Who owns this pick, pre-formatted server-side (so a last name reaches
+  // the client only in this abbreviated form, never raw) — `web` is
+  // "F.Lastname", `mobile` is just the first name. See shared/pickOwnerLabel.ts.
+  takenBy: { web: string; mobile: string };
 };

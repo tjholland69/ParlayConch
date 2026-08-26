@@ -1,29 +1,44 @@
 /**
  * Timestamped-settlement work: mid-game decision detection.
  *
- * For legs whose leg-level result is already a confirmed 'win', find the
- * specific play where the outcome became fixed — an over hitting in the 3rd
- * quarter, a player crossing their yardage line on a midgame catch, a team
- * going up by more than the opponent could realistically make up — rather
- * than defaulting to the game's final whistle.
+ * For legs whose leg-level result is already confirmed (win OR loss), find
+ * the specific play where the outcome became fixed — an over hitting in the
+ * 3rd quarter, a spread pick's opponent becoming unable to realistically
+ * come back — rather than defaulting to the game's final whistle. This
+ * matters beyond just display: "who busted first" in a losing parlay
+ * (client/src/lib/parlayLoser.ts's getBustedLeg) is decided by comparing
+ * legs' decidedAt, so a losing leg without its own decidedAt silently falls
+ * back to the coarser, batch-stamped games.finishedAt — which several legs
+ * finished in the same score-sync run can share, producing arbitrary
+ * tie-breaks instead of the real chronological loser.
  *
- * Only 'win' legs are handled: totals/props only accumulate upward and
- * score margins only need to clear a comeback bound, so a loss (the
- * total/stat/margin never got there) has no deterministic or defensible
- * early-decision point and is correctly left at 'final' confidence,
- * resolved only once the game ends.
- *
- * Two detection tiers, both implemented here:
- *  - 'exact'     — totals-over and player-prop legs. Deterministic: a fixed
- *                  line, a value that only moves upward, first-crossing is
- *                  unambiguous. See detectExactDecisionMoments.
- *  - 'heuristic' — spread/moneyline/under legs. There's no fixed crossing
- *                  point (a score margin can climb and fall all game), so
- *                  instead we find the first play after which the pick's
- *                  cushion permanently exceeds a conservative "opponent's
- *                  maximum realistic comeback" bound, computed from time
- *                  remaining and possession pace. See
- *                  detectHeuristicDecisionMoments and the constants below.
+ * Two detection tiers, both implemented here — each bet type/result
+ * combination below is handled by whichever tier actually has a
+ * deterministic or defensible early-decision point for it. The other half of
+ * each pair (over LOSS, under WIN's precise "not yet" moment for exact, and
+ * player-prop losses) doesn't have one — a moving stat/total can't be ruled
+ * out as "never reaching the line" except via the same generous elimination
+ * bound already used below, or can't be ruled out at all — so those stay at
+ * 'final' confidence, resolved only once the game ends:
+ *  - 'exact'     — a fixed line that only moves in one direction, so
+ *                  first-crossing is unambiguous:
+ *                    · over WIN / under LOSS — the total permanently exceeds
+ *                      the line the instant it exceeds it, for both sides of
+ *                      that same event. See detectExactDecisionMoments.
+ *  - 'heuristic' — no fixed crossing point (a score margin, or the room left
+ *                  under a total, can climb and fall all game), so instead
+ *                  we find the first play after which a side's cushion
+ *                  permanently exceeds a conservative "opponent's maximum
+ *                  realistic comeback" bound, computed from time remaining
+ *                  and possession pace:
+ *                    · spread/moneyline WIN or LOSS — a pick's own cushion
+ *                      (win) or its opponent's mirror-image cushion (loss,
+ *                      same bound, opposite side) permanently clearing zero.
+ *                    · under WIN / over LOSS — the room left under the total
+ *                      permanently exceeding the max realistic combined
+ *                      scoring left, for both sides of that same event.
+ *                  See detectHeuristicDecisionMoments and the constants
+ *                  below.
  */
 
 import { storage } from "../storage";
@@ -265,11 +280,13 @@ export interface DecisionDetectionResult {
 }
 
 /**
- * Scan every won 'over' leg and won player-prop leg with decidedAt still
- * unset, and — where play-by-play data lets us pin down the exact play —
- * fill in decidedAt/decidedPlayDesc/decidedQuarter/decidedClock with
- * 'exact' confidence. Best-effort per season: a season without a published
- * pbp file is skipped rather than failing the whole run.
+ * Scan every leg with a fixed, one-directional line and decidedAt still
+ * unset — won 'over' legs, lost 'under' legs (the exact same real-world
+ * event: the total permanently exceeding the line), and won player-prop
+ * legs — and, where play-by-play data lets us pin down the exact play, fill
+ * in decidedAt/decidedPlayDesc/decidedQuarter/decidedClock with 'exact'
+ * confidence. Best-effort per season: a season without a published pbp file
+ * is skipped rather than failing the whole run.
  */
 export async function detectExactDecisionMoments(leagueId?: number): Promise<DecisionDetectionResult> {
   const result: DecisionDetectionResult = {
@@ -277,8 +294,11 @@ export async function detectExactDecisionMoments(leagueId?: number): Promise<Dec
     propDecided: 0, propNoPlayData: 0, propNoPlayerMatch: 0,
   };
 
-  // ── Totals-over legs ────────────────────────────────────────────────────
-  const overLegs = await storage.getWonGameLegsPendingDecision(["over"], leagueId);
+  // ── Totals legs (over WIN and under LOSS both = total crossed the line) ──
+  const overLegs = await storage.getGameLegsPendingDecision(
+    [{ betType: "over", result: "win" }, { betType: "under", result: "loss" }],
+    leagueId,
+  );
   for (const leg of overLegs) {
     const line = parseFloat(leg.line ?? "");
     if (isNaN(line)) { result.overNoPlayData++; continue; }
@@ -351,17 +371,30 @@ export interface HeuristicDetectionResult {
 }
 
 /**
- * Scan every won spread/moneyline/under leg with decidedAt still unset and,
- * where the "mathematically eliminated" heuristic finds a permanent-safety
- * point, fill in decidedAt/... with 'heuristic' confidence. See the module
- * docstring and the elimination-cushion functions above for the method and
- * its caveats — this is a probabilistic estimate, not a guarantee, and
- * should be treated with lower trust in the UI than 'exact' decisions.
+ * Scan every spread/moneyline WIN-or-LOSS leg and every under-WIN /
+ * over-LOSS leg with decidedAt still unset and, where the "mathematically
+ * eliminated" heuristic finds a permanent-safety point, fill in decidedAt/...
+ * with 'heuristic' confidence. A LOSS is detected via the exact same
+ * cushion, just evaluated for the opposite side of the pick — the point
+ * where the opponent (or, for totals, the room left under the line) is
+ * permanently safe is precisely the point the original pick is permanently
+ * eliminated. See the module docstring and the elimination-cushion functions
+ * above for the method and its caveats — this is a probabilistic estimate,
+ * not a guarantee, and should be treated with lower trust in the UI than
+ * 'exact' decisions.
  */
 export async function detectHeuristicDecisionMoments(leagueId?: number): Promise<HeuristicDetectionResult> {
   const result: HeuristicDetectionResult = { spreadMoneylineDecided: 0, underDecided: 0, noPlayData: 0 };
 
-  const legs = await storage.getWonGameLegsPendingDecision(["spread", "moneyline", "under"], leagueId);
+  const legs = await storage.getGameLegsPendingDecision(
+    [
+      { betType: "moneyline", result: "win" }, { betType: "moneyline", result: "loss" },
+      { betType: "spread", result: "win" }, { betType: "spread", result: "loss" },
+      { betType: "under", result: "win" },
+      { betType: "over", result: "loss" },
+    ],
+    leagueId,
+  );
   for (const leg of legs) {
     const playsByGame = await playsForSeason(leg.season);
     if (!playsByGame) { result.noPlayData++; continue; }
@@ -370,18 +403,25 @@ export async function detectHeuristicDecisionMoments(leagueId?: number): Promise
     if (!plays) { result.noPlayData++; continue; }
 
     const pick = (leg.pick ?? "").toLowerCase();
+    const isLoss = leg.result === "loss";
     let decision: DecisionInfo | null = null;
 
     if (leg.betType === "moneyline") {
       if (pick === "home" || pick === "away") {
-        decision = findEliminationDecision(plays, (play) => moneylineCushion(play, pick === "home"));
+        // A pick's loss is exactly the point its opponent's own cushion
+        // (same generous comeback bound) permanently clears zero.
+        const pickHome = isLoss ? pick !== "home" : pick === "home";
+        decision = findEliminationDecision(plays, (play) => moneylineCushion(play, pickHome));
       }
     } else if (leg.betType === "spread") {
       const spread = parseFloat(leg.game.spread ?? "");
       if ((pick === "home" || pick === "away") && !isNaN(spread)) {
-        decision = findEliminationDecision(plays, (play) => spreadCushion(play, pick === "home", spread));
+        const pickHome = isLoss ? pick !== "home" : pick === "home";
+        decision = findEliminationDecision(plays, (play) => spreadCushion(play, pickHome, spread));
       }
-    } else if (leg.betType === "under") {
+    } else if (leg.betType === "under" || leg.betType === "over") {
+      // under-WIN and over-LOSS are the same real-world event: the combined
+      // score becomes permanently unable to reach the total line.
       const line = parseFloat(leg.line ?? "");
       if (!isNaN(line)) {
         decision = findEliminationDecision(plays, (play) => underCushion(play, line));
@@ -391,7 +431,7 @@ export async function detectHeuristicDecisionMoments(leagueId?: number): Promise
     if (!decision) { result.noPlayData++; continue; }
 
     await storage.setLegDecision(leg.id, decision);
-    if (leg.betType === "under") result.underDecided++;
+    if (leg.betType === "under" || leg.betType === "over") result.underDecided++;
     else result.spreadMoneylineDecided++;
   }
 
