@@ -46,6 +46,16 @@ async function resolvedParlay(
   );
 }
 
+/** Days-from-now at a fixed UTC hour/minute — used for the active week's
+ * games so they're always pickable regardless of when the seed is run
+ * (a hardcoded past date would make every game "past" and disable picks). */
+function daysFromNow(days: number, hourUTC: number, minuteUTC: number): Date {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + days);
+  d.setUTCHours(hourUTC, minuteUTC, 0, 0);
+  return d;
+}
+
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 
 async function wipe() {
@@ -208,34 +218,38 @@ async function seed() {
   }).returning();
 
   // Real 2024 Week 18 matchups (nflverse) — not yet finished, no scores.
+  // Kickoffs are computed relative to "now" (not a hardcoded past date) so
+  // the active week's games stay pickable no matter when this seed runs —
+  // isGamePast() in the mobile app's pickHelpers.ts disables a game's pick
+  // buttons once its gameTime has passed.
   const [w18g1, w18g2, w18g3, w18g4] = await db.insert(games).values([
     {
       weekId: w18.id,
       homeTeam: "Eagles",  awayTeam: "Giants",
       spread: "-3.0",      spreadOdds: "-110", overUnder: "36.5", overOdds: "-110", underOdds: "-110",
       moneylineHome: "-155", moneylineAway: "+130",
-      gameTime: new Date("2025-01-05T18:00:00Z"),
+      gameTime: daysFromNow(3, 18, 0),
     },
     {
       weekId: w18.id,
       homeTeam: "Buccaneers",  awayTeam: "Saints",
       spread: "-14.5",      spreadOdds: "-110", overUnder: "44.5", overOdds: "-110", underOdds: "-110",
       moneylineHome: "-1050", moneylineAway: "+675",
-      gameTime: new Date("2025-01-05T18:00:00Z"),
+      gameTime: daysFromNow(3, 18, 0),
     },
     {
       weekId: w18.id,
       homeTeam: "Colts", awayTeam: "Jaguars",
       spread: "-3.5",      spreadOdds: "-110", overUnder: "45.5", overOdds: "-110", underOdds: "-110",
       moneylineHome: "-180", moneylineAway: "+150",
-      gameTime: new Date("2025-01-05T18:00:00Z"),
+      gameTime: daysFromNow(3, 18, 0),
     },
     {
       weekId: w18.id,
       homeTeam: "Lions",   awayTeam: "Vikings",
       spread: "-3.0",      spreadOdds: "-110", overUnder: "56.5", overOdds: "-110", underOdds: "-110",
       moneylineHome: "-148", moneylineAway: "+124",
-      gameTime: new Date("2025-01-06T01:20:00Z"),
+      gameTime: daysFromNow(3, 23, 20),
     },
   ]).returning();
 

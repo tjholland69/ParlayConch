@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { View, Text, StyleSheet, PanResponder, LayoutChangeEvent } from "react-native";
-import Svg, { Rect } from "react-native-svg";
+import Svg, { Rect, Polyline } from "react-native-svg";
 
 export interface BarChartPoint {
   label: string;
@@ -13,15 +13,42 @@ interface SimpleBarChartProps {
   height?: number;
   /** How to format the tooltip's value line, e.g. (v) => `${v.toFixed(1)}%`. */
   formatValue?: (value: number) => string;
+  /** Optional benchmark/index series drawn as a dashed line in a lightened
+   * shade of `color`, overlaid on the bars — same point count/order as
+   * `points`, `null` where the index has no value for that slot. */
+  indexPoints?: (number | null)[];
 }
 
 const PADDING = 12;
+/** Roughly the narrowest a short axis label can get before it starts
+ * overlapping its neighbors — used to space out ticks by available width
+ * instead of a fixed "every other point" rule. */
+const MIN_LABEL_WIDTH = 34;
 
-export function SimpleBarChart({ points, color = "#2563eb", height = 180, formatValue }: SimpleBarChartProps) {
+/** How many points to skip between rendered x-axis labels so they fit the
+ * measured chart width without overlapping. */
+function computeLabelStep(pointCount: number, width: number): number {
+  if (pointCount <= 1) return 1;
+  const maxLabels = Math.max(1, Math.floor(width / MIN_LABEL_WIDTH));
+  return Math.max(1, Math.ceil(pointCount / maxLabels));
+}
+
+/** Lightens a `#rrggbb` color for a benchmark/index line that should read as
+ * "linked to" the primary series without competing with it visually. */
+function lighten(hex: string, amount = 0.35): string {
+  const num = parseInt(hex.replace("#", ""), 16);
+  const r = Math.min(255, (num >> 16) + Math.round(255 * amount));
+  const g = Math.min(255, ((num >> 8) & 0xff) + Math.round(255 * amount));
+  const b = Math.min(255, (num & 0xff) + Math.round(255 * amount));
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+export function SimpleBarChart({ points, color = "#2563eb", height = 180, formatValue, indexPoints }: SimpleBarChartProps) {
   const [width, setWidth] = useState(320);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
-  const max = Math.max(100, ...points.map((p) => p.value));
+  const indexValues = (indexPoints ?? []).filter((v): v is number => v != null);
+  const max = Math.max(100, ...points.map((p) => p.value), ...indexValues);
   const usableWidth = width - PADDING * 2;
   const barGap = 6;
   const barWidth = points.length > 0 ? (usableWidth - barGap * (points.length - 1)) / points.length : 0;
@@ -32,6 +59,10 @@ export function SimpleBarChart({ points, color = "#2563eb", height = 180, format
     const y = height - PADDING - barHeight;
     return { x, y, width: barWidth, height: barHeight };
   });
+  const indexCoords = (indexPoints ?? []).map((v, i) =>
+    v == null ? null : { x: PADDING + i * (barWidth + barGap) + barWidth / 2, y: height - PADDING - (v / max) * (height - PADDING * 2) },
+  );
+  const labelStep = computeLabelStep(points.length, width);
 
   // PanResponder's closures are created once — keep the latest bar layout
   // reachable via a ref rather than recreating the responder every render.
@@ -87,6 +118,18 @@ export function SimpleBarChart({ points, color = "#2563eb", height = 180, format
             opacity={activeIndex == null || i === activeIndex ? 1 : 0.5}
           />
         ))}
+        {indexCoords.some((c) => c != null) && (
+          <Polyline
+            points={indexCoords
+              .map((c) => (c ? `${c.x},${c.y}` : null))
+              .filter((p): p is string => p != null)
+              .join(" ")}
+            fill="none"
+            stroke={lighten(color)}
+            strokeWidth={2}
+            strokeDasharray="4 4"
+          />
+        )}
       </Svg>
 
       {active && (
@@ -99,7 +142,7 @@ export function SimpleBarChart({ points, color = "#2563eb", height = 180, format
       <View style={styles.labelRow}>
         {points.map((p, i) => (
           <Text key={i} style={[styles.label, i === activeIndex && styles.labelActive]} numberOfLines={1}>
-            {points.length > 6 && i % 2 === 1 ? "" : p.label}
+            {i % labelStep === 0 || i === points.length - 1 ? p.label : ""}
           </Text>
         ))}
       </View>

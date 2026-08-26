@@ -19,6 +19,7 @@ import { useLeagues, useLeaguesOverviewStats, useCreateLeague, useJoinLeague } f
 import { useActiveWeek } from "@/hooks/use-weeks";
 import { useMyParlayHistory } from "@/hooks/use-parlays";
 import { LeagueCard } from "@/components/LeagueCard";
+import { Button } from "@/components/ui/Button";
 
 type ModalType = "create" | "join" | null;
 
@@ -84,24 +85,14 @@ export default function LeaguesScreen() {
       >
         {/* Action buttons */}
         <View style={styles.actionRow}>
-          <Pressable
-            style={({ pressed }) => [pressed && styles.pressed]}
-            onPress={() => setModal("join")}
-          >
-            <View style={[styles.actionBtn, styles.actionBtnOutline]}>
-              <Ionicons name="enter-outline" size={16} color="#93c5fd" />
-              <Text style={styles.actionBtnOutlineText}>Join League</Text>
-            </View>
-          </Pressable>
-          <Pressable
-            style={({ pressed }) => [pressed && styles.pressed]}
-            onPress={() => setModal("create")}
-          >
-            <View style={[styles.actionBtn, styles.actionBtnPrimary]}>
-              <Ionicons name="add" size={16} color="#ffffff" />
-              <Text style={styles.actionBtnPrimaryText}>New League</Text>
-            </View>
-          </Pressable>
+          <Button variant="outline" style={[styles.actionBtn, styles.actionBtnOutline]} onPress={() => setModal("join")}>
+            <Ionicons name="enter-outline" size={16} color="#93c5fd" />
+            <Text style={styles.actionBtnOutlineText}>Join League</Text>
+          </Button>
+          <Button style={styles.actionBtn} onPress={() => setModal("create")}>
+            <Ionicons name="add" size={16} color="#ffffff" />
+            <Text style={styles.actionBtnPrimaryText}>New League</Text>
+          </Button>
         </View>
 
         {/* Leagues list */}
@@ -181,22 +172,17 @@ export default function LeaguesScreen() {
               testID="input-league-description"
             />
 
-            <Pressable
+            <Button
               onPress={handleCreate}
               disabled={!leagueName.trim() || createLeague.isPending}
-              style={({ pressed }) => [
-                styles.sheetBtn,
-                (!leagueName.trim() || createLeague.isPending) && styles.sheetBtnDisabled,
-                pressed && styles.pressed,
-              ]}
+              loading={createLeague.isPending}
+              fullWidth
+              size="lg"
+              style={styles.sheetBtn}
               testID="button-create-league"
             >
-              {createLeague.isPending ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.sheetBtnText}>Create League</Text>
-              )}
-            </Pressable>
+              Create League
+            </Button>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -235,22 +221,17 @@ export default function LeaguesScreen() {
               testID="input-invite-code"
             />
 
-            <Pressable
+            <Button
               onPress={handleJoin}
               disabled={!inviteCode.trim() || joinLeague.isPending}
-              style={({ pressed }) => [
-                styles.sheetBtn,
-                (!inviteCode.trim() || joinLeague.isPending) && styles.sheetBtnDisabled,
-                pressed && styles.pressed,
-              ]}
+              loading={joinLeague.isPending}
+              fullWidth
+              size="lg"
+              style={styles.sheetBtn}
               testID="button-join-league"
             >
-              {joinLeague.isPending ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.sheetBtnText}>Join League</Text>
-              )}
-            </Pressable>
+              Join League
+            </Button>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -263,21 +244,12 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   scrollContent: { padding: 20, paddingTop: 16 },
   actionRow: { flexDirection: "row", justifyContent: "center", gap: 12, marginBottom: 28 },
-  actionBtn: {
-    width: 160,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 14,
-    borderRadius: 14,
-  },
+  actionBtn: { width: 160 },
   actionBtnOutline: {
     backgroundColor: "#1c2b4a",
     borderWidth: 1.5,
     borderColor: "#2563eb",
   },
-  actionBtnPrimary: { backgroundColor: "#2563eb" },
   actionBtnOutlineText: { fontSize: 14, fontWeight: "600", color: "#93c5fd" },
   actionBtnPrimaryText: { fontSize: 14, fontWeight: "600", color: "#ffffff" },
   pressed: { opacity: 0.75 },
@@ -358,13 +330,5 @@ const styles = StyleSheet.create({
   },
   inputMultiline: { minHeight: 80, textAlignVertical: "top", paddingTop: 13 },
   inputMono: { letterSpacing: 4, fontSize: 18, fontWeight: "700" },
-  sheetBtn: {
-    backgroundColor: "#2563eb",
-    borderRadius: 14,
-    paddingVertical: 15,
-    alignItems: "center",
-    marginTop: 4,
-  },
-  sheetBtnDisabled: { opacity: 0.45 },
-  sheetBtnText: { color: "#ffffff", fontSize: 16, fontWeight: "700" },
+  sheetBtn: { marginTop: 4 },
 });

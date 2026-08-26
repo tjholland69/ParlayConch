@@ -3,7 +3,6 @@ import {
   Text,
   TextInput,
   Pressable,
-  ActivityIndicator,
   StyleSheet,
   KeyboardAvoidingView,
   Platform,
@@ -15,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { apiRequest, setSessionToken } from "@/lib/api";
 import { useQueryClient } from "@tanstack/react-query";
 import { StatusBar } from "expo-status-bar";
+import { Button } from "@/components/ui/Button";
 
 type Mode = "login" | "register";
 
@@ -206,23 +206,17 @@ export default function LoginScreen() {
 
           {error && <Text style={styles.error}>{error}</Text>}
 
-          <Pressable
+          <Button
             onPress={() => handleSubmit()}
             disabled={loading}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              pressed && styles.primaryButtonPressed,
-            ]}
+            loading={loading}
+            fullWidth
+            size="lg"
+            style={styles.primaryButton}
             testID="button-submit"
           >
-            {loading ? (
-              <ActivityIndicator color="#ffffff" size="small" />
-            ) : (
-              <Text style={styles.primaryButtonText}>
-                {isLogin ? "Sign In" : "Create Account"}
-              </Text>
-            )}
-          </Pressable>
+            {isLogin ? "Sign In" : "Create Account"}
+          </Button>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -369,28 +363,12 @@ const styles = StyleSheet.create({
   },
 
   primaryButton: {
-    width: "100%",
-    backgroundColor: "#2563eb",
-    borderRadius: 14,
     borderWidth: 1.5,
     borderColor: "#93c5fd",
-    paddingVertical: 16,
-    alignItems: "center",
-    justifyContent: "center",
     shadowColor: "#2563eb",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
     marginTop: 4,
-  },
-  primaryButtonPressed: {
-    opacity: 0.85,
-    transform: [{ scale: 0.98 }],
-  },
-  primaryButtonText: {
-    color: "#ffffff",
-    fontSize: 17,
-    fontWeight: "700",
-    letterSpacing: 0.3,
   },
 });

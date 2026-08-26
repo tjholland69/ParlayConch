@@ -103,15 +103,28 @@ export function GamePickCard({
         ) : null}
       </View>
 
-      {/* Away */}
-      <View style={styles.teamRow}>
-        <View style={styles.teamCol}>
+      {/* Team header — names/records sit above the pick grid so every row
+          below shares identical geometry instead of being anchored to a team. */}
+      <View style={styles.teamHeaderRow}>
+        <View style={styles.teamHeaderCol}>
           <Text style={styles.teamName} numberOfLines={1}>
             {game.awayTeam}
           </Text>
           {game.awayRecord ? <Text style={styles.record}>{game.awayRecord}</Text> : null}
         </View>
-        <View style={styles.marketsCol}>
+        <Text style={styles.teamHeaderAt}>@</Text>
+        <View style={[styles.teamHeaderCol, styles.teamHeaderColRight]}>
+          <Text style={styles.teamName} numberOfLines={1}>
+            {game.homeTeam}
+          </Text>
+          {game.homeRecord ? <Text style={styles.record}>{game.homeRecord}</Text> : null}
+        </View>
+      </View>
+
+      {/* 2x3 pick grid — each row is one market, each column one side, so
+          all 6 boxes read as a single matrix spanning the card's width. */}
+      <View style={styles.pickGrid}>
+        <View style={styles.pickGridRow}>
           <MarketButton
             primary={awaySpread || "—"}
             secondary={game.spread ? game.spreadOdds || "-110" : null}
@@ -121,32 +134,22 @@ export function GamePickCard({
             accessibilityLabel={`${game.awayTeam} spread ${awaySpread || "unavailable"}`}
           />
           <MarketButton
-            primary={game.moneylineAway || "—"}
-            secondary="ML"
-            selected={selectedLeg?.betType === "moneyline" && selectedLeg?.pick === "away"}
-            disabled={past || !game.moneylineAway}
-            onPress={() => select("moneyline", "away")}
-            accessibilityLabel={`${game.awayTeam} moneyline ${game.moneylineAway || "unavailable"}`}
-          />
-        </View>
-      </View>
-
-      {/* Home */}
-      <View style={[styles.teamRow, styles.teamRowHome]}>
-        <View style={styles.teamCol}>
-          <Text style={styles.teamName} numberOfLines={1}>
-            {game.homeTeam}
-          </Text>
-          {game.homeRecord ? <Text style={styles.record}>{game.homeRecord}</Text> : null}
-        </View>
-        <View style={styles.marketsCol}>
-          <MarketButton
             primary={homeSpread || "—"}
             secondary={game.spread ? game.spreadOdds || "-110" : null}
             selected={selectedLeg?.betType === "spread" && selectedLeg?.pick === "home"}
             disabled={past || !game.spread}
             onPress={() => select("spread", "home")}
             accessibilityLabel={`${game.homeTeam} spread ${homeSpread || "unavailable"}`}
+          />
+        </View>
+        <View style={styles.pickGridRow}>
+          <MarketButton
+            primary={game.moneylineAway || "—"}
+            secondary="ML"
+            selected={selectedLeg?.betType === "moneyline" && selectedLeg?.pick === "away"}
+            disabled={past || !game.moneylineAway}
+            onPress={() => select("moneyline", "away")}
+            accessibilityLabel={`${game.awayTeam} moneyline ${game.moneylineAway || "unavailable"}`}
           />
           <MarketButton
             primary={game.moneylineHome || "—"}
@@ -157,26 +160,24 @@ export function GamePickCard({
             accessibilityLabel={`${game.homeTeam} moneyline ${game.moneylineHome || "unavailable"}`}
           />
         </View>
-      </View>
-
-      {/* Totals */}
-      <View style={styles.totalsRow}>
-        <MarketButton
-          primary={`O ${game.overUnder || "—"}`}
-          secondary={game.overUnder ? game.overOdds || "-110" : null}
-          selected={selectedLeg?.betType === "over" && selectedLeg?.pick === "over"}
-          disabled={past || !game.overUnder}
-          onPress={() => select("over", "over")}
-          accessibilityLabel={`Over ${game.overUnder || "unavailable"}`}
-        />
-        <MarketButton
-          primary={`U ${game.overUnder || "—"}`}
-          secondary={game.overUnder ? game.underOdds || "-110" : null}
-          selected={selectedLeg?.betType === "under" && selectedLeg?.pick === "under"}
-          disabled={past || !game.overUnder}
-          onPress={() => select("under", "under")}
-          accessibilityLabel={`Under ${game.overUnder || "unavailable"}`}
-        />
+        <View style={styles.pickGridRow}>
+          <MarketButton
+            primary={`O ${game.overUnder || "—"}`}
+            secondary={game.overUnder ? game.overOdds || "-110" : null}
+            selected={selectedLeg?.betType === "over" && selectedLeg?.pick === "over"}
+            disabled={past || !game.overUnder}
+            onPress={() => select("over", "over")}
+            accessibilityLabel={`Over ${game.overUnder || "unavailable"}`}
+          />
+          <MarketButton
+            primary={`U ${game.overUnder || "—"}`}
+            secondary={game.overUnder ? game.underOdds || "-110" : null}
+            selected={selectedLeg?.betType === "under" && selectedLeg?.pick === "under"}
+            disabled={past || !game.overUnder}
+            onPress={() => select("under", "under")}
+            accessibilityLabel={`Under ${game.overUnder || "unavailable"}`}
+          />
+        </View>
       </View>
 
       {game.isFinished && game.awayScore != null && game.homeScore != null && (
@@ -239,18 +240,19 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   statusPillText: { fontSize: 11, fontWeight: "600", color: "#94a3b8" },
-  teamRow: {
+  teamHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  teamRowHome: { marginBottom: 12 },
-  teamCol: { width: "36%", paddingRight: 4 },
+  teamHeaderCol: { flex: 1, minWidth: 0 },
+  teamHeaderColRight: { alignItems: "flex-end" },
+  teamHeaderAt: { fontSize: 12, color: "#475569", fontWeight: "600" },
   teamName: { fontSize: 16, fontWeight: "700", color: "#f1f5f9" },
   record: { fontSize: 12, color: "#64748b", marginTop: 2 },
-  marketsCol: { flex: 1, flexDirection: "row", gap: 8 },
-  totalsRow: { flexDirection: "row", gap: 8 },
+  pickGrid: { gap: 8 },
+  pickGridRow: { flexDirection: "row", gap: 8 },
   marketBtn: {
     minHeight: 52,
     borderRadius: 10,
@@ -302,6 +304,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 6,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   clearBtnText: { fontSize: 13, fontWeight: "600", color: "#2563eb" },
 });

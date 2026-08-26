@@ -62,13 +62,24 @@ export function useDashboardPatterns(leagueId?: number) {
   });
 }
 
-export function useDashboardPerformance(leagueId?: number) {
+export interface DashboardDateRange {
+  startDate?: string;
+  endDate?: string;
+}
+
+export function useDashboardPerformance(leagueId?: number, dateRange?: DashboardDateRange) {
+  const params = new URLSearchParams();
+  if (leagueId) params.set("leagueId", String(leagueId));
+  if (dateRange?.startDate) params.set("startDate", dateRange.startDate);
+  if (dateRange?.endDate) params.set("endDate", dateRange.endDate);
+  const query = params.toString();
+
   return useQuery<{ points: WinRateTimeSeriesPoint[] }>({
-    queryKey: [api.dashboard.performance.path, leagueId ?? "all"],
+    queryKey: [api.dashboard.performance.path, leagueId ?? "all", dateRange?.startDate ?? null, dateRange?.endDate ?? null],
     queryFn: () =>
       apiRequest<{ points: WinRateTimeSeriesPoint[] }>(
         "GET",
-        leagueId ? `${api.dashboard.performance.path}?leagueId=${leagueId}` : api.dashboard.performance.path
+        query ? `${api.dashboard.performance.path}?${query}` : api.dashboard.performance.path
       ),
   });
 }
