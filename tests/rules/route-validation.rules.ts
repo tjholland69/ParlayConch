@@ -230,6 +230,20 @@ export const ROUTE_VALIDATION_RULES: RouteValidationRule[] = [
     payload: { name: "X", inviteCode: "HACK" },
     expect: "fail",
   },
+  {
+    id: "leagueSettings.max-bets-per-game",
+    description: "Accepts a positive maxBetsPerGame",
+    schema: updateLeagueSettingsSchema,
+    payload: { maxBetsPerGame: 2 },
+    expect: "pass",
+  },
+  {
+    id: "leagueSettings.max-bets-per-game-zero",
+    description: "Rejects a maxBetsPerGame below 1",
+    schema: updateLeagueSettingsSchema,
+    payload: { maxBetsPerGame: 0 },
+    expect: "fail",
+  },
 
   // ─── PATCH /api/leagues/:id/notification-settings ──────────────────────
   {

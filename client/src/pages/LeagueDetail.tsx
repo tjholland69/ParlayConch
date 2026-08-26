@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useCreateParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,7 @@ import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { BetSlipPanel } from "@/components/BetSlipPanel";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
+import { AddPropLegDialog } from "@/components/AddPropLegDialog";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
@@ -37,8 +38,6 @@ import type { Game, UserStat } from "@shared/schema";
 const ParlayLegsGrid = lazy(() =>
   import("@/components/ParlayLegsGrid").then((m) => ({ default: m.ParlayLegsGrid }))
 );
-
-type ParlayLeg = { gameId: number; betType: string; pick: string; line?: string };
 
 function AllParlaysList({
   list,
@@ -233,6 +232,67 @@ const LEAGUE_RECORD_ICONS: Record<string, ElementType> = {
   favoriteBetType: Dices,
 };
 
+/**
+ * One tile in a game's 3×2 picks grid. All 6 tiles (away spread/ML/over,
+ * home spread/ML/under) share the same evenly-sized shape and the same
+ * three visual states: selected (this user's own pick), taken (someone
+ * else already locked this exact pick in — distinct from a plain disabled
+ * tile so it reads as "unavailable" rather than "not postable yet", and
+ * labeled with who took it so the tile itself answers "who has this"), and
+ * plain disabled (game started, or odds not posted).
+ */
+function PickTile({
+  label,
+  subLabel,
+  hasOdds,
+  isPast,
+  isSelected,
+  takenBy,
+  capReached,
+  onClick,
+  testId,
+}: {
+  label: string;
+  subLabel?: string | null;
+  hasOdds: boolean;
+  isPast: boolean;
+  isSelected: boolean;
+  takenBy?: { web: string; mobile: string } | null;
+  capReached: boolean;
+  onClick: () => void;
+  testId: string;
+}) {
+  const isTaken = !!takenBy;
+  const disabled = isPast || !hasOdds || (!isSelected && (isTaken || capReached));
+  return (
+    <Button
+      size="sm"
+      variant={isSelected ? "default" : "outline"}
+      className={cn(
+        "h-14 min-h-14 py-1.5 flex flex-col items-center justify-center gap-0.5 text-xs leading-tight",
+        isTaken && !isSelected && "opacity-40"
+      )}
+      onClick={onClick}
+      disabled={disabled}
+      data-testid={testId}
+    >
+      <span>{label}</span>
+      {isTaken && !isSelected ? (
+        // Web (sm+ viewports) shows "F.Lastname"; narrower/mobile widths show
+        // just the first name — same data, two pre-formatted strings from
+        // the server (see shared/pickOwnerLabel.ts) so a full last name
+        // never has to round-trip to the client unabbreviated.
+        <span className="text-[10px] text-muted-foreground truncate max-w-full">
+          <span className="hidden sm:inline">Taken by {takenBy.web}</span>
+          <span className="sm:hidden">Taken by {takenBy.mobile}</span>
+        </span>
+      ) : (
+        subLabel && <span className="text-muted-foreground">{subLabel}</span>
+      )}
+    </Button>
+  );
+}
+
 function formatRecordDateRange(range: { start: string; end: string } | null | undefined): string | null {
   if (!range) return null;
   const fmt = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -289,7 +349,9 @@ export default function LeagueDetail() {
   const { data: games } = useGames(activeWeekId || 0);
   const { data: leagueParlays } = useLeagueParlays(leagueId, activeWeekId || 0);
   const { data: myParlay } = useMyParlay(leagueId, activeWeekId || 0);
-  const createParlay = useCreateParlay();
+  const addDraftLeg = useAddDraftLeg();
+  const removeDraftLeg = useRemoveDraftLeg();
+  const submitDraftParlay = useSubmitDraftParlay();
   const approveParlay = useApproveParlay();
   const rejectParlay = useRejectParlay();
 
@@ -300,9 +362,10 @@ export default function LeagueDetail() {
   const lockParlay = useLockWeekParlay(leagueId, activeWeekId || 0);
   const unlockParlay = useUnlockWeekParlay(leagueId, activeWeekId || 0);
   const { data: popularPicks } = usePopularPicks(leagueId, activeWeekId || 0);
+  const { data: takenPicks } = useTakenPicks(leagueId, activeWeekId || 0);
   const { data: myParlayHistory } = useMyParlayHistory(leagueId);
 
-  const [selectedLegs, setSelectedLegs] = useState<ParlayLeg[]>([]);
+  const [propDialogGame, setPropDialogGame] = useState<Game | null>(null);
   const [importInstructionsOpen, setImportInstructionsOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [showLockConfirm, setShowLockConfirm] = useState(false);
@@ -362,30 +425,38 @@ export default function LeagueDetail() {
     return undefined;
   };
 
+  // The draft parlay (server-side, status: 'draft') is now the source of
+  // truth for "what's selected" — no local selection state. myParlay is
+  // truthy (and its legs populated) as soon as the first tile is tapped,
+  // via useMyParlay -> getUserParlayForWeek, which returns draft parlays too.
+  const myLegs = myParlay?.legs ?? [];
+  const maxBetsPerGame = league?.maxBetsPerGame || 1;
+
+  const legsForGame = (gameId: number) => myLegs.filter(l => l.gameId === gameId);
+
+  const isMySelection = (gameId: number, betType: string, pick: string) =>
+    myLegs.some(l => l.gameId === gameId && l.betType === betType && l.pick === pick);
+
+  const takenByOther = (gameId: number, betType: string, pick: string) =>
+    (takenPicks ?? []).find(t => t.gameId === gameId && t.betType === betType && t.pick === pick);
+
   const toggleLeg = (game: Game, betType: string, pick: string) => {
-    const existing = selectedLegs.findIndex(l => l.gameId === game.id);
-    const line = getLineForBet(game, betType, pick);
-    
-    if (existing >= 0) {
-      if (selectedLegs[existing].pick === pick && selectedLegs[existing].betType === betType) {
-        setSelectedLegs(prev => prev.filter((_, i) => i !== existing));
-      } else {
-        setSelectedLegs(prev => prev.map((l, i) => i === existing ? { gameId: game.id, betType, pick, line } : l));
-      }
-    } else {
-      setSelectedLegs(prev => [...prev, { gameId: game.id, betType, pick, line }]);
+    if (!activeWeekId || !leagueId) return;
+    const existing = myLegs.find(l => l.gameId === game.id && l.betType === betType && l.pick === pick);
+    if (existing) {
+      if (!myParlay) return;
+      removeDraftLeg.mutate({ parlayId: myParlay.id, legId: existing.id, leagueId, weekId: activeWeekId });
+      return;
     }
+    if (takenByOther(game.id, betType, pick)) return;
+    if (legsForGame(game.id).length >= maxBetsPerGame) return;
+    const line = getLineForBet(game, betType, pick);
+    addDraftLeg.mutate({ leagueId, weekId: activeWeekId, leg: { gameId: game.id, betType, pick, line } });
   };
 
   const submitParlay = () => {
-    if (!activeWeekId || !leagueId) return;
-    createParlay.mutate({ leagueId, weekId: activeWeekId, legs: selectedLegs }, {
-      onSuccess: () => setSelectedLegs([])
-    });
-  };
-
-  const getPickForGame = (gameId: number) => {
-    return selectedLegs.find(l => l.gameId === gameId);
+    if (!activeWeekId || !leagueId || !myParlay) return;
+    submitDraftParlay.mutate({ parlayId: myParlay.id, leagueId, weekId: activeWeekId });
   };
 
   if (!league) {
@@ -394,7 +465,7 @@ export default function LeagueDetail() {
 
   const minLegs = league.minLegsPerParlay || 3;
   const maxLegs = league.maxLegsPerParlay || 5;
-  const canSubmit = selectedLegs.length >= minLegs && selectedLegs.length <= maxLegs;
+  const canSubmit = myLegs.length >= minLegs && myLegs.length <= maxLegs;
 
   return (
     <div className="max-w-screen-2xl mx-auto space-y-6 pb-12">
@@ -615,41 +686,43 @@ export default function LeagueDetail() {
                 )}
               </CardContent>
             </Card>
-          ) : !myParlay ? (
+          ) : !myParlay || myParlay.status === "draft" ? (
             <>
               {/* Selection Summary */}
-              {selectedLegs.length > 0 && (
+              {myLegs.length > 0 && (
                 <Card className="bg-card/50 border-white/5">
                   <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-                    <CardTitle className="text-lg">Your Parlay ({selectedLegs.length}/{maxLegs} legs)</CardTitle>
+                    <CardTitle className="text-lg">Your Parlay ({myLegs.length}/{maxLegs} legs)</CardTitle>
                     <Button
                       onClick={submitParlay}
-                      disabled={!canSubmit || createParlay.isPending}
+                      disabled={!canSubmit || submitDraftParlay.isPending}
                       data-testid="button-submit-parlay"
                     >
-                      {createParlay.isPending ? `${getBuildingVerb(leagueId)}...` : "Submit Parlay"}
+                      {submitDraftParlay.isPending ? `${getBuildingVerb(leagueId)}...` : "Submit Parlay"}
                     </Button>
                   </CardHeader>
                   <CardContent>
                     {!canSubmit && (
                       <p className="text-sm text-muted-foreground mb-3">
-                        {selectedLegs.length < minLegs
+                        {myLegs.length < minLegs
                           ? `Select at least ${minLegs} games`
                           : `Maximum ${maxLegs} games allowed`}
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2">
-                      {selectedLegs.map((leg, i) => {
+                      {myLegs.map((leg) => {
                         const game = games?.find(g => g.id === leg.gameId);
                         const pickLabel =
+                          leg.betType === 'player_prop' ? `${leg.playerName ?? 'Player'} ${leg.pick}` :
                           leg.betType === 'over' ? `O ${game?.overUnder}` :
                           leg.betType === 'under' ? `U ${game?.overUnder}` :
                           leg.pick === 'home' ? game?.homeTeam : game?.awayTeam;
                         const betLabel =
                           leg.betType === 'spread' ? 'SPR' :
-                          leg.betType === 'moneyline' ? 'ML' : '';
+                          leg.betType === 'moneyline' ? 'ML' :
+                          leg.betType === 'player_prop' ? 'PROP' : '';
                         return (
-                          <Badge key={i} variant="outline" className="text-sm">
+                          <Badge key={leg.id} variant="outline" className="text-sm">
                             {pickLabel} {betLabel && `(${betLabel})`}
                           </Badge>
                         );
@@ -662,8 +735,8 @@ export default function LeagueDetail() {
               {/* Games Grid */}
               <div className="grid gap-4 md:grid-cols-2">
                 {games?.map((game) => {
-                  const pick = getPickForGame(game.id);
                   const isPast = game.gameTime ? new Date(game.gameTime) < new Date() : false;
+                  const capReached = legsForGame(game.id).length >= maxBetsPerGame;
 
                   const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
                   const homeSpread = game.spread || null;
@@ -678,98 +751,92 @@ export default function LeagueDetail() {
                       data-testid={`card-game-${game.id}`}
                     >
                       <CardContent className="p-4">
-                        <div className="flex items-center justify-between mb-3 text-xs text-muted-foreground">
+                        <div className="flex items-center justify-between mb-1 text-xs text-muted-foreground">
                           <span>{game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}</span>
                           {game.venue && <span className="truncate max-w-[120px]">{game.venue}</span>}
                         </div>
-
-                        {/* Teams Header */}
-                        <div className="grid grid-cols-4 gap-1 mb-3 text-sm font-medium">
-                          <div></div>
-                          <div className="text-center text-muted-foreground text-xs">Spread</div>
-                          <div className="text-center text-muted-foreground text-xs">ML</div>
-                          <div className="text-center text-muted-foreground text-xs">Total</div>
+                        <div className="flex items-center justify-between mb-3 text-sm font-medium">
+                          <span className="truncate">{game.awayTeam} <span className="text-xs text-muted-foreground">{game.awayRecord}</span></span>
+                          <span className="text-xs text-muted-foreground px-1">@</span>
+                          <span className="truncate text-right">{game.homeTeam} <span className="text-xs text-muted-foreground">{game.homeRecord}</span></span>
                         </div>
 
-                        {/* Away Team Row */}
-                        <div className="grid grid-cols-4 gap-1 mb-2 items-center">
-                          <div className="pr-2">
-                            <div className="font-bold text-sm truncate">{game.awayTeam}</div>
-                            <div className="text-xs text-muted-foreground">{game.awayRecord}</div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant={pick?.betType === 'spread' && pick?.pick === 'away' ? 'default' : 'outline'}
-                            className="h-auto py-1.5 flex flex-col text-xs leading-tight"
-                            onClick={() => !isPast && toggleLeg(game, 'spread', 'away')}
-                            disabled={isPast || !game.spread}
-                            data-testid={`button-spread-away-${game.id}`}
-                          >
-                            <span>{awaySpread || '-'}</span>
-                            {game.spreadOdds && <span className="text-muted-foreground">{game.spreadOdds}</span>}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={pick?.betType === 'moneyline' && pick?.pick === 'away' ? 'default' : 'outline'}
-                            className="h-auto py-1.5 flex flex-col text-xs"
-                            onClick={() => !isPast && toggleLeg(game, 'moneyline', 'away')}
-                            disabled={isPast || !game.moneylineAway}
-                            data-testid={`button-ml-away-${game.id}`}
-                          >
-                            {game.moneylineAway || '-'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={pick?.betType === 'over' && pick?.pick === 'over' ? 'default' : 'outline'}
-                            className="h-auto py-1.5 flex flex-col text-xs leading-tight"
-                            onClick={() => !isPast && toggleLeg(game, 'over', 'over')}
-                            disabled={isPast || !game.overUnder}
-                            data-testid={`button-over-${game.id}`}
-                          >
-                            <span>O {game.overUnder || '-'}</span>
-                            {game.overOdds && <span className="text-muted-foreground">{game.overOdds}</span>}
-                          </Button>
+                        {/* 3×2 pick tiles: row 1 = away spread/ML/over, row 2 = home spread/ML/under */}
+                        <div className="grid grid-cols-3 gap-2">
+                          <PickTile
+                            label={awaySpread || '-'}
+                            subLabel={game.spreadOdds}
+                            hasOdds={!!game.spread}
+                            isPast={isPast}
+                            isSelected={isMySelection(game.id, 'spread', 'away')}
+                            takenBy={takenByOther(game.id, 'spread', 'away')?.takenBy}
+                            capReached={capReached}
+                            onClick={() => toggleLeg(game, 'spread', 'away')}
+                            testId={`button-spread-away-${game.id}`}
+                          />
+                          <PickTile
+                            label={game.moneylineAway || '-'}
+                            hasOdds={!!game.moneylineAway}
+                            isPast={isPast}
+                            isSelected={isMySelection(game.id, 'moneyline', 'away')}
+                            takenBy={takenByOther(game.id, 'moneyline', 'away')?.takenBy}
+                            capReached={capReached}
+                            onClick={() => toggleLeg(game, 'moneyline', 'away')}
+                            testId={`button-ml-away-${game.id}`}
+                          />
+                          <PickTile
+                            label={`O ${game.overUnder || '-'}`}
+                            subLabel={game.overOdds}
+                            hasOdds={!!game.overUnder}
+                            isPast={isPast}
+                            isSelected={isMySelection(game.id, 'over', 'over')}
+                            takenBy={takenByOther(game.id, 'over', 'over')?.takenBy}
+                            capReached={capReached}
+                            onClick={() => toggleLeg(game, 'over', 'over')}
+                            testId={`button-over-${game.id}`}
+                          />
+                          <PickTile
+                            label={homeSpread || '-'}
+                            subLabel={game.spreadOdds}
+                            hasOdds={!!game.spread}
+                            isPast={isPast}
+                            isSelected={isMySelection(game.id, 'spread', 'home')}
+                            takenBy={takenByOther(game.id, 'spread', 'home')?.takenBy}
+                            capReached={capReached}
+                            onClick={() => toggleLeg(game, 'spread', 'home')}
+                            testId={`button-spread-home-${game.id}`}
+                          />
+                          <PickTile
+                            label={game.moneylineHome || '-'}
+                            hasOdds={!!game.moneylineHome}
+                            isPast={isPast}
+                            isSelected={isMySelection(game.id, 'moneyline', 'home')}
+                            takenBy={takenByOther(game.id, 'moneyline', 'home')?.takenBy}
+                            capReached={capReached}
+                            onClick={() => toggleLeg(game, 'moneyline', 'home')}
+                            testId={`button-ml-home-${game.id}`}
+                          />
+                          <PickTile
+                            label={`U ${game.overUnder || '-'}`}
+                            subLabel={game.underOdds}
+                            hasOdds={!!game.overUnder}
+                            isPast={isPast}
+                            isSelected={isMySelection(game.id, 'under', 'under')}
+                            takenBy={takenByOther(game.id, 'under', 'under')?.takenBy}
+                            capReached={capReached}
+                            onClick={() => toggleLeg(game, 'under', 'under')}
+                            testId={`button-under-${game.id}`}
+                          />
                         </div>
 
-                        {/* Home Team Row */}
-                        <div className="grid grid-cols-4 gap-1 items-center">
-                          <div className="pr-2">
-                            <div className="font-bold text-sm truncate">{game.homeTeam}</div>
-                            <div className="text-xs text-muted-foreground">{game.homeRecord}</div>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant={pick?.betType === 'spread' && pick?.pick === 'home' ? 'default' : 'outline'}
-                            className="h-auto py-1.5 flex flex-col text-xs leading-tight"
-                            onClick={() => !isPast && toggleLeg(game, 'spread', 'home')}
-                            disabled={isPast || !game.spread}
-                            data-testid={`button-spread-home-${game.id}`}
-                          >
-                            <span>{homeSpread || '-'}</span>
-                            {game.spreadOdds && <span className="text-muted-foreground">{game.spreadOdds}</span>}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={pick?.betType === 'moneyline' && pick?.pick === 'home' ? 'default' : 'outline'}
-                            className="h-auto py-1.5 flex flex-col text-xs"
-                            onClick={() => !isPast && toggleLeg(game, 'moneyline', 'home')}
-                            disabled={isPast || !game.moneylineHome}
-                            data-testid={`button-ml-home-${game.id}`}
-                          >
-                            {game.moneylineHome || '-'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant={pick?.betType === 'under' && pick?.pick === 'under' ? 'default' : 'outline'}
-                            className="h-auto py-1.5 flex flex-col text-xs leading-tight"
-                            onClick={() => !isPast && toggleLeg(game, 'under', 'under')}
-                            disabled={isPast || !game.overUnder}
-                            data-testid={`button-under-${game.id}`}
-                          >
-                            <span>U {game.overUnder || '-'}</span>
-                            {game.underOdds && <span className="text-muted-foreground">{game.underOdds}</span>}
-                          </Button>
-                        </div>
+                        <button
+                          type="button"
+                          className="mt-3 text-xs text-primary hover:underline"
+                          onClick={() => setPropDialogGame(game)}
+                          data-testid={`button-view-props-${game.id}`}
+                        >
+                          View player props →
+                        </button>
 
                         {game.isFinished && (
                           <div className="mt-3 pt-3 border-t border-white/10 text-center text-sm">
@@ -782,6 +849,16 @@ export default function LeagueDetail() {
                   );
                 })}
               </div>
+
+              {propDialogGame && activeWeekId && (
+                <AddPropLegDialog
+                  game={propDialogGame}
+                  leagueId={leagueId}
+                  weekId={activeWeekId}
+                  open={!!propDialogGame}
+                  onOpenChange={(open) => !open && setPropDialogGame(null)}
+                />
+              )}
             </>
           ) : (
             <>

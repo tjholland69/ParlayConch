@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, type InfiniteData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, TakenPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team } from "@shared/schema";
 
 export type PaginatedParlays = {
   items: ParlayWithLegs[];
@@ -174,6 +174,22 @@ export function usePopularPicks(leagueId: number, weekId: number) {
   });
 }
 
+// Picks already locked in by other league members this week — used to gray
+// out tiles in the picks grid. Kept live by useRealtimeSync's
+// invalidateParlaysForLeague, which fires on the same "parlays_updated"
+// event addDraftLeg/removeDraftLeg/submitDraftParlay already emit.
+export function useTakenPicks(leagueId: number, weekId: number) {
+  return useQuery<TakenPick[]>({
+    queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'taken-picks'],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/taken-picks`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch taken picks");
+      return res.json();
+    },
+    enabled: !!leagueId && !!weekId,
+  });
+}
+
 export function useLeagueStats(leagueId: number) {
   return useQuery<UserStat[]>({
     queryKey: [api.leagues.stats.path, leagueId],
@@ -339,6 +355,96 @@ export function useCreateParlay() {
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: [api.parlays.myForWeek.path, variables.leagueId, variables.weekId] });
       queryClient.invalidateQueries({ queryKey: [api.parlays.forWeek.path, variables.leagueId, variables.weekId] });
+      toast({ title: "Parlay Submitted!", description: "Good luck this week!" });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+type DraftParlayLegInput = ParlayLegInput & { playerName?: string; propType?: string };
+
+function invalidateDraftParlayQueries(queryClient: ReturnType<typeof useQueryClient>, leagueId: number, weekId: number) {
+  queryClient.invalidateQueries({ queryKey: [api.parlays.myForWeek.path, leagueId, weekId] });
+  queryClient.invalidateQueries({ queryKey: [api.parlays.forWeek.path, leagueId, weekId] });
+  queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'taken-picks'] });
+}
+
+// Adds ONE leg to (or starts) the caller's in-progress draft parlay — the
+// per-tap counterpart to useCreateParlay's all-at-once submit. Powers the
+// picks grid so each tile tap is its own server round-trip (needed for live
+// per-game caps and cross-user pick exclusivity — see addLegToDraftParlay).
+export function useAddDraftLeg() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (data: { leagueId: number; weekId: number; leg: DraftParlayLegInput }) => {
+      const res = await fetch(`/api/leagues/${data.leagueId}/weeks/${data.weekId}/draft-parlay/legs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data.leg),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.message || "Failed to add pick");
+      }
+      return res.json() as Promise<ParlayWithLegs>;
+    },
+    onSuccess: (_, variables) => {
+      invalidateDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);
+    },
+    onError: (error) => {
+      toast({ title: "Couldn't add pick", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useRemoveDraftLeg() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (data: { parlayId: number; legId: number; leagueId: number; weekId: number }) => {
+      const res = await fetch(`/api/parlays/${data.parlayId}/legs/${data.legId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.message || "Failed to remove pick");
+      }
+      return res.json();
+    },
+    onSuccess: (_, variables) => {
+      invalidateDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);
+    },
+    onError: (error) => {
+      toast({ title: "Couldn't remove pick", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+export function useSubmitDraftParlay() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async (data: { parlayId: number; leagueId: number; weekId: number }) => {
+      const res = await fetch(`/api/parlays/${data.parlayId}/submit`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.message || "Failed to submit parlay");
+      }
+      return res.json();
+    },
+    onSuccess: (_, variables) => {
+      invalidateDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);
       toast({ title: "Parlay Submitted!", description: "Good luck this week!" });
     },
     onError: (error) => {

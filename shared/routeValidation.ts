@@ -22,6 +22,10 @@ export const draftParlayLegInputSchema = z.object({
   betType: z.string().min(1),
   pick: z.string().min(1),
   line: z.string().optional(),
+  // Player-prop legs (betType === "player_prop") carry these instead of
+  // relying on the game's own spread/moneyline/total odds.
+  playerName: z.string().optional(),
+  propType: z.string().optional(),
 });
 
 export type DraftParlayLegInput = z.infer<typeof draftParlayLegInputSchema>;
@@ -75,6 +79,7 @@ export const updateLeagueSettingsSchema = z
     maxParlaysPerWeek: z.number().int().positive().optional(),
     minLegsPerParlay: z.number().int().min(1).optional(),
     maxLegsPerParlay: z.number().int().min(1).optional(),
+    maxBetsPerGame: z.number().int().min(1).optional(),
     insightsEnabled: z.boolean().optional(),
     loserLabel: z.enum(['parlay_loser', 'asshole', 'jerry', 'dud', 'doofus']).optional(),
     heroLabel: z.enum(['parlay_hero', 'mvp', 'legend', 'big_time']).optional(),

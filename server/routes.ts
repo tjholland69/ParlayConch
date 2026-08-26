@@ -582,6 +582,20 @@ export async function registerRoutes(
     res.json(picks);
   });
 
+  // The picks-grid exclusivity set: every pick a DIFFERENT league member has
+  // already locked in (submitted) for this week, so the client can gray out
+  // those tiles. See storage.getTakenPicksForWeek.
+  app.get("/api/leagues/:leagueId/weeks/:weekId/taken-picks", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.leagueId);
+    const weekId = Number(req.params.weekId);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const picks = await storage.getTakenPicksForWeek(leagueId, weekId, userId);
+    res.json(picks);
+  });
+
   // ===== PARLAYS =====
   app.post("/api/parlays", isAuthenticated, async (req, res) => {
     try {
@@ -642,8 +656,16 @@ export async function registerRoutes(
         userId,
         leagueId,
         weekId,
-        { gameId: leg.gameId, betType: leg.betType, pick: leg.pick, line: emptyToNull(leg.line) },
+        {
+          gameId: leg.gameId,
+          betType: leg.betType,
+          pick: leg.pick,
+          line: emptyToNull(leg.line),
+          playerName: leg.playerName ?? null,
+          propType: leg.propType ?? null,
+        },
         league.maxLegsPerParlay || 5,
+        league.maxBetsPerGame || 1,
       );
 
       const parlay = await storage.getUserParlayForWeek(userId, leagueId, weekId);

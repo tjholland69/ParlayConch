@@ -21,6 +21,7 @@ import { getBustedLeg } from "@/lib/parlayLoser";
 import { useAuth } from "@/hooks/use-auth";
 import { DisputeLegDialog } from "@/components/DisputeLegDialog";
 import { getHeroLeg } from "@/lib/parlayHero";
+import { decidedTime } from "@/lib/decidedTime";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 import { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 import { legLabel } from "@/lib/legLabel";
@@ -377,10 +378,14 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const decisiveFinishTime = decisiveLeg?.decidedAt ?? decisiveLeg?.game?.finishedAt ?? null;
   const decidedSlate = decisiveFinishTime ? getSlate(new Date(decisiveFinishTime)) : null;
 
+  // Earliest decided (or, once resolved, finished) leg first; legs still
+  // pending decision have no resolvable timestamp and fall back to their
+  // scheduled kickoff so they order sensibly relative to already-decided
+  // legs instead of all landing arbitrarily at the end.
   const sortedLegs = [...parlay.legs].sort((a, b) => {
-    const aTime = a.game?.gameTime ? new Date(a.game.gameTime).getTime() : Infinity;
-    const bTime = b.game?.gameTime ? new Date(b.game.gameTime).getTime() : Infinity;
-    return aTime - bTime;
+    const aTime = decidedTime(a) ?? (a.game?.gameTime ? new Date(a.game.gameTime).getTime() : Infinity);
+    const bTime = decidedTime(b) ?? (b.game?.gameTime ? new Date(b.game.gameTime).getTime() : Infinity);
+    return aTime - bTime || a.id - b.id;
   });
 
   return (

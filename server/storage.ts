@@ -18,11 +18,12 @@ import {
   type LeagueWeekLock, type WeekLockStatus,
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
   type UserSettings,
-  type ActiveWeekStatus, type LeagueDataStats, type PopularPick,
+  type ActiveWeekStatus, type LeagueDataStats, type PopularPick, type TakenPick,
 } from "@shared/schema";
 import { normalizeJoinedGame, normalizeParlayLegPatch } from "@shared/dataIntegrity";
 import { countParlayOutcomes, mergeUserSettings, buildUserStat, normalizeOutcomeCounts } from "@shared/statsAggregation";
-import { eq, and, desc, asc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
+import { formatPickOwnerLabel } from "@shared/pickOwnerLabel";
+import { eq, and, or, desc, asc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
 import {
   averagePowerScore,
   legPowerContribution,
@@ -39,6 +40,18 @@ function emitLeague(leagueId: number, weekId: number | undefined, kind: string) 
 
 function emitUser(userId: string, kind: string) {
   void publishUserEvent(userId, kind).catch((e) => logger.error({ e }, "[realtime]"));
+}
+
+// Discriminates a leg by what it actually bets on, independent of which
+// parlay it belongs to — game legs key on (gameId, betType, pick); player
+// props have no gameId-scoped odds, so they key on (playerName, propType,
+// pick) instead. Shared by getPopularPicksForWeek, getTakenPicksForWeek, and
+// addLegToDraftParlay's cross-user exclusivity check so all three agree on
+// what counts as "the same pick."
+function pickKey(leg: { betType: string; gameId?: number | null; pick: string; playerName?: string | null; propType?: string | null }): string {
+  return leg.betType === 'player_prop'
+    ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
+    : `game:${leg.gameId}:${leg.betType}:${leg.pick}`;
 }
 
 // Lowercase, strip common suffixes (Jr, Sr, II–IV) and punctuation, collapse
@@ -87,7 +100,7 @@ export interface IStorage {
   isSuperUser(userId: string): Promise<boolean>;
   isLeagueAdmin(leagueId: number, userId: string): Promise<boolean>;
   isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean>;
-  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'insightsEnabled' | 'loserLabel' | 'heroLabel'>>): Promise<League>;
+  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'maxBetsPerGame' | 'insightsEnabled' | 'loserLabel' | 'heroLabel'>>): Promise<League>;
   updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League>;
   setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember>;
   getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]>;
@@ -108,6 +121,7 @@ export interface IStorage {
     weekId: number,
     leg: Omit<InsertParlayLeg, "parlayId" | "userId">,
     maxLegsPerParlay: number,
+    maxBetsPerGame: number,
   ): Promise<Parlay>;
   removeDraftParlayLeg(userId: string, parlayId: number, legId: number): Promise<Parlay | null>;
   submitDraftParlay(userId: string, parlayId: number, minLegsPerParlay: number, maxLegsPerParlay: number): Promise<Parlay>;
@@ -186,6 +200,7 @@ export interface IStorage {
   getActiveWeekParlayStatus(leagueIds: number[], userId: string): Promise<Record<number, ActiveWeekStatus>>;
   getLeagueDataStats(leagueId: number): Promise<LeagueDataStats>;
   getPopularPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<PopularPick[]>;
+  getTakenPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<TakenPick[]>;
 
   // Aggregate win/loss stats per league (for My Leagues tile)
   getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number; parlaysWon: number }>>;
@@ -216,7 +231,7 @@ export interface IStorage {
   setGameFinishedAt(gameId: number, finishedAt: Date): Promise<void>;
   backfillGameFinishedAt(): Promise<{ updated: number }>;
   getDistinctSeasons(): Promise<number[]>;
-  getWonGameLegsPendingDecision(betTypes: string[], leagueId?: number): Promise<(ParlayLeg & { game: Game; season: number; weekNumber: number })[]>;
+  getGameLegsPendingDecision(criteria: { betType: string; result: "win" | "loss" }[], leagueId?: number): Promise<(ParlayLeg & { game: Game; season: number; weekNumber: number })[]>;
   getWonPropLegsPendingDecision(leagueId?: number): Promise<(ParlayLeg & { season: number; weekNumber: number })[]>;
   setLegDecision(legId: number, info: { decidedAt: Date; decidedPlayDesc: string; decidedQuarter: string; decidedClock: string; decidedConfidence: string }): Promise<void>;
   patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
@@ -658,11 +673,6 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
       .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
 
-    const pickKey = (leg: typeof parlayLegs.$inferSelect) =>
-      leg.betType === 'player_prop'
-        ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
-        : `game:${leg.gameId}:${leg.betType}:${leg.pick}`;
-
     const excludeKeys = new Set(
       rows.filter(r => r.leg.userId === excludeUserId).map(r => pickKey(r.leg))
     );
@@ -688,6 +698,48 @@ export class DatabaseStorage implements IStorage {
     }
 
     return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, 10);
+  }
+
+  /**
+   * The exclusivity set for the picks grid: every distinct pick some OTHER
+   * league member has already locked in (submitted — status !== 'draft')
+   * for this league/week. Unlike getPopularPicksForWeek, a still-drafting
+   * opponent's picks don't appear here (they haven't locked anything in
+   * yet), and this returns every taken pick, not just a top-10 ranking.
+   */
+  async getTakenPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<TakenPick[]> {
+    const rows = await db
+      .select({ leg: parlayLegs, owner: users })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(users, eq(parlayLegs.userId, users.id))
+      .where(and(
+        eq(parlays.leagueId, leagueId),
+        eq(parlays.weekId, weekId),
+        not(eq(parlays.status, 'draft')),
+        not(eq(parlayLegs.userId, excludeUserId)),
+      ));
+
+    const taken = new Map<string, TakenPick>();
+    for (const { leg, owner } of rows) {
+      const key = pickKey(leg);
+      if (taken.has(key)) continue;
+      taken.set(key, {
+        gameId: leg.gameId,
+        betType: leg.betType,
+        pick: leg.pick,
+        playerName: leg.playerName,
+        propType: leg.propType,
+        takenBy: formatPickOwnerLabel({
+          firstName: owner.firstName,
+          lastName: owner.lastName,
+          email: owner.email,
+          settings: owner.settings as UserSettings | null,
+        }),
+      });
+    }
+
+    return [...taken.values()];
   }
 
   // Win rate here is computed from individual parlay_legs.result (per-pick outcomes),
@@ -799,7 +851,7 @@ export class DatabaseStorage implements IStorage {
     return all.filter(m => m.role === 'lieutenant');
   }
 
-  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'insightsEnabled' | 'loserLabel'>>): Promise<League> {
+  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'maxBetsPerGame' | 'insightsEnabled' | 'loserLabel'>>): Promise<League> {
     const [updated] = await db.update(leagues)
       .set(updates)
       .where(eq(leagues.id, leagueId))
@@ -983,7 +1035,17 @@ export class DatabaseStorage implements IStorage {
    * parlays may have fewer legs than `minLegsPerParlay`; that's only
    * enforced at final submit (`submitDraftParlay`). `maxLegsPerParlay` is
    * still enforced here since there's no useful reason to let a draft grow
-   * past what could ever be submitted.
+   * past what could ever be submitted. `maxBetsPerGame` caps how many of
+   * those legs can share one `gameId` (e.g. only one of the 6 spread/
+   * ML/total tiles per game, by default).
+   *
+   * Also rejects a leg that exactly matches (same gameId/betType/pick, or
+   * same playerName/propType/pick for a prop) a leg already locked in by a
+   * DIFFERENT user's non-draft parlay this week — cross-user exclusivity.
+   * This is a plain read-then-insert check, not lock-protected across users
+   * (two different users' draft rows can't share one FOR UPDATE lock the
+   * way same-user double-taps below can) — an accepted, low-probability
+   * race in this low-concurrency friend-group app.
    */
   async addLegToDraftParlay(
     userId: string,
@@ -991,7 +1053,14 @@ export class DatabaseStorage implements IStorage {
     weekId: number,
     leg: Omit<InsertParlayLeg, "parlayId" | "userId">,
     maxLegsPerParlay: number,
+    maxBetsPerGame: number,
   ): Promise<Parlay> {
+    const takenByOthers = await this.getTakenPicksForWeek(leagueId, weekId, userId);
+    const legKey = pickKey(leg);
+    if (takenByOthers.some(t => pickKey(t) === legKey)) {
+      throw new Error("This pick has already been taken by another player.");
+    }
+
     const parlayRecord = await db.transaction(async (tx) => {
       // FOR UPDATE: without a row lock here, two concurrent adds (double-tap,
       // two devices) can both read the same existingLegs count below, both
@@ -1021,6 +1090,12 @@ export class DatabaseStorage implements IStorage {
       const existingLegs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, record.id));
       if (existingLegs.length >= maxLegsPerParlay) {
         throw new Error(`Parlay cannot have more than ${maxLegsPerParlay} legs`);
+      }
+      if (leg.gameId != null) {
+        const legsOnThisGame = existingLegs.filter(l => l.gameId === leg.gameId).length;
+        if (legsOnThisGame >= maxBetsPerGame) {
+          throw new Error(`You can only pick ${maxBetsPerGame} bet${maxBetsPerGame === 1 ? "" : "s"} on this game.`);
+        }
       }
 
       await tx.insert(parlayLegs).values({ ...leg, parlayId: record.id, userId });
@@ -2202,15 +2277,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   // ─── Decision-moment detection (Phase 3) ───────────────────────────────────
-  // Legs whose leg-level result is already a confirmed win (via score/stat
-  // comparison) but whose decidedAt is still unset — candidates for exact
-  // mid-game "when did this actually become a win" detection from
-  // play-by-play data. Only 'win' legs qualify: an over/prop total only ever
-  // crosses its line in one direction (upward), so a loss never has a
-  // deterministic early-decision point — it can only be confirmed at the
-  // final whistle.
+  // Legs whose leg-level result is already confirmed but whose decidedAt is
+  // still unset — candidates for exact/heuristic mid-game "when did this
+  // actually become fixed" detection from play-by-play data. Each (betType,
+  // result) pair here must have a deterministic or defensible early-decision
+  // point (see decisionDetection.ts's module docstring for the full
+  // rationale): e.g. a spread/moneyline/under WIN or LOSS both have one
+  // (mirror-image "eliminated" heuristics), but an over/prop LOSS doesn't —
+  // the total/stat can only move upward, so a loss is never fixed early and
+  // is correctly left to resolve at the final whistle only.
 
-  async getWonGameLegsPendingDecision(betTypes: string[], leagueId?: number): Promise<(ParlayLeg & { game: Game; season: number; weekNumber: number })[]> {
+  async getGameLegsPendingDecision(criteria: { betType: string; result: "win" | "loss" }[], leagueId?: number): Promise<(ParlayLeg & { game: Game; season: number; weekNumber: number })[]> {
     const rows = await db
       .select({ leg: parlayLegs, game: games, season: weeks.season, weekNumber: weeks.weekNumber })
       .from(parlayLegs)
@@ -2218,9 +2295,11 @@ export class DatabaseStorage implements IStorage {
       .innerJoin(weeks, eq(parlays.weekId, weeks.id))
       .innerJoin(games, eq(parlayLegs.gameId, games.id))
       .where(
-        leagueId !== undefined
-          ? and(inArray(parlayLegs.betType, betTypes), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt), eq(parlays.leagueId, leagueId))
-          : and(inArray(parlayLegs.betType, betTypes), eq(parlayLegs.result, "win"), isNull(parlayLegs.decidedAt))
+        and(
+          or(...criteria.map(c => and(eq(parlayLegs.betType, c.betType), eq(parlayLegs.result, c.result)))),
+          isNull(parlayLegs.decidedAt),
+          leagueId !== undefined ? eq(parlays.leagueId, leagueId) : undefined,
+        )
       );
     return rows.map(r => ({ ...r.leg, game: r.game, season: r.season, weekNumber: r.weekNumber }));
   }
