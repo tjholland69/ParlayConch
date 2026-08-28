@@ -1326,18 +1326,38 @@ export default function LeagueDetail() {
                       : null;
                     const weekLabel = record.week ? `${record.week.label}, ${record.week.season}` : null;
                     const dateRangeLabel = formatRecordDateRange(record.dateRange);
+                    const winLossLabel = record.winLoss
+                      ? `${record.winLoss.wins}-${record.winLoss.losses} (${((record.winLoss.wins / (record.winLoss.wins + record.winLoss.losses || 1)) * 100).toFixed(1)}%)`
+                      : null;
                     return (
                       <div key={record.key} className="bg-white/5 border border-white/10 rounded-2xl p-4">
-                        <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
-                          <Icon className="w-3.5 h-3.5" />
-                          {record.label}
-                        </div>
+                        {record.title ? (
+                          <>
+                            <div className="flex items-center gap-2 font-display font-bold text-sm mb-0.5">
+                              <Icon className="w-3.5 h-3.5 text-primary" />
+                              {record.title}
+                            </div>
+                            {record.label && (
+                              <div className="text-muted-foreground text-xs uppercase tracking-wider mb-2">
+                                {record.label}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
+                            <Icon className="w-3.5 h-3.5" />
+                            {record.label}
+                          </div>
+                        )}
                         <p className="font-mono font-bold text-xl truncate">
                           {record.value}
                           {record.detail && (
                             <span className="text-xs font-normal text-muted-foreground ml-1.5">({record.detail})</span>
                           )}
                         </p>
+                        {winLossLabel && (
+                          <p className="text-xs text-muted-foreground mt-1 truncate">Record: {winLossLabel}</p>
+                        )}
                         {holderName && (
                           <p className="text-xs text-muted-foreground mt-1 truncate">{holderName}</p>
                         )}

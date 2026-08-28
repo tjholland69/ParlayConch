@@ -15,6 +15,29 @@ export function useLeaguesOverviewStats() {
   });
 }
 
+export interface LeagueRecordEntry {
+  key: string;
+  label: string;
+  title?: string | null;
+  value: string;
+  holderUserId: string | null;
+  detail?: string | null;
+  winLoss?: { wins: number; losses: number } | null;
+  week?: { season: number; weekNumber: number; label: string } | null;
+  dateRange?: { start: string; end: string } | null;
+  link?: { leagueId: number; parlayId: number } | null;
+}
+
+/** League Records — same "superlatives" tiles as the web app's League
+ * Records tab, mirrored here for mobile's Stats tab (see server/services/leagueRecords.ts). */
+export function useLeagueRecords(leagueId: number) {
+  return useQuery<LeagueRecordEntry[]>({
+    queryKey: ["/api/leagues", leagueId, "records"],
+    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/records`),
+    enabled: !!leagueId,
+  });
+}
+
 export function useLeagueStats(leagueId: number) {
   return useQuery<import("@shared/schema").LeagueStats[]>({
     queryKey: ["/api/leagues", leagueId, "stats"],

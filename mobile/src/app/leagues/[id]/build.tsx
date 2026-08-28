@@ -31,12 +31,19 @@ import {
 import type { Game, GameWithBet } from "@shared/schema";
 
 export default function BuildPickScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, weekId: previewWeekIdParam, readOnly: readOnlyParam } = useLocalSearchParams<{
+    id: string;
+    weekId?: string;
+    readOnly?: string;
+  }>();
   const leagueId = parseInt(id, 10);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const activeWeek = useActiveWeek();
-  const weekId = activeWeek?.id ?? 0;
+  // A read-only preview passes an explicit weekId (next week's, not yet open
+  // for picks) instead of relying on the active week.
+  const readOnly = readOnlyParam === "1";
+  const weekId = readOnly && previewWeekIdParam ? Number(previewWeekIdParam) : activeWeek?.id ?? 0;
 
   const { data: league, isLoading: leagueLoading } = useQuery({
     queryKey: ["/api/leagues", leagueId],
@@ -47,8 +54,8 @@ export default function BuildPickScreen() {
     enabled: !!leagueId,
   });
 
-  const { data: lockStatus, isLoading: lockLoading } = useWeekLockStatus(leagueId, weekId);
-  const { data: myParlay, isLoading: myParlayLoading } = useMyParlay(leagueId, weekId);
+  const { data: lockStatus, isLoading: lockLoading } = useWeekLockStatus(leagueId, readOnly ? 0 : weekId);
+  const { data: myParlay, isLoading: myParlayLoading } = useMyParlay(leagueId, readOnly ? 0 : weekId);
   const { data: games, isLoading: gamesLoading } = useGames(weekId);
   const createParlay = useCreateParlay(leagueId);
   const addDraftLeg = useAddDraftLeg(leagueId, weekId);
@@ -87,10 +94,10 @@ export default function BuildPickScreen() {
   }, [isEditingSubmitted, myParlay, prefilled]);
 
   useEffect(() => {
-    if (!lockLoading && lockStatus?.isLocked) {
+    if (!readOnly && !lockLoading && lockStatus?.isLocked) {
       router.replace({ pathname: "/leagues/[id]", params: { id: String(leagueId) } });
     }
-  }, [lockLoading, lockStatus?.isLocked, leagueId, router]);
+  }, [readOnly, lockLoading, lockStatus?.isLocked, leagueId, router]);
 
   const gamesById = useMemo(() => {
     const map = new Map<number, Game>();
@@ -238,7 +245,7 @@ export default function BuildPickScreen() {
     .join(" · ");
 
   const submitPending = isEditingSubmitted ? createParlay.isPending : submitDraftParlay.isPending;
-  const loading = leagueLoading || lockLoading || myParlayLoading || (weekId > 0 && gamesLoading);
+  const loading = leagueLoading || (!readOnly && (lockLoading || myParlayLoading)) || (weekId > 0 && gamesLoading);
 
   if (loading) {
     return (
@@ -249,7 +256,7 @@ export default function BuildPickScreen() {
     );
   }
 
-  if (!activeWeek) {
+  if (!readOnly && !activeWeek) {
     return (
       <View style={styles.centered}>
         <Stack.Screen options={{ title: "Build Pick" }} />
@@ -263,23 +270,32 @@ export default function BuildPickScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
-          title: isEditingSubmitted ? "Edit Pick" : "Build Pick",
+          title: readOnly ? "Next Week Preview" : isEditingSubmitted ? "Edit Pick" : "Build Pick",
           headerBackTitle: "Back",
         }}
       />
 
-      <View style={styles.headerBar}>
-        <Text style={styles.headerCount}>
-          {activeLegs.length} / {maxLegs} legs
-        </Text>
-        <Text style={styles.headerHint}>
-          {activeLegs.length < minLegs
-            ? `${minLegs - activeLegs.length} more needed`
-            : activeLegs.length >= maxLegs
-              ? "Max reached"
-              : `${maxLegs - activeLegs.length} picks left`}
-        </Text>
-      </View>
+      {readOnly ? (
+        <View style={styles.previewBanner}>
+          <Ionicons name="eye-outline" size={16} color="#93c5fd" />
+          <Text style={styles.previewBannerText}>
+            Preview only — picks open once this becomes the active week.
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.headerBar}>
+          <Text style={styles.headerCount}>
+            {activeLegs.length} / {maxLegs} legs
+          </Text>
+          <Text style={styles.headerHint}>
+            {activeLegs.length < minLegs
+              ? `${minLegs - activeLegs.length} more needed`
+              : activeLegs.length >= maxLegs
+                ? "Max reached"
+                : `${maxLegs - activeLegs.length} picks left`}
+          </Text>
+        </View>
+      )}
 
       <FlatList
         data={games ?? []}
@@ -297,6 +313,7 @@ export default function BuildPickScreen() {
             <GamePickCard
               game={item}
               selectedLeg={selected}
+              readOnly={readOnly}
               onSelect={({ betType, pick }) =>
                 isEditingSubmitted ? toggleLegSubmitted(item, betType, pick) : toggleLegDraft(item, betType, pick)
               }
@@ -306,7 +323,7 @@ export default function BuildPickScreen() {
         }}
       />
 
-      <View style={[styles.slip, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      {!readOnly && <View style={[styles.slip, { paddingBottom: Math.max(insets.bottom, 12) }]}>
         <Pressable
           onPress={() => setSlipExpanded((v) => !v)}
           style={styles.slipHeader}
@@ -370,7 +387,7 @@ export default function BuildPickScreen() {
             </Text>
           )}
         </Pressable>
-      </View>
+      </View>}
     </View>
   );
 }
@@ -397,6 +414,17 @@ const styles = StyleSheet.create({
   },
   headerCount: { fontSize: 14, fontWeight: "700", color: "#f1f5f9" },
   headerHint: { fontSize: 13, color: "#94a3b8" },
+  previewBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: "#0a1526",
+    borderBottomWidth: 1,
+    borderBottomColor: "#1a2e4d",
+  },
+  previewBannerText: { fontSize: 13, color: "#93c5fd", flex: 1 },
   listContent: { padding: 16, paddingBottom: 8 },
   emptyBlock: { alignItems: "center", paddingVertical: 48, gap: 8 },
   emptyTitle: { fontSize: 16, fontWeight: "700", color: "#f1f5f9" },

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Pressable, Text, ActivityIndicator, PressableProps, StyleSheet } from "react-native";
 import { BUTTON_MIN_HEIGHT } from "@/lib/theme";
+import { useAccentColor } from "@/hooks/use-accent-color";
 
 type ButtonVariant = "default" | "outline" | "ghost" | "destructive";
 type ButtonSize = "sm" | "md" | "lg";
@@ -32,11 +33,12 @@ export function Button({
   // Track pressed via state + a flat style object so callers can still pass
   // a style callback without fighting Pressable's own style function merge.
   const [pressed, setPressed] = useState(false);
+  const accent = useAccentColor();
 
   const resolvedCallerStyle = typeof style === "function" ? style({ pressed, hovered: false }) : style;
   const containerStyle = StyleSheet.flatten([
     styles.base,
-    VARIANT_STYLES[variant],
+    variant === "default" ? { backgroundColor: accent } : VARIANT_STYLES[variant],
     SIZE_STYLES[size],
     fullWidth ? styles.fullWidth : styles.autoWidth,
     pressed && !isDisabled && styles.pressed,
@@ -91,8 +93,9 @@ const styles = StyleSheet.create({
   text: { fontWeight: "600" },
 });
 
-const VARIANT_STYLES: Record<ButtonVariant, object> = {
-  default: { backgroundColor: "#2563eb" },
+// "default" isn't listed here — its background comes from the user's accent
+// color (see containerStyle above) instead of a fixed value.
+const VARIANT_STYLES: Record<Exclude<ButtonVariant, "default">, object> = {
   outline: { backgroundColor: "transparent", borderWidth: 1, borderColor: "#2a3447" },
   ghost: { backgroundColor: "transparent" },
   destructive: { backgroundColor: "#ef4444" },

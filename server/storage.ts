@@ -137,7 +137,7 @@ export interface IStorage {
   markParlayPlaced(parlayId: number, userId: string): Promise<Parlay>;
   revertParlayToApproved(parlayId: number, userId: string): Promise<Parlay>;
   getSentParlaysForUser(userId: string): Promise<ParlayWithLegs[]>;
-  getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]>;
+  getUserParlayHistory(userId: string, leagueId?: number, weekIds?: number[]): Promise<ParlayWithLegs[]>;
   getUserLegHistory(userId: string, leagueId?: number): Promise<ParlayLegWithParlayContext[]>;
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
@@ -1327,10 +1327,11 @@ export class DatabaseStorage implements IStorage {
     })) as ParlayWithLegs[];
   }
 
-  async getUserParlayHistory(userId: string, leagueId?: number): Promise<ParlayWithLegs[]> {
-    const userParlays = leagueId
-      ? await db.select().from(parlays).where(and(eq(parlays.userId, userId), eq(parlays.leagueId, leagueId)))
-      : await db.select().from(parlays).where(eq(parlays.userId, userId));
+  async getUserParlayHistory(userId: string, leagueId?: number, weekIdFilter?: number[]): Promise<ParlayWithLegs[]> {
+    const conditions = [eq(parlays.userId, userId)];
+    if (leagueId) conditions.push(eq(parlays.leagueId, leagueId));
+    if (weekIdFilter && weekIdFilter.length > 0) conditions.push(inArray(parlays.weekId, weekIdFilter));
+    const userParlays = await db.select().from(parlays).where(and(...conditions));
 
     if (userParlays.length === 0) return [];
 

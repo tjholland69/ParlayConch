@@ -2,6 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAccentColor } from "@/hooks/use-accent-color";
+import { lighten } from "@/lib/theme";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -17,6 +19,7 @@ const TAB_ICONS: Record<string, { outline: IconName; filled: IconName; label: st
  * action (submitting a pick) deserves more visual weight than a plain tab. */
 export function BottomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
+  const accent = useAccentColor();
   // Settings has no tab icon (accessed via the header avatar) and hides the
   // bar entirely while focused, same as the default tabBarStyle:none did.
   if (state.routes[state.index]?.name === "settings") return null;
@@ -47,13 +50,13 @@ export function BottomTabBar({ state, descriptors, navigation }: BottomTabBarPro
                 accessibilityLabel={options.title ?? meta.label}
                 style={({ pressed }) => [
                   styles.centerButton,
-                  isFocused && styles.centerButtonActive,
+                  { backgroundColor: isFocused ? lighten(accent) : accent, shadowColor: accent },
                   pressed && { opacity: 0.85, transform: [{ scale: 0.96 }] },
                 ]}
               >
                 <Ionicons name={isFocused ? meta.filled : meta.outline} size={26} color="#fff" />
               </Pressable>
-              <Text style={[styles.centerLabel, isFocused && styles.labelActive]}>{meta.label}</Text>
+              <Text style={[styles.centerLabel, isFocused && { color: accent }]}>{meta.label}</Text>
             </View>
           );
         }
@@ -67,8 +70,8 @@ export function BottomTabBar({ state, descriptors, navigation }: BottomTabBarPro
             accessibilityLabel={options.title ?? meta.label}
             style={({ pressed }) => [styles.tab, pressed && styles.tabPressed]}
           >
-            <Ionicons name={isFocused ? meta.filled : meta.outline} size={24} color={isFocused ? "#2563eb" : "#475569"} />
-            <Text style={[styles.label, isFocused && styles.labelActive]}>{meta.label}</Text>
+            <Ionicons name={isFocused ? meta.filled : meta.outline} size={24} color={isFocused ? accent : "#475569"} />
+            <Text style={[styles.label, isFocused && { color: accent }]}>{meta.label}</Text>
           </Pressable>
         );
       })}
@@ -101,9 +104,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.2,
     color: "#475569",
   },
-  labelActive: {
-    color: "#2563eb",
-  },
   centerSlot: {
     flex: 1,
     alignItems: "center",
@@ -112,20 +112,15 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: "#2563eb",
     alignItems: "center",
     justifyContent: "center",
     marginTop: -28,
     borderWidth: 4,
     borderColor: "#1c2538",
-    shadowColor: "#2563eb",
     shadowOpacity: 0.5,
     shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 },
     elevation: 8,
-  },
-  centerButtonActive: {
-    backgroundColor: "#3b82f6",
   },
   centerLabel: {
     fontSize: 11,

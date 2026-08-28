@@ -8,10 +8,12 @@ import {
   Alert,
   ActivityIndicator,
   StyleSheet,
+  Modal,
 } from "react-native";
 import { useEffect, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import Constants from "expo-constants";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/hooks/use-auth";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
@@ -19,6 +21,10 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { SPORTSBOOK_PROVIDERS, type SportsbookProvider } from "@shared/sportsbook-providers";
 import { useActingAs, useSuperUserSearch, useSetActAs, useClearActAs } from "@/hooks/use-acting-as";
+import { ACCENT_PRESETS, DEFAULT_ACCENT } from "@/lib/theme";
+import { useAccentColor } from "@/hooks/use-accent-color";
+import { NFL_TEAMS } from "@/lib/nflTeams";
+import { useTeams } from "@/hooks/use-teams";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -26,20 +32,6 @@ type NotificationPreferences = { email: boolean; sms: boolean; push: boolean; ph
 const DEFAULT_NOTIF_PREFS: NotificationPreferences = { email: true, sms: false, push: true };
 
 type ThemeMode = "dark" | "light" | "system";
-
-/** Same 8 accent presets as the web app's Settings page (HSL triples, so a
- * future app-wide theming pass can share the exact values). */
-const ACCENT_PRESETS: { label: string; value: string; swatch: string }[] = [
-  { label: "Blue", value: "221 83% 53%", swatch: "#2563eb" },
-  { label: "Green", value: "142 70% 50%", swatch: "#22c55e" },
-  { label: "Purple", value: "262 80% 60%", swatch: "#8b5cf6" },
-  { label: "Orange", value: "25 90% 55%", swatch: "#f2762e" },
-  { label: "Red", value: "0 72% 55%", swatch: "#ef4444" },
-  { label: "Teal", value: "175 70% 45%", swatch: "#22b8a3" },
-  { label: "Pink", value: "330 80% 60%", swatch: "#ec4899" },
-  { label: "Amber", value: "38 92% 50%", swatch: "#f59e0b" },
-];
-const DEFAULT_ACCENT = ACCENT_PRESETS[0].value;
 
 const THEME_OPTIONS: { key: ThemeMode; label: string; icon: IconName }[] = [
   { key: "dark", label: "Dark", icon: "moon-outline" },
@@ -106,6 +98,7 @@ function Section({ label }: { label: string }) {
 /** Super-user-only "act as" panel — mirrors the web app's ActForBar, using
  * the same /api/superuser/* endpoints (no backend changes needed). */
 function ActForSection() {
+  const accent = useAccentColor();
   const { data: actingAsData } = useActingAs();
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -166,7 +159,7 @@ function ActForSection() {
         {searchOpen && (
           <View>
             {isFetching ? (
-              <ActivityIndicator size="small" color="#2563eb" style={styles.actForLoading} />
+              <ActivityIndicator size="small" color={accent} style={styles.actForLoading} />
             ) : results.length === 0 ? (
               <Text style={styles.actForEmpty}>{query ? `No users found for "${query}"` : "No users found"}</Text>
             ) : (
@@ -203,6 +196,8 @@ function ActForSection() {
 export default function SettingsScreen() {
   const { user, logout, isLoggingOut } = useAuth();
   const queryClient = useQueryClient();
+  const accent = useAccentColor();
+  const insets = useSafeAreaInsets();
 
   const toggleDemoMutation = useMutation({
     mutationFn: (isDemo: boolean) =>
@@ -234,6 +229,23 @@ export default function SettingsScreen() {
   const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as
     | SportsbookProvider
     | undefined;
+  const preferredSportsbookOther = (user?.settings as any)?.preferredSportsbookOther as
+    | string
+    | undefined;
+
+  function promptOtherSportsbook() {
+    Alert.prompt(
+      "Other Sportsbook",
+      "Enter the name of your sportsbook.",
+      (text) => {
+        const trimmed = text?.trim();
+        if (!trimmed) return;
+        updateSettingsMutation.mutate({ preferredSportsbook: "other", preferredSportsbookOther: trimmed });
+      },
+      "plain-text",
+      preferredSportsbookOther ?? "",
+    );
+  }
 
   function choosePreferredSportsbook() {
     Alert.alert(
@@ -242,8 +254,9 @@ export default function SettingsScreen() {
       [
         ...Object.values(SPORTSBOOK_PROVIDERS).map((provider) => ({
           text: provider.label,
-          onPress: () => updateSettingsMutation.mutate({ preferredSportsbook: provider.id }),
+          onPress: () => updateSettingsMutation.mutate({ preferredSportsbook: provider.id, preferredSportsbookOther: null }),
         })),
+        { text: "Other…", onPress: promptOtherSportsbook },
         { text: "Cancel", style: "cancel" as const },
       ],
     );
@@ -278,6 +291,10 @@ export default function SettingsScreen() {
   }
 
   const nameForAvatar = savedDisplayName || user?.email || "Unknown";
+  const avatarTeam = (user?.settings as any)?.avatarTeam as string | undefined;
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
+  const { data: teams } = useTeams();
+  const teamLogo = (code: string) => teams?.find((t) => t.abbreviation === code)?.logoUrl ?? undefined;
 
   function confirmLogout() {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
@@ -291,13 +308,24 @@ export default function SettingsScreen() {
   }
 
   return (
+    <>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
     >
       {/* Profile hero */}
       <View style={styles.profileCard}>
-        <Avatar src={user?.profileImageUrl} name={nameForAvatar} size={68} />
+        <Pressable onPress={() => setAvatarPickerOpen(true)} testID="button-settings-choose-avatar">
+          <Avatar
+            src={avatarTeam ? teamLogo(avatarTeam) : user?.profileImageUrl}
+            name={nameForAvatar}
+            size={68}
+            teamCode={avatarTeam}
+          />
+          <View style={styles.avatarEditBadge}>
+            <Ionicons name="pencil" size={11} color="#ffffff" />
+          </View>
+        </Pressable>
         <View style={styles.profileText}>
           <Text style={styles.profileName}>{nameForAvatar}</Text>
           {user?.email && (
@@ -350,7 +378,7 @@ export default function SettingsScreen() {
         <Divider />
         <Row
           icon="shield-checkmark-outline"
-          iconColor="#2563eb"
+          iconColor={accent}
           label="Sign-in method"
           value="Email & password"
         />
@@ -409,7 +437,7 @@ export default function SettingsScreen() {
             <Switch
               value={notifPrefs.email}
               onValueChange={(val) => updateNotifPref({ email: val })}
-              trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+              trackColor={{ false: "#1e2a3b", true: accent }}
               thumbColor="#ffffff"
               testID="switch-notif-email"
             />
@@ -423,7 +451,7 @@ export default function SettingsScreen() {
             <Switch
               value={notifPrefs.sms}
               onValueChange={(val) => updateNotifPref({ sms: val })}
-              trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+              trackColor={{ false: "#1e2a3b", true: accent }}
               thumbColor="#ffffff"
               testID="switch-notif-sms"
             />
@@ -451,7 +479,7 @@ export default function SettingsScreen() {
             <Switch
               value={notifPrefs.push}
               onValueChange={(val) => updateNotifPref({ push: val })}
-              trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+              trackColor={{ false: "#1e2a3b", true: accent }}
               thumbColor="#ffffff"
               testID="switch-notif-push"
             />
@@ -469,12 +497,12 @@ export default function SettingsScreen() {
           value="Marks your account as test data"
           right={
             toggleDemoMutation.isPending ? (
-              <ActivityIndicator size="small" color="#2563eb" />
+              <ActivityIndicator size="small" color={accent} />
             ) : (
               <Switch
                 value={!!user?.isDemo}
                 onValueChange={(val) => toggleDemoMutation.mutate(val)}
-                trackColor={{ false: "#1e2a3b", true: "#2563eb" }}
+                trackColor={{ false: "#1e2a3b", true: accent }}
                 thumbColor="#ffffff"
                 disabled={toggleDemoMutation.isPending}
                 testID="switch-demo-mode"
@@ -485,11 +513,13 @@ export default function SettingsScreen() {
         <Divider />
         <Row
           icon="football-outline"
-          iconColor="#2563eb"
+          iconColor={accent}
           label="Preferred Sportsbook"
           value={
             updateSettingsMutation.isPending
               ? "Updating…"
+              : preferredSportsbook === "other"
+              ? preferredSportsbookOther || "Other"
               : preferredSportsbook
               ? SPORTSBOOK_PROVIDERS[preferredSportsbook].label
               : "Not set"
@@ -506,7 +536,7 @@ export default function SettingsScreen() {
       <View style={styles.card}>
         <Row
           icon="trophy-outline"
-          iconColor="#2563eb"
+          iconColor={accent}
           label="Parlay.Conch"
           value={`Version ${Constants.expoConfig?.version ?? "1.0.0"} (iOS)`}
         />
@@ -529,6 +559,47 @@ export default function SettingsScreen() {
         />
       </View>
     </ScrollView>
+
+    <Modal visible={avatarPickerOpen} transparent animationType="slide" onRequestClose={() => setAvatarPickerOpen(false)}>
+      <View style={styles.modalWrap}>
+        <Pressable style={styles.modalBackdrop} onPress={() => setAvatarPickerOpen(false)} />
+        <View style={[styles.avatarSheet, { paddingBottom: insets.bottom + 24 }]}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.modalTitle}>Choose Avatar</Text>
+          <Text style={styles.modalSubtitle}>
+            Pick a team badge for now — uploading your own photo is coming soon.
+          </Text>
+          <ScrollView contentContainerStyle={styles.teamGrid}>
+            <Pressable
+              onPress={() => {
+                updateSettingsMutation.mutate({ avatarTeam: null });
+                setAvatarPickerOpen(false);
+              }}
+              style={({ pressed }) => [styles.teamOption, pressed && { opacity: 0.7 }]}
+              testID="option-avatar-initials"
+            >
+              <Avatar name={nameForAvatar} size={52} />
+              <Text style={styles.teamOptionLabel} numberOfLines={1}>Initials</Text>
+            </Pressable>
+            {NFL_TEAMS.map((team) => (
+              <Pressable
+                key={team.code}
+                onPress={() => {
+                  updateSettingsMutation.mutate({ avatarTeam: team.code });
+                  setAvatarPickerOpen(false);
+                }}
+                style={({ pressed }) => [styles.teamOption, pressed && { opacity: 0.7 }]}
+                testID={`option-avatar-team-${team.code}`}
+              >
+                <Avatar src={teamLogo(team.code)} teamCode={team.code} size={52} />
+                <Text style={styles.teamOptionLabel} numberOfLines={1}>{team.name}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+    </>
   );
 }
 
@@ -541,6 +612,19 @@ const styles = StyleSheet.create({
     gap: 16,
     padding: 20,
     marginBottom: 8,
+  },
+  avatarEditBadge: {
+    position: "absolute",
+    right: -2,
+    bottom: -2,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: "#2563eb",
+    borderWidth: 2,
+    borderColor: "#141926",
+    alignItems: "center",
+    justifyContent: "center",
   },
   profileText: { flex: 1 },
   profileName: { fontSize: 20, fontWeight: "700", color: "#f1f5f9" },
@@ -686,4 +770,30 @@ const styles = StyleSheet.create({
   },
   actForResultName: { fontSize: 14, fontWeight: "600", color: "#f1f5f9" },
   actForResultEmail: { fontSize: 12, color: "#64748b", marginTop: 1 },
+
+  modalWrap: { flex: 1, justifyContent: "flex-end" },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)" },
+  modalTitle: { fontSize: 18, fontWeight: "700", color: "#f1f5f9", marginBottom: 4 },
+  modalSubtitle: { fontSize: 13, color: "#94a3b8", marginBottom: 16 },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#374151",
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  avatarSheet: {
+    backgroundColor: "#1c2538",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderColor: "#2a3447",
+    maxHeight: "75%",
+  },
+  teamGrid: { flexDirection: "row", flexWrap: "wrap", gap: 14, paddingBottom: 8 },
+  teamOption: { width: 72, alignItems: "center", gap: 6 },
+  teamOptionLabel: { fontSize: 10, color: "#94a3b8", fontWeight: "600", textAlign: "center" },
 });

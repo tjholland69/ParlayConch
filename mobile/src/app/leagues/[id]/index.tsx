@@ -23,11 +23,13 @@ import * as WebBrowser from "expo-web-browser";
 import { apiRequest, API_BASE_URL } from "@/lib/api";
 import {
   useLeagueStats,
+  useLeagueRecords,
   useLeagueMembersWithUsers,
   useWeekLockStatus,
   useLockWeekParlay,
   useUnlockWeekParlay,
   useInviteByEmail,
+  type LeagueRecordEntry,
 } from "@/hooks/use-leagues";
 import {
   useLeagueParlays,
@@ -38,7 +40,6 @@ import {
 import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
 import { useActiveWeek } from "@/hooks/use-weeks";
 import { useAuth } from "@/hooks/use-auth";
-import { Avatar } from "@/components/ui/Avatar";
 import { format } from "date-fns";
 import { SPORTSBOOK_PROVIDERS, pickDeepLinkGame, type SportsbookProvider } from "@shared/sportsbook-providers";
 import type { ParlayWithLegs } from "@shared/schema";
@@ -51,6 +52,8 @@ import { getBustedLeg } from "@/lib/parlayLoser";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 import { DisputeLegBadge } from "@/components/DisputeLegSheet";
+
+type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
 type ParlayLegWithGame = ParlayWithLegs["legs"][number];
 
@@ -176,6 +179,18 @@ function ParlayCard({
         [
           { text: "Cancel", style: "cancel" },
           { text: "Go to Settings", onPress: () => router.push("/(tabs)/settings") },
+        ],
+      );
+      return;
+    }
+
+    if (preferredSportsbook === "other") {
+      Alert.alert(
+        "Manual Send Required",
+        "We don't have a direct link for a custom sportsbook yet — open your sportsbook app and place this parlay manually, then mark it sent.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Mark as Sent", onPress: () => markParlaySent.mutate(parlay.id) },
         ],
       );
       return;
@@ -542,58 +557,65 @@ function MembersTable({
   );
 }
 
-function StatCard({ stat }: { stat: {
-  userId: string;
-  username: string;
-  profileImageUrl?: string | null;
-  wins: number;
-  losses: number;
-  winRate: number;
-  powerScore?: number;
-  participationRate?: number;
-  bar?: number;
-} }) {
-  const name = stat.username || "Unknown";
-  // API winRate is already 0–100
-  const winRate = stat.winRate != null ? `${Math.round(stat.winRate)}%` : "—";
-  const power = (stat.powerScore ?? 0).toFixed(2);
-  const participation = `${Math.round((stat.participationRate ?? 0) * 100)}%`;
-  const barVal = stat.bar ?? 0;
-  const barText = `${barVal > 0 ? "+" : ""}${barVal.toFixed(2)}`;
-  const barColor = barVal > 0 ? "#22c55e" : barVal < 0 ? "#ef4444" : "#f1f5f9";
+/** Ionicons equivalent of the web app's per-record lucide icon (see
+ * LEAGUE_RECORD_ICONS in client/src/pages/LeagueDetail.tsx) — keyed by the
+ * record's stable `key`, not its (renameable) title/description text. */
+const RECORD_ICONS: Record<string, IconName> = {
+  highestSingleLegOdds: "flash-outline",
+  highestSingleLegOddsWon: "checkmark-done-outline",
+  highestParlayOdds: "trending-up-outline",
+  mostParlayLosses: "trending-down-outline",
+  juiceman: "water-outline",
+  longestWinStreak: "flame-outline",
+  longestLossStreak: "warning-outline",
+  favoriteTeam: "shield-outline",
+  favoritePlayer: "person-outline",
+  favoriteBetType: "dice-outline",
+};
+
+function formatRecordDateRange(range: LeagueRecordEntry["dateRange"]): string | null {
+  if (!range?.start || !range?.end) return null;
+  const start = format(new Date(range.start), "MMM d");
+  const end = format(new Date(range.end), "MMM d");
+  return start === end ? start : `${start} – ${end}`;
+}
+
+function LeagueRecordTile({ record, members }: { record: LeagueRecordEntry; members: any[] | undefined }) {
+  const icon = RECORD_ICONS[record.key] ?? "trophy-outline";
+  const holder = record.holderUserId ? members?.find((m) => m.userId === record.holderUserId) : null;
+  const holderName = holder ? memberDisplayName(holder) : null;
+  const weekLabel = record.week ? `${record.week.label}, ${record.week.season}` : null;
+  const dateRangeLabel = formatRecordDateRange(record.dateRange);
+  const winLossLabel = record.winLoss
+    ? `${record.winLoss.wins}-${record.winLoss.losses} (${((record.winLoss.wins / (record.winLoss.wins + record.winLoss.losses || 1)) * 100).toFixed(1)}%)`
+    : null;
 
   return (
-    <View style={styles.statCard}>
-      <View style={styles.statCardHeader}>
-        <Avatar src={stat.profileImageUrl} name={name} size={36} />
-        <Text style={styles.statName} numberOfLines={1}>{name}</Text>
-      </View>
-      <View style={styles.statRow}>
-        <View style={styles.statItem}>
-          <Text style={styles.statValue} numberOfLines={1}>{stat.wins ?? 0}-{stat.losses ?? 0}</Text>
-          <Text style={styles.statLabel}>Record</Text>
+    <View style={styles.recordTile}>
+      {record.title ? (
+        <>
+          <View style={styles.recordTitleRow}>
+            <Ionicons name={icon} size={14} color="#2563eb" />
+            <Text style={styles.recordTitle} numberOfLines={1}>{record.title}</Text>
+          </View>
+          {!!record.label && (
+            <Text style={styles.recordLabel} numberOfLines={2}>{record.label}</Text>
+          )}
+        </>
+      ) : (
+        <View style={styles.recordTitleRow}>
+          <Ionicons name={icon} size={13} color="#94a3b8" />
+          <Text style={styles.recordLabel} numberOfLines={2}>{record.label}</Text>
         </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, styles.statValuePrimary]} numberOfLines={1}>{winRate}</Text>
-          <Text style={styles.statLabel}>Win%</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={styles.statValue} numberOfLines={1}>{power}</Text>
-          <Text style={styles.statLabel}>Power</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={styles.statValue} numberOfLines={1}>{participation}</Text>
-          <Text style={styles.statLabel}>Part%</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-          <Text style={[styles.statValue, { color: barColor }]} numberOfLines={1}>{barText}</Text>
-          <Text style={styles.statLabel}>BAR</Text>
-        </View>
-      </View>
+      )}
+      <Text style={styles.recordValue} numberOfLines={1}>
+        {record.value}
+        {record.detail ? <Text style={styles.recordDetail}> ({record.detail})</Text> : null}
+      </Text>
+      {winLossLabel && <Text style={styles.recordMeta} numberOfLines={1}>Record: {winLossLabel}</Text>}
+      {holderName && <Text style={styles.recordMeta} numberOfLines={1}>{holderName}</Text>}
+      {weekLabel && <Text style={styles.recordMeta} numberOfLines={1}>{weekLabel}</Text>}
+      {dateRangeLabel && <Text style={styles.recordMeta} numberOfLines={1}>{dateRangeLabel}</Text>}
     </View>
   );
 }
@@ -629,6 +651,7 @@ export default function LeagueDetailScreen() {
   const isAdmin = !!members?.some((m: any) => m.userId === user?.id && m.role === "admin");
   const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as SportsbookProvider | undefined;
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useLeagueStats(leagueId);
+  const { data: leagueRecords, isLoading: recordsLoading } = useLeagueRecords(leagueId);
 
   const weekId = activeWeek?.id ?? 0;
   const {
@@ -1038,25 +1061,27 @@ export default function LeagueDetailScreen() {
             </>
           )}
 
-          {/* STATS */}
+          {/* STATS — League Records, same "superlatives" tiles as the web app. */}
           {activeTab === "stats" && (
             <>
-              {statsLoading ? (
+              {recordsLoading ? (
                 <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
-              ) : !stats || stats.length === 0 ? (
+              ) : !leagueRecords || leagueRecords.length === 0 ? (
                 <View style={styles.emptyState}>
                   <View style={styles.emptyIcon}>
                     <Ionicons name="bar-chart-outline" size={28} color="#2563eb" />
                   </View>
-                  <Text style={styles.emptyTitle}>No stats yet</Text>
+                  <Text style={styles.emptyTitle}>No records yet</Text>
                   <Text style={styles.emptySubtitle}>
-                    Stats appear once parlays are graded.
+                    Records appear once decided picks pile up.
                   </Text>
                 </View>
               ) : (
-                [...stats]
-                  .sort((a: any, b: any) => (b.bar ?? 0) - (a.bar ?? 0))
-                  .map((stat: any) => <StatCard key={stat.userId} stat={stat} />)
+                <View style={styles.recordGrid}>
+                  {leagueRecords.map((record) => (
+                    <LeagueRecordTile key={record.key} record={record} members={members} />
+                  ))}
+                </View>
               )}
             </>
           )}
@@ -1560,30 +1585,28 @@ const styles = StyleSheet.create({
   memberName: { fontSize: 15, fontWeight: "600", color: "#f1f5f9" },
   memberRole: { fontSize: 12, fontWeight: "600", marginTop: 2 },
 
-  /* Stat card */
-  statCard: {
+  /* League Records grid (Stats tab) */
+  recordGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  recordTile: {
+    width: "47%",
     backgroundColor: "#1c2538",
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#2a3447",
     padding: 12,
-    marginBottom: 10,
   },
-  statCardHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginBottom: 10,
+  recordTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 },
+  recordTitle: { fontSize: 13, fontWeight: "800", color: "#f1f5f9", flexShrink: 1 },
+  recordLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#94a3b8",
+    textTransform: "uppercase",
+    letterSpacing: 0.3,
+    marginBottom: 8,
+    flexShrink: 1,
   },
-  statName: { fontSize: 15, fontWeight: "700", color: "#f1f5f9", flex: 1 },
-  statRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  statItem: { alignItems: "center", flex: 1, minWidth: 0 },
-  statValue: { fontSize: 12, fontWeight: "800", color: "#f1f5f9" },
-  statValuePrimary: { color: "#2563eb" },
-  statLabel: { fontSize: 8.5, color: "#475569", marginTop: 2, fontWeight: "500" },
-  statDivider: { width: 1, height: 24, backgroundColor: "#2a3447" },
+  recordValue: { fontSize: 17, fontWeight: "800", color: "#f1f5f9" },
+  recordDetail: { fontSize: 11, fontWeight: "500", color: "#94a3b8" },
+  recordMeta: { fontSize: 11, color: "#94a3b8", marginTop: 3 },
 });
