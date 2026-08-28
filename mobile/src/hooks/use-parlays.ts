@@ -23,10 +23,16 @@ export function buildLeagueParlaysQuery(params?: LeagueParlaysPageParams): strin
   return s ? `?${s}` : "";
 }
 
-/** All of the current user's parlays across every league/week, newest week first. */
-export function useMyParlayHistory() {
+/** The current user's parlays across every league, newest week first.
+ * `weekIds` bounds the request to a specific set of weeks — pass the active
+ * week plus however many completed weeks have been "revealed" so far rather
+ * than fetching the user's entire season history at once. Omitting it fetches
+ * everything (used by admin/demo tooling that genuinely needs full history). */
+export function useMyParlayHistory(weekIds?: number[]) {
+  const key = weekIds && weekIds.length > 0 ? [...weekIds].sort((a, b) => a - b).join(",") : undefined;
   return useQuery<ParlayWithLegs[]>({
-    queryKey: ["/api/parlays/my"],
+    queryKey: ["/api/parlays/my", key ?? "all"],
+    queryFn: async () => apiRequest("GET", key ? `/api/parlays/my?weekIds=${key}` : "/api/parlays/my"),
   });
 }
 

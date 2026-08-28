@@ -1,13 +1,20 @@
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Image, Pressable, StyleSheet } from "react-native";
 import { format } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import type { Game } from "@shared/schema";
+import { useTeams } from "@/hooks/use-teams";
+import { useGameWeather } from "@/hooks/use-game-weather";
 import {
   awaySpreadDisplay,
   isGamePast,
   shortLegLabel,
   type SelectedLeg,
 } from "@/lib/pickHelpers";
+
+function TeamLogo({ logoUrl }: { logoUrl?: string | null }) {
+  if (!logoUrl) return null;
+  return <Image source={{ uri: logoUrl }} style={styles.teamLogo} resizeMode="contain" />;
+}
 
 type MarketBtnProps = {
   primary: string;
@@ -60,16 +67,31 @@ export function GamePickCard({
   selectedLeg,
   onSelect,
   onClear,
+  readOnly,
 }: {
   game: Game;
   selectedLeg?: SelectedLeg;
   onSelect: (leg: Omit<SelectedLeg, "gameId"> & { gameId?: number }) => void;
   onClear: () => void;
+  /** Preview mode for a week that isn't open for picks yet — every market
+   * renders disabled, same visual treatment as an already-started game. */
+  readOnly?: boolean;
 }) {
-  const past = isGamePast(game);
+  const past = readOnly || isGamePast(game);
   const awaySpread = awaySpreadDisplay(game.spread);
   const homeSpread = game.spread || null;
   const hasPick = !!selectedLeg;
+
+  const { data: teams } = useTeams();
+  const homeTeamData = teams?.find((t) => t.abbreviation === game.homeTeam);
+  const awayTeamData = teams?.find((t) => t.abbreviation === game.awayTeam);
+  // The home team's stadium is the game's location (barring the rare
+  // international game) — real `game.venue` data, when present, wins.
+  const locationText =
+    game.venue ||
+    (homeTeamData ? [homeTeamData.stadiumName, homeTeamData.city].filter(Boolean).join(", ") : null);
+  const isIndoors = homeTeamData?.stadiumType && homeTeamData.stadiumType !== "outdoor";
+  const { data: weather } = useGameWeather(game.id, !past && !isIndoors);
 
   const select = (betType: string, pick: string) => {
     if (past) return;
@@ -96,10 +118,23 @@ export function GamePickCard({
           <View style={styles.statusPill}>
             <Text style={styles.statusPillText}>{game.isFinished ? "Final" : "Started"}</Text>
           </View>
-        ) : game.venue ? (
-          <Text style={styles.venueText} numberOfLines={1}>
-            {game.venue}
-          </Text>
+        ) : locationText ? (
+          <View style={styles.venueRow}>
+            {isIndoors ? (
+              <Ionicons name="home-outline" size={11} color="#475569" />
+            ) : weather ? (
+              <View style={styles.weatherRow}>
+                <Ionicons name="partly-sunny-outline" size={12} color="#475569" />
+                {weather.tempF != null && <Text style={styles.weatherText}>{Math.round(weather.tempF)}°</Text>}
+                {weather.precipChancePct != null && weather.precipChancePct > 0 && (
+                  <Text style={styles.weatherText}>· {Math.round(weather.precipChancePct)}%</Text>
+                )}
+              </View>
+            ) : null}
+            <Text style={styles.venueText} numberOfLines={1}>
+              {locationText}
+            </Text>
+          </View>
         ) : null}
       </View>
 
@@ -107,16 +142,22 @@ export function GamePickCard({
           below shares identical geometry instead of being anchored to a team. */}
       <View style={styles.teamHeaderRow}>
         <View style={styles.teamHeaderCol}>
-          <Text style={styles.teamName} numberOfLines={1}>
-            {game.awayTeam}
-          </Text>
+          <View style={styles.teamNameRow}>
+            <Text style={styles.teamName} numberOfLines={1}>
+              {game.awayTeam}
+            </Text>
+            <TeamLogo logoUrl={awayTeamData?.logoUrl} />
+          </View>
           {game.awayRecord ? <Text style={styles.record}>{game.awayRecord}</Text> : null}
         </View>
         <Text style={styles.teamHeaderAt}>@</Text>
         <View style={[styles.teamHeaderCol, styles.teamHeaderColRight]}>
-          <Text style={styles.teamName} numberOfLines={1}>
-            {game.homeTeam}
-          </Text>
+          <View style={[styles.teamNameRow, styles.teamNameRowRight]}>
+            <TeamLogo logoUrl={homeTeamData?.logoUrl} />
+            <Text style={styles.teamName} numberOfLines={1}>
+              {game.homeTeam}
+            </Text>
+          </View>
           {game.homeRecord ? <Text style={styles.record}>{game.homeRecord}</Text> : null}
         </View>
       </View>
@@ -232,7 +273,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   metaText: { fontSize: 12, color: "#94a3b8", flexShrink: 0 },
-  venueText: { fontSize: 12, color: "#475569", flex: 1, textAlign: "right" },
+  venueRow: { flexDirection: "row", alignItems: "center", gap: 4, flex: 1, justifyContent: "flex-end", minWidth: 0 },
+  venueText: { fontSize: 12, color: "#475569", flexShrink: 1, textAlign: "right" },
+  weatherRow: { flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 0 },
+  weatherText: { fontSize: 12, color: "#475569", fontWeight: "600" },
   statusPill: {
     backgroundColor: "#2a3447",
     borderRadius: 6,
@@ -249,6 +293,9 @@ const styles = StyleSheet.create({
   teamHeaderCol: { flex: 1, minWidth: 0 },
   teamHeaderColRight: { alignItems: "flex-end" },
   teamHeaderAt: { fontSize: 12, color: "#475569", fontWeight: "600" },
+  teamNameRow: { flexDirection: "row", alignItems: "center", gap: 6, minWidth: 0 },
+  teamNameRowRight: { justifyContent: "flex-end" },
+  teamLogo: { width: 20, height: 20, flexShrink: 0 },
   teamName: { fontSize: 16, fontWeight: "700", color: "#f1f5f9" },
   record: { fontSize: 12, color: "#64748b", marginTop: 2 },
   pickGrid: { gap: 8 },

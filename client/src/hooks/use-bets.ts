@@ -206,9 +206,11 @@ export function useLeagueStats(leagueId: number) {
 export type LeagueRecordEntry = {
   key: string;
   label: string;
+  title?: string | null;
   value: string;
   holderUserId: string | null;
   detail?: string | null;
+  winLoss?: { wins: number; losses: number } | null;
   week?: { season: number; weekNumber: number; label: string } | null;
   dateRange?: { start: string; end: string } | null;
   link?: { leagueId: number; parlayId: number } | null;

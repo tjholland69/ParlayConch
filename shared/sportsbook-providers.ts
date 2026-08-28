@@ -12,7 +12,11 @@
 // If no clean per-game deep link works in practice, fall back to opening the
 // bare app scheme (home screen) rather than promising a specific game.
 
-export type SportsbookProvider = "fanduel" | "draftkings";
+/** "other" has no deep-link config below — it just records a free-text name
+ * (see UserSettings.preferredSportsbookOther) for sportsbooks we don't support
+ * a deep link to yet. Callers must check for it before indexing
+ * SPORTSBOOK_PROVIDERS. */
+export type SportsbookProvider = "fanduel" | "draftkings" | "other";
 
 export interface DeepLinkGame {
   homeTeam: string;
@@ -34,7 +38,7 @@ export interface SportsbookProviderConfig {
   androidPackage: string;
 }
 
-export const SPORTSBOOK_PROVIDERS: Record<SportsbookProvider, SportsbookProviderConfig> = {
+export const SPORTSBOOK_PROVIDERS: Record<Exclude<SportsbookProvider, "other">, SportsbookProviderConfig> = {
   fanduel: {
     id: "fanduel",
     label: "FanDuel",

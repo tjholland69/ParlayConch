@@ -21,6 +21,7 @@ import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNe
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
 import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries, getLeagueWeeklyWinRates } from "./services/dashboardAnalytics";
 import { getLeagueRecords } from "./services/leagueRecords";
+import { getGameForecast } from "./services/weatherApi";
 import { cacheGetJson, cacheSetJson } from "./cache";
 import { getWeeklyAnalyticsReport } from "./services/storyStudio/analyticsEngine";
 import { discoverStories } from "./services/storyStudio/storyDiscovery";
@@ -721,7 +722,13 @@ export async function registerRoutes(
   app.get("/api/parlays/my", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
-    const history = await storage.getUserParlayHistory(userId, leagueId);
+    // Optional bound to a specific set of weeks (e.g. "active week + last 3
+    // completed weeks") so the mobile Picks tab isn't forced to load every
+    // parlay the user has ever placed just to show what's currently open.
+    const weekIds = typeof req.query.weekIds === "string" && req.query.weekIds
+      ? req.query.weekIds.split(",").map(Number).filter((n) => Number.isFinite(n))
+      : undefined;
+    const history = await storage.getUserParlayHistory(userId, leagueId, weekIds);
     res.json(history);
   });
 
@@ -1437,6 +1444,34 @@ export async function registerRoutes(
     try {
       const results = await storage.getAllTeams();
       res.json(results);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // GET /api/games/:id/weather — best-effort forecast for kickoff at the home
+  // team's city (see server/services/weatherApi.ts). Null body (200) for an
+  // indoor venue, missing game time, unconfigured API, or any upstream
+  // failure — weather is decoration on the picks matrix, never load-bearing.
+  app.get("/api/games/:id/weather", isAuthenticated, async (req, res) => {
+    try {
+      const gameId = Number(req.params.id);
+      const game = await storage.getGame(gameId);
+      if (!game || !game.gameTime) return res.json(null);
+
+      const cacheKey = `game-weather:${gameId}:${new Date(game.gameTime).toISOString()}`;
+      const cached = await cacheGetJson<Awaited<ReturnType<typeof getGameForecast>>>(cacheKey);
+      if (cached) return res.json(cached);
+
+      const teams = await storage.getAllTeams();
+      const homeTeam = teams.find((t) => t.abbreviation === game.homeTeam);
+      if (!homeTeam || (homeTeam.stadiumType && homeTeam.stadiumType !== "outdoor")) {
+        return res.json(null);
+      }
+
+      const forecast = await getGameForecast(homeTeam.abbreviation, new Date(game.gameTime));
+      if (forecast) await cacheSetJson(cacheKey, forecast, 60 * 60);
+      res.json(forecast);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

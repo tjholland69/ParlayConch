@@ -54,6 +54,11 @@ export type UserSettings = {
   region?: UserRegion | null;
   theme?: "dark" | "light" | "system";
   preferredSportsbook?: SportsbookProvider | null;
+  /** Free-text sportsbook name when preferredSportsbook === "other". */
+  preferredSportsbookOther?: string | null;
+  /** NFL team code (e.g. "KC") chosen as a default avatar badge — see
+   * mobile/src/lib/nflTeams.ts. Takes priority over profileImageUrl. */
+  avatarTeam?: string | null;
 };
 
 export type LeagueNotificationSettings = {

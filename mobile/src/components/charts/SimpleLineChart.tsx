@@ -106,6 +106,7 @@ export function SimpleLineChart({ points, color = "#2563eb", height = 180, forma
 
   const active = activeIndex != null ? points[activeIndex] : null;
   const activeCoord = activeIndex != null ? coords[activeIndex] : null;
+  const activeIndexValue = activeIndex != null ? indexPoints?.[activeIndex] ?? null : null;
   const midY = height - PADDING - ((0 - min) / range) * (height - PADDING * 2);
 
   // Keep the tooltip bubble from running off either edge of the chart.
@@ -151,6 +152,11 @@ export function SimpleLineChart({ points, color = "#2563eb", height = 180, forma
         <View style={[styles.tooltip, { left: tooltipLeft, width: tooltipWidth }]} pointerEvents="none">
           <Text style={styles.tooltipLabel} numberOfLines={1}>{active.label}</Text>
           <Text style={[styles.tooltipValue, { color }]}>{formatValue ? formatValue(active.value) : active.value.toFixed(1)}</Text>
+          {activeIndexValue != null && (
+            <Text style={[styles.tooltipIndexValue, { color: lighten(color) }]} numberOfLines={1}>
+              Avg {formatValue ? formatValue(activeIndexValue) : activeIndexValue.toFixed(1)}
+            </Text>
+          )}
         </View>
       )}
 
@@ -187,4 +193,5 @@ const styles = StyleSheet.create({
   },
   tooltipLabel: { fontSize: 9, color: "#94a3b8" },
   tooltipValue: { fontSize: 13, fontWeight: "700" },
+  tooltipIndexValue: { fontSize: 10, fontWeight: "600", marginTop: 1 },
 });

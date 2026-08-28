@@ -10,6 +10,7 @@ import { SimpleBarChart } from "@/components/charts/SimpleBarChart";
 import { InfoButton } from "@/components/InfoTip";
 import { Button } from "@/components/ui/Button";
 import { shadows } from "@/lib/theme";
+import { useAccentColor } from "@/hooks/use-accent-color";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -33,7 +34,7 @@ function StatTile({
     <View style={[styles.statTile, glowColor ? shadows.glow(glowColor, 0.3) : shadows.card]}>
       <View style={styles.statTileHeader}>
         <Ionicons name={icon} size={13} color="#94a3b8" />
-        <Text style={styles.statTileLabel} numberOfLines={1}>
+        <Text style={styles.statTileLabel} numberOfLines={2}>
           {label}
         </Text>
         {info && <InfoButton title={info.title} description={info.description} />}
@@ -44,6 +45,7 @@ function StatTile({
 }
 
 function SummarySlide({ leagueId }: { leagueId?: number }) {
+  const accent = useAccentColor();
   const { data, isLoading, error } = useDashboardSummary(leagueId);
 
   if (isLoading) return <DashboardLoading message="Loading summary…" />;
@@ -57,15 +59,15 @@ function SummarySlide({ leagueId }: { leagueId?: number }) {
       <View style={styles.statGrid}>
         <StatTile icon="people-outline" label="Leagues" value={String(data.leagueCount)} />
         <StatTile icon="checkmark-done-outline" label="Parlays Owned" value={String(data.parlaysPlaced)} />
-        <StatTile icon="trending-up-outline" label="Leg Win Rate" value={`${data.legWinRate.toFixed(1)}%`} />
         <StatTile icon="trophy-outline" label="Leg Wins" value={String(data.legWins)} />
         <StatTile icon="close-circle-outline" label="Leg Losses" value={String(data.legLosses)} />
+        <StatTile icon="trending-up-outline" label="Leg Win Rate" value={`${data.legWinRate.toFixed(1)}%`} />
         <StatTile icon="pulse-outline" label="Participation" value={`${(data.participationRate * 100).toFixed(0)}%`} />
         <StatTile
           icon="flash-outline"
           label="Power Score"
           value={data.powerScore.toFixed(2)}
-          glowColor="#2563eb"
+          glowColor={accent}
           info={{
             title: "Power Score",
             description:
@@ -76,8 +78,8 @@ function SummarySlide({ leagueId }: { leagueId?: number }) {
           icon="bar-chart-outline"
           label="BAR"
           value={`${bar > 0 ? "+" : ""}${bar.toFixed(2)}`}
-          valueColor={bar > 0 ? "#2563eb" : bar < 0 ? "#ef4444" : undefined}
-          glowColor={bar > 0 ? "#2563eb" : bar < 0 ? "#ef4444" : undefined}
+          valueColor={bar > 0 ? accent : bar < 0 ? "#ef4444" : undefined}
+          glowColor={bar > 0 ? accent : bar < 0 ? "#ef4444" : undefined}
           info={{
             title: "Bets Above Replacement",
             description:
@@ -177,6 +179,7 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
 }
 
 function PerformanceSlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
+  const accent = useAccentColor();
   const { data, isLoading, error } = useDashboardPerformance(leagueId, dateRange);
 
   if (isLoading) return <DashboardLoading message="Loading performance…" />;
@@ -193,12 +196,13 @@ function PerformanceSlide({ leagueId, dateRange }: { leagueId?: number; dateRang
   return (
     <View>
       <Text style={styles.slideTitle}>Performance Over Time</Text>
-      <SimpleLineChart points={points} indexPoints={indexPoints} formatValue={(v) => `${v.toFixed(1)}%`} />
+      <SimpleLineChart points={points} indexPoints={indexPoints} color={accent} formatValue={(v) => `${v.toFixed(1)}%`} />
     </View>
   );
 }
 
 function WeekOverWeekSlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
+  const accent = useAccentColor();
   const { data, isLoading, error } = useDashboardPerformance(leagueId, dateRange);
 
   if (isLoading) return <DashboardLoading message="Loading performance…" />;
@@ -206,7 +210,9 @@ function WeekOverWeekSlide({ leagueId, dateRange }: { leagueId?: number; dateRan
 
   const decided = data.points.filter((p) => p.allWeekWinRate !== null);
   const points = decided.map((p) => ({ label: p.weekLabel, value: p.allWeekWinRate as number }));
-  const indexPoints = decided.map((p) => p.indexWeekWinRate);
+  // Same cumulative trendline shown on the "Performance Over Time" line chart above,
+  // not the per-week index rate — the trend should read consistently between slides.
+  const indexPoints = decided.map((p) => p.indexWinRate);
 
   if (points.length === 0) {
     return <DashboardEmptyState message="No decided parlay legs yet — check back once some weeks are settled." />;
@@ -215,7 +221,7 @@ function WeekOverWeekSlide({ leagueId, dateRange }: { leagueId?: number; dateRan
   return (
     <View>
       <Text style={styles.slideTitle}>Weekly</Text>
-      <SimpleBarChart points={points} indexPoints={indexPoints} formatValue={(v) => `${v.toFixed(1)}%`} />
+      <SimpleBarChart points={points} indexPoints={indexPoints} color={accent} formatValue={(v) => `${v.toFixed(1)}%`} />
     </View>
   );
 }
@@ -233,13 +239,18 @@ function LeagueFilter({
 }) {
   const [open, setOpen] = useState(false);
   const insets = useSafeAreaInsets();
+  const accent = useAccentColor();
   const selectedName = leagues.find((l) => l.id === selectedLeagueId)?.name ?? "All Leagues";
 
   return (
     <>
       <Pressable
         onPress={() => setOpen(true)}
-        style={({ pressed }) => [styles.leagueFilterBtn, pressed && { opacity: 0.85 }]}
+        style={({ pressed }) => [
+          styles.leagueFilterBtn,
+          { backgroundColor: accent, shadowColor: accent },
+          pressed && { opacity: 0.85 },
+        ]}
         testID="button-dashboard-league-filter"
       >
         <View style={styles.leagueFilterRow}>
@@ -267,7 +278,7 @@ function LeagueFilter({
               testID="option-league-all"
             >
               <Text style={styles.leagueOptionText}>All Leagues</Text>
-              {selectedLeagueId === undefined && <Ionicons name="checkmark" size={18} color="#2563eb" />}
+              {selectedLeagueId === undefined && <Ionicons name="checkmark" size={18} color={accent} />}
             </Pressable>
 
             {leagues.map((league) => (
@@ -283,7 +294,7 @@ function LeagueFilter({
                 <Text style={styles.leagueOptionText} numberOfLines={1}>
                   {league.name}
                 </Text>
-                {selectedLeagueId === league.id && <Ionicons name="checkmark" size={18} color="#2563eb" />}
+                {selectedLeagueId === league.id && <Ionicons name="checkmark" size={18} color={accent} />}
               </Pressable>
             ))}
           </View>
@@ -302,9 +313,14 @@ const DATE_RANGE_LABELS: Record<DateRangeMode, string> = {
   custom: "Custom",
 };
 
-/** yyyy-mm-dd, matching the server's expected startDate/endDate query format. */
+/** yyyy-mm-dd, matching the server's expected startDate/endDate query format.
+ * Compensates for the local timezone offset before calling toISOString() —
+ * without it, midnight local time in any timezone ahead of UTC converts to
+ * the previous day (and, for Jan 1, the previous year), silently widening
+ * "Current Year" to include trades from the prior year. */
 function toISODate(date: Date): string {
-  return date.toISOString().slice(0, 10);
+  const tzOffsetMs = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - tzOffsetMs).toISOString().slice(0, 10);
 }
 
 function resolveDateRange(mode: DateRangeMode, customRange: DashboardDateRange): DashboardDateRange | undefined {
@@ -342,6 +358,7 @@ function DateRangeFilter({
   const [draftStart, setDraftStart] = useState(customRange.startDate ?? "");
   const [draftEnd, setDraftEnd] = useState(customRange.endDate ?? "");
   const insets = useSafeAreaInsets();
+  const accent = useAccentColor();
 
   function openCustom() {
     setDraftStart(customRange.startDate ?? "");
@@ -367,7 +384,7 @@ function DateRangeFilter({
             <Pressable
               key={key}
               onPress={() => (key === "custom" ? openCustom() : onModeChange(key))}
-              style={[styles.dateChip, active && styles.dateChipActive]}
+              style={[styles.dateChip, active && [styles.dateChipActive, { borderColor: accent }]]}
               testID={`button-dashboard-date-${key}`}
             >
               <Text style={[styles.dateChipText, active && styles.dateChipTextActive]} numberOfLines={1}>
@@ -421,6 +438,7 @@ function DateRangeFilter({
 }
 
 export default function DashScreen() {
+  const accent = useAccentColor();
   const { data: leagues } = useLeagues();
   const [selectedLeagueId, setSelectedLeagueId] = useState<number | undefined>(undefined);
   const [dateMode, setDateMode] = useState<DateRangeMode>("all");
@@ -432,7 +450,7 @@ export default function DashScreen() {
       <ScrollView
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={false} onRefresh={() => {}} tintColor="#2563eb" />}
+        refreshControl={<RefreshControl refreshing={false} onRefresh={() => {}} tintColor={accent} />}
       >
         {leagues && leagues.length > 1 && (
           <View style={styles.leagueFilterWrap}>
@@ -523,14 +541,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#2563eb",
     borderWidth: 2,
     borderColor: "#93c5fd",
     borderRadius: 12,
     paddingHorizontal: 16,
     paddingVertical: 12,
     marginBottom: 14,
-    shadowColor: "#2563eb",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.5,
     shadowRadius: 12,
@@ -564,7 +580,7 @@ const styles = StyleSheet.create({
     minHeight: 36,
     justifyContent: "center",
   },
-  dateChipActive: { backgroundColor: "#1e2a3b", borderColor: "#2563eb" },
+  dateChipActive: { backgroundColor: "#1e2a3b" },
   dateChipText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
   dateChipTextActive: { color: "#93c5fd" },
   dateInputLabel: { fontSize: 13, fontWeight: "600", color: "#94a3b8", marginBottom: 6, marginTop: 12 },

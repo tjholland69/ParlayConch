@@ -12,7 +12,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from "react-native-reanimated";
 import { useLeagues, useWeekLockStatus } from "@/hooks/use-leagues";
-import { useActiveWeek } from "@/hooks/use-weeks";
+import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
 import { useMyParlay, useMyParlayHistory } from "@/hooks/use-parlays";
 import { format, formatDistanceToNow, isPast } from "date-fns";
 import type { ParlayWithLegs } from "@shared/schema";
@@ -238,11 +238,35 @@ function FilterChipRow({
 }
 
 export default function PicksScreen() {
+  const router = useRouter();
   const { data: leagues, isLoading: leaguesLoading } = useLeagues();
+  const { data: allWeeks } = useWeeks();
   const activeWeek = useActiveWeek();
-  const { data: parlayHistory } = useMyParlayHistory();
   const [leagueFilter, setLeagueFilter] = useState("all");
   const [resultFilter, setResultFilter] = useState("all");
+
+  // Every week on record, chronological (oldest first) — used to walk
+  // backward from the active week one at a time as "load previous week" is
+  // tapped, and forward one step for the read-only next-week preview.
+  const chronoWeeks = useMemo(
+    () => [...(allWeeks ?? [])].sort((a, b) => a.season - b.season || a.weekNumber - b.weekNumber),
+    [allWeeks],
+  );
+  const activeWeekIndex = activeWeek ? chronoWeeks.findIndex((w) => w.id === activeWeek.id) : -1;
+  const priorWeeks = activeWeekIndex >= 0 ? chronoWeeks.slice(0, activeWeekIndex).reverse() : [];
+  const nextWeek = activeWeekIndex >= 0 ? chronoWeeks[activeWeekIndex + 1] : undefined;
+
+  // Starts showing just the active week's past-parlay context; each tap of
+  // "Load previous week" reveals one more, oldest-going, instead of the page
+  // fetching the user's entire season history up front.
+  const [revealedPastWeeks, setRevealedPastWeeks] = useState(0);
+  const visiblePriorWeeks = priorWeeks.slice(0, revealedPastWeeks);
+  const hasMorePriorWeeks = revealedPastWeeks < priorWeeks.length;
+
+  const weekIdsToFetch = activeWeek
+    ? [activeWeek.id, ...visiblePriorWeeks.map((w) => w.id)]
+    : undefined;
+  const { data: parlayHistory } = useMyParlayHistory(weekIdsToFetch);
 
   const deadline = (activeWeek as any)?.deadline
     ? new Date((activeWeek as any).deadline)
@@ -421,6 +445,37 @@ export default function PicksScreen() {
           <HistoryTile parlay={item.parlay} leagueName={leagueName(item.parlay.leagueId)} />
         )
       }
+      ListFooterComponent={
+        <View style={styles.footerActions}>
+          {hasMorePriorWeeks && (
+            <Pressable
+              onPress={() => setRevealedPastWeeks((n) => n + 1)}
+              style={({ pressed }) => [styles.loadMoreBtn, pressed && { opacity: 0.75 }]}
+              testID="button-picks-load-previous-week"
+            >
+              <Ionicons name="chevron-down-circle-outline" size={16} color="#94a3b8" />
+              <Text style={styles.loadMoreBtnText}>
+                Load {priorWeeks[revealedPastWeeks]?.label ?? "previous week"}
+              </Text>
+            </Pressable>
+          )}
+          {nextWeek && (
+            <Pressable
+              onPress={() =>
+                router.push({
+                  pathname: "/leagues/[id]/build",
+                  params: { id: String(leagues[0]?.id ?? ""), weekId: String(nextWeek.id), readOnly: "1" },
+                })
+              }
+              style={({ pressed }) => [styles.nextWeekBtn, pressed && { opacity: 0.85 }]}
+              testID="button-picks-view-next-week"
+            >
+              <Ionicons name="eye-outline" size={16} color="#93c5fd" />
+              <Text style={styles.nextWeekBtnText}>Preview {nextWeek.label} (view only)</Text>
+            </Pressable>
+          )}
+        </View>
+      }
     />
   );
 }
@@ -531,6 +586,31 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sectionLabelSpaced: { marginTop: 8 },
+  footerActions: { marginTop: 8, gap: 10 },
+  loadMoreBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minHeight: CHIP_MIN_HEIGHT,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    backgroundColor: "#1c2538",
+  },
+  loadMoreBtnText: { fontSize: 13, fontWeight: "600", color: "#94a3b8" },
+  nextWeekBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minHeight: CHIP_MIN_HEIGHT,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#1a2e4d",
+    backgroundColor: "#0a1526",
+  },
+  nextWeekBtnText: { fontSize: 13, fontWeight: "600", color: "#93c5fd" },
   /* Shadow lives on this outer, non-clipping wrapper — combining shadow*
    * props with overflow:"hidden" on the same view breaks rendering on iOS. */
   shadowWrap: {

@@ -97,6 +97,7 @@ export function SimpleBarChart({ points, color = "#2563eb", height = 180, format
 
   const active = activeIndex != null ? points[activeIndex] : null;
   const activeBar = activeIndex != null ? bars[activeIndex] : null;
+  const activeIndexValue = activeIndex != null ? indexPoints?.[activeIndex] ?? null : null;
 
   const tooltipWidth = 100;
   const tooltipLeft = activeBar
@@ -136,6 +137,11 @@ export function SimpleBarChart({ points, color = "#2563eb", height = 180, format
         <View style={[styles.tooltip, { left: tooltipLeft, width: tooltipWidth }]} pointerEvents="none">
           <Text style={styles.tooltipLabel} numberOfLines={1}>{active.label}</Text>
           <Text style={[styles.tooltipValue, { color }]}>{formatValue ? formatValue(active.value) : active.value.toFixed(1)}</Text>
+          {activeIndexValue != null && (
+            <Text style={[styles.tooltipIndexValue, { color: lighten(color) }]} numberOfLines={1}>
+              Avg {formatValue ? formatValue(activeIndexValue) : activeIndexValue.toFixed(1)}
+            </Text>
+          )}
         </View>
       )}
 
@@ -172,4 +178,5 @@ const styles = StyleSheet.create({
   },
   tooltipLabel: { fontSize: 9, color: "#94a3b8" },
   tooltipValue: { fontSize: 13, fontWeight: "700" },
+  tooltipIndexValue: { fontSize: 10, fontWeight: "600", marginTop: 1 },
 });

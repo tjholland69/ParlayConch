@@ -203,6 +203,18 @@ export function estimateWeekDateRange(season: number, weekNumber: number): { sta
   return { start, end };
 }
 
+/** `start` is estimateWeekDateRange's 3-day-before-kickoff padding start (a
+ * Monday) — +6 days lands on that week's Sunday, snapshotted just before the
+ * early Sunday window (17:00 UTC / 1pm ET) so both Thursday/early-Sunday lines
+ * are already settled and the bulk of the slate (Sunday afternoon + Monday)
+ * hasn't kicked off yet. */
+function estimateWeekSundaySnapshot(start: Date): Date {
+  const sunday = new Date(start);
+  sunday.setUTCDate(start.getUTCDate() + 6);
+  sunday.setUTCHours(17, 0, 0, 0);
+  return sunday;
+}
+
 export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: number; updated: number; skippedOutOfRange: number }> {
   const week = await db.select().from(weeks).where(eq(weeks.id, weekId)).limit(1);
   if (!week[0]) {
@@ -210,7 +222,16 @@ export async function syncGamesFromOddsApi(weekId: number): Promise<{ added: num
   }
   const { start, end } = estimateWeekDateRange(week[0].season, week[0].weekNumber);
 
-  const oddsGames = await fetchUpcomingGames();
+  // The live "upcoming" board only ever returns games that haven't kicked off
+  // yet — for a week that's already elapsed, it returns nothing, silently
+  // no-opping any attempt to sync/backfill odds for a past week. Route those
+  // through the historical endpoint instead, snapshotted mid-slate (the
+  // Sunday of that week, just before the early games) so most of the week's
+  // games are already on the board with (near-)closing lines.
+  const isPastWeek = end.getTime() < Date.now();
+  const oddsGames = isPastWeek
+    ? await fetchHistoricalGames(estimateWeekSundaySnapshot(start))
+    : await fetchUpcomingGames();
 
   const existingGames = await db.select().from(games).where(eq(games.weekId, weekId));
   const existingByTeams = new Map<string, (typeof existingGames)[0]>();

@@ -1,11 +1,26 @@
 import { db } from "../db";
 import { eq, and, inArray } from "drizzle-orm";
-import { leagueMembers, parlays, parlayLegs, games, weeks } from "@shared/schema";
+import { leagueMembers, parlays, parlayLegs, games, weeks, leagues } from "@shared/schema";
 import { parseAmericanOdds } from "@shared/powerScore";
+
+/** Mirrors LOSER_LABEL_TEXT in client/src/components/ParlayRollupCard.tsx —
+ * kept in sync by hand since one is server-only and the other client-only. */
+const LOSER_LABEL_TEXT: Record<string, string> = {
+  parlay_loser: "Parlay Loser",
+  asshole: "Asshole",
+  jerry: "Jerry",
+  dud: "Dud",
+  doofus: "Doofus",
+};
 
 export type LeagueRecordEntry = {
   key: string;
+  /** Accolade description, e.g. "Highest Single-Leg Odds" — always present. */
   label: string;
+  /** Flavor title shown above the description, e.g. "Biggest Swing". Tiles
+   * without a fun name yet (highestParlayOdds, favoriteBetType) omit this and
+   * just render `label` on its own. */
+  title?: string | null;
   /** Formatted value to display, e.g. "+650" or "Chiefs (14 picks)". */
   value: string;
   /** Member who holds this record — resolved to a display name client-side
@@ -15,6 +30,8 @@ export type LeagueRecordEntry = {
   /** Smaller/secondary text shown alongside `value` (e.g. gross pick count
    * behind a percentage). Purely cosmetic — not needed for computation. */
   detail?: string | null;
+  /** The league's overall record (all members combined) betting this team/player. */
+  winLoss?: { wins: number; losses: number } | null;
   /** NFL week context for a record tied to one specific bet. */
   week?: { season: number; weekNumber: number; label: string } | null;
   /** Start/end of a streak, as ISO timestamps. */
@@ -65,6 +82,9 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
   const memberIds = members.map(m => m.userId);
   if (memberIds.length === 0) return [];
+
+  const [league] = await db.select().from(leagues).where(eq(leagues.id, leagueId));
+  const loserLabelText = LOSER_LABEL_TEXT[league?.loserLabel ?? "parlay_loser"] ?? LOSER_LABEL_TEXT.parlay_loser;
 
   const rows = await db
     .select({
@@ -122,6 +142,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   if (bestLeg) {
     records.push({
       key: "highestSingleLegOdds",
+      title: "Biggest Swing",
       label: "Highest Single-Leg Odds",
       value: bestLeg.american > 0 ? `+${bestLeg.american}` : String(bestLeg.american),
       holderUserId: bestLeg.userId,
@@ -133,6 +154,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   if (bestWinningLeg) {
     records.push({
       key: "highestSingleLegOddsWon",
+      title: "Biggest Hit",
       label: "Highest Single-Leg Odds (Won)",
       value: bestWinningLeg.american > 0 ? `+${bestWinningLeg.american}` : String(bestWinningLeg.american),
       holderUserId: bestWinningLeg.userId,
@@ -194,7 +216,8 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   if (topLoser) {
     records.push({
       key: "mostParlayLosses",
-      label: "Most Parlay Losses (Parlay Loser)",
+      title: `King ${loserLabelText}`,
+      label: "Most Times Breaking the Parlay",
       value: `${topLoser.count} time${topLoser.count !== 1 ? "s" : ""}`,
       holderUserId: topLoser.key,
     });
@@ -223,7 +246,8 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   if (juiceman) {
     records.push({
       key: "juiceman",
-      label: "The Juiceman",
+      title: "The Juiceman",
+      label: "Highest Average Bet Odds",
       value: decimalToAmericanLabel(juiceman.avgDecimal),
       detail: `avg over ${juiceman.count} win${juiceman.count !== 1 ? "s" : ""}`,
       holderUserId: juiceman.userId,
@@ -271,6 +295,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   if (bestWinStreak) {
     records.push({
       key: "longestWinStreak",
+      title: "The Whale",
       label: "Longest Win Streak",
       value: `${bestWinStreak.count} leg${bestWinStreak.count !== 1 ? "s" : ""}`,
       holderUserId: bestWinStreak.userId,
@@ -282,7 +307,8 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   if (bestLossStreak) {
     records.push({
       key: "longestLossStreak",
-      label: "Longest Loss Streak",
+      title: "Celibacy Rocks!",
+      label: "Longest Losing Streak",
       value: `${bestLossStreak.count} leg${bestLossStreak.count !== 1 ? "s" : ""}`,
       holderUserId: bestLossStreak.userId,
       dateRange: bestLossStreak.start && bestLossStreak.end
@@ -301,11 +327,22 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   }
   const topTeam = topEntry(teamCounts);
   if (topTeam) {
+    let teamWins = 0, teamLosses = 0;
+    for (const r of rows) {
+      if ((r.leg.betType === "spread" || r.leg.betType === "moneyline") && r.homeTeam && r.awayTeam) {
+        const team = r.leg.pick === "home" ? r.homeTeam : r.leg.pick === "away" ? r.awayTeam : null;
+        if (team !== topTeam.key) continue;
+        if (r.leg.result === "win") teamWins++;
+        else if (r.leg.result === "loss") teamLosses++;
+      }
+    }
     records.push({
       key: "favoriteTeam",
+      title: "Only Stans",
       label: "League Favorite Team",
       value: `${topTeam.key} (${topTeam.count} pick${topTeam.count !== 1 ? "s" : ""})`,
       holderUserId: null,
+      winLoss: teamWins + teamLosses > 0 ? { wins: teamWins, losses: teamLosses } : null,
     });
   }
 
@@ -318,11 +355,20 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   }
   const topPlayer = topEntry(playerCounts);
   if (topPlayer) {
+    let playerWins = 0, playerLosses = 0;
+    for (const r of rows) {
+      if (r.leg.betType === "player_prop" && r.leg.playerName === topPlayer.key) {
+        if (r.leg.result === "win") playerWins++;
+        else if (r.leg.result === "loss") playerLosses++;
+      }
+    }
     records.push({
       key: "favoritePlayer",
-      label: "League Favorite Prop Player",
+      title: "Play the Hits",
+      label: "",
       value: `${topPlayer.key} (${topPlayer.count} pick${topPlayer.count !== 1 ? "s" : ""})`,
       holderUserId: null,
+      winLoss: playerWins + playerLosses > 0 ? { wins: playerWins, losses: playerLosses } : null,
     });
   }
 
