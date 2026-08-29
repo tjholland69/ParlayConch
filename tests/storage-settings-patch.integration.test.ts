@@ -62,7 +62,7 @@ describe("user settings DB integrity", () => {
     await db.insert(leagueMembers).values({ leagueId: league.id, userId, role: "admin" });
     const [game] = await db
       .insert(games)
-      .values({ weekId: week.id, homeTeam: "X", awayTeam: "Y", gameTime: new Date() })
+      .values({ weekId: week.id, homeTeam: "X", awayTeam: "Y", gameTime: new Date(Date.now() + 3600_000) })
       .returning();
 
     const parlay = await storage.createParlay(

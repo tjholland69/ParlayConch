@@ -51,7 +51,9 @@ describe("storage null integrity", () => {
         weekId: week.id,
         homeTeam: "KC",
         awayTeam: "BAL",
-        gameTime: new Date(),
+        // Must be in the future — createParlay rejects legs on games that
+        // have already kicked off (see server/storage.ts's kickoff check).
+        gameTime: new Date(Date.now() + 3600_000),
       })
       .returning();
 
