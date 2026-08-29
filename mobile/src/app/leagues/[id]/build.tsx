@@ -21,14 +21,32 @@ import {
   useAddDraftLeg,
   useRemoveDraftLeg,
   useSubmitDraftParlay,
+  useTakenPicks,
 } from "@/hooks/use-parlays";
 import { GamePickCard } from "@/components/GamePickCard";
 import {
   getLineForBet,
   shortLegLabel,
+  takenMarketsByGame,
+  correlatedMarketWarning,
   type SelectedLeg,
 } from "@/lib/pickHelpers";
 import type { Game, GameWithBet } from "@shared/schema";
+
+/** Moneyline + Spread on the same game are highly correlated (the spread
+ * pick's side usually implies the moneyline outcome too) — confirm before
+ * adding one when the other is already someone else's pick on that game. */
+function confirmCorrelatedBet(conflictWithName: string, newBetType: string, onConfirm: () => void) {
+  const otherLabel = newBetType === "moneyline" ? "Spread" : "Moneyline";
+  Alert.alert(
+    "Correlated bet",
+    `${conflictWithName} already has the ${otherLabel} on this game. Taking both Moneyline and Spread on the same game is often a redundant bet — add it anyway?`,
+    [
+      { text: "Cancel", style: "cancel" },
+      { text: "Add anyway", onPress: onConfirm },
+    ],
+  );
+}
 
 export default function BuildPickScreen() {
   const { id, weekId: previewWeekIdParam, readOnly: readOnlyParam } = useLocalSearchParams<{
@@ -57,6 +75,8 @@ export default function BuildPickScreen() {
   const { data: lockStatus, isLoading: lockLoading } = useWeekLockStatus(leagueId, readOnly ? 0 : weekId);
   const { data: myParlay, isLoading: myParlayLoading } = useMyParlay(leagueId, readOnly ? 0 : weekId);
   const { data: games, isLoading: gamesLoading } = useGames(weekId);
+  const { data: takenPicks } = useTakenPicks(leagueId, readOnly ? 0 : weekId);
+  const takenByGame = useMemo(() => takenMarketsByGame(takenPicks), [takenPicks]);
   const createParlay = useCreateParlay(leagueId);
   const addDraftLeg = useAddDraftLeg(leagueId, weekId);
   const removeDraftLeg = useRemoveDraftLeg(leagueId, weekId);
@@ -129,68 +149,93 @@ export default function BuildPickScreen() {
 
   function toggleLegSubmitted(game: Game, betType: string, pick: string) {
     const line = getLineForBet(game, betType, pick);
-    setSelectedLegs((prev) => {
-      const existing = prev.findIndex((l) => l.gameId === game.id);
-      if (existing >= 0) {
-        if (prev[existing].pick === pick && prev[existing].betType === betType) {
-          return prev.filter((_, i) => i !== existing);
+    const applyChange = () => {
+      setSelectedLegs((prev) => {
+        const existing = prev.findIndex((l) => l.gameId === game.id);
+        if (existing >= 0) {
+          if (prev[existing].pick === pick && prev[existing].betType === betType) {
+            return prev.filter((_, i) => i !== existing);
+          }
+          return prev.map((l, i) =>
+            i === existing ? { gameId: game.id, betType, pick, line } : l,
+          );
         }
-        return prev.map((l, i) =>
-          i === existing ? { gameId: game.id, betType, pick, line } : l,
-        );
-      }
-      if (prev.length >= maxLegs) {
-        Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
-        return prev;
-      }
-      return [...prev, { gameId: game.id, betType, pick, line }];
-    });
+        if (prev.length >= maxLegs) {
+          Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
+          return prev;
+        }
+        return [...prev, { gameId: game.id, betType, pick, line }];
+      });
+    };
+
+    const existingLeg = selectedLegs.find((l) => l.gameId === game.id);
+    const isDeselect = existingLeg?.pick === pick && existingLeg?.betType === betType;
+    const conflictWith = !isDeselect ? correlatedMarketWarning(takenPicks, game.id, betType) : null;
+    if (conflictWith) {
+      confirmCorrelatedBet(conflictWith, betType, applyChange);
+      return;
+    }
+    applyChange();
   }
 
   async function toggleLegDraft(game: Game, betType: string, pick: string) {
     if (legMutationPending) return;
     const line = getLineForBet(game, betType, pick);
     const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === game.id);
+    const isDeselect = existingLeg?.pick === pick && existingLeg?.betType === betType;
 
-    try {
-      if (existingLeg) {
-        // Same pick tapped again → remove it (deselect).
-        if (existingLeg.pick === pick && existingLeg.betType === betType) {
+    const performToggle = async () => {
+      try {
+        if (existingLeg) {
+          // Same pick tapped again → remove it (deselect).
+          if (isDeselect) {
+            await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+            return;
+          }
+          // Different pick on the same game → swap: remove the old leg, add the new one.
           await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+          try {
+            await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
+          } catch (addErr) {
+            // The remove succeeded but the new pick failed to add — restore the
+            // original pick rather than silently leaving the draft one leg
+            // short of what the user had before tapping.
+            try {
+              await addDraftLeg.mutateAsync({
+                gameId: game.id,
+                betType: existingLeg.betType,
+                pick: existingLeg.pick,
+                line: existingLeg.line ?? undefined,
+              });
+            } catch {
+              // Restore also failed — surface the original error below; the
+              // draft is left missing this leg, but the user sees why.
+            }
+            throw addErr;
+          }
           return;
         }
-        // Different pick on the same game → swap: remove the old leg, add the new one.
-        await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
-        try {
-          await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
-        } catch (addErr) {
-          // The remove succeeded but the new pick failed to add — restore the
-          // original pick rather than silently leaving the draft one leg
-          // short of what the user had before tapping.
-          try {
-            await addDraftLeg.mutateAsync({
-              gameId: game.id,
-              betType: existingLeg.betType,
-              pick: existingLeg.pick,
-              line: existingLeg.line ?? undefined,
-            });
-          } catch {
-            // Restore also failed — surface the original error below; the
-            // draft is left missing this leg, but the user sees why.
-          }
-          throw addErr;
-        }
-        return;
-      }
 
-      if (draftLegs.length >= maxLegs) {
-        Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
+        if (draftLegs.length >= maxLegs) {
+          Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
+          return;
+        }
+        await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
+      } catch (err) {
+        Alert.alert("Couldn't update pick", err instanceof Error ? err.message : "Please try again.");
+      }
+    };
+
+    if (!isDeselect) {
+      const conflictWith = correlatedMarketWarning(takenPicks, game.id, betType);
+      if (conflictWith) {
+        confirmCorrelatedBet(conflictWith, betType, () => {
+          void performToggle();
+        });
         return;
       }
-      await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
-    } catch (err) {
-      Alert.alert("Couldn't update pick", err instanceof Error ? err.message : "Please try again.");
     }
+    await performToggle();
   }
 
   function clearGameSubmitted(gameId: number) {
@@ -204,6 +249,37 @@ export default function BuildPickScreen() {
       await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
     } catch (err) {
       Alert.alert("Couldn't remove leg", err instanceof Error ? err.message : "Please try again.");
+    }
+  }
+
+  // "Buy points" — re-prices the already-selected leg on this game at a new
+  // points-moved value, without changing betType/pick. Same betType+pick
+  // means the toggle's "tap same pick again → deselect" rule never applies here.
+  function adjustPointsSubmitted(game: Game, pointsMoved: number) {
+    setSelectedLegs((prev) => {
+      const idx = prev.findIndex((l) => l.gameId === game.id);
+      if (idx < 0) return prev;
+      const existing = prev[idx];
+      const line = getLineForBet(game, existing.betType, existing.pick, pointsMoved);
+      return prev.map((l, i) => (i === idx ? { ...l, line } : l));
+    });
+  }
+
+  const [pointsAdjustingGameId, setPointsAdjustingGameId] = useState<number | null>(null);
+
+  async function adjustPointsDraft(game: Game, pointsMoved: number) {
+    if (legMutationPending || pointsAdjustingGameId != null) return;
+    const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === game.id);
+    if (!existingLeg) return;
+    const line = getLineForBet(game, existingLeg.betType, existingLeg.pick, pointsMoved);
+    setPointsAdjustingGameId(game.id);
+    try {
+      await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+      await addDraftLeg.mutateAsync({ gameId: game.id, betType: existingLeg.betType, pick: existingLeg.pick, line });
+    } catch (err) {
+      Alert.alert("Couldn't update points", err instanceof Error ? err.message : "Please try again.");
+    } finally {
+      setPointsAdjustingGameId(null);
     }
   }
 
@@ -314,10 +390,15 @@ export default function BuildPickScreen() {
               game={item}
               selectedLeg={selected}
               readOnly={readOnly}
+              takenBy={takenByGame.get(item.id)}
               onSelect={({ betType, pick }) =>
                 isEditingSubmitted ? toggleLegSubmitted(item, betType, pick) : toggleLegDraft(item, betType, pick)
               }
               onClear={() => (isEditingSubmitted ? clearGameSubmitted(item.id) : clearGameDraft(item.id))}
+              onAdjustPoints={(pointsMoved) =>
+                isEditingSubmitted ? adjustPointsSubmitted(item, pointsMoved) : void adjustPointsDraft(item, pointsMoved)
+              }
+              pointsPending={!isEditingSubmitted && pointsAdjustingGameId === item.id}
             />
           );
         }}

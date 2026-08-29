@@ -79,14 +79,16 @@ export function LeagueCard({ league, stat, needsPick, activeWeekId }: LeagueCard
               </Text>
             ) : null}
 
-            <View style={styles.metaRow}>
+            <View style={styles.roleRow}>
               <View style={styles.metaItem}>
                 <View style={[styles.roleDot, { backgroundColor: roleColor }]} />
                 <Text style={[styles.metaText, { color: roleColor }]} numberOfLines={1}>
                   {roleLabel}
                 </Text>
               </View>
+            </View>
 
+            <View style={styles.metaRow}>
               {league.memberCount !== undefined && (
                 <View style={styles.metaItem}>
                   <Ionicons name="people-outline" size={13} color="#475569" />
@@ -226,12 +228,18 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     lineHeight: 18,
   },
+  roleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginTop: 12,
+    minWidth: 0,
+  },
   metaRow: {
     flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
     gap: 14,
-    marginTop: 12,
+    marginTop: 8,
     minWidth: 0,
   },
   metaItem: {

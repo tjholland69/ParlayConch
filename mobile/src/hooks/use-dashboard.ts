@@ -65,17 +65,26 @@ export function useDashboardPatterns(leagueId?: number) {
 export interface DashboardDateRange {
   startDate?: string;
   endDate?: string;
+  /** NFL season year (e.g. 2025 for the season that runs Sept 2025–Feb 2026).
+   * Used for the "Current Year"/"Prior Year" chips instead of a calendar-year
+   * date range, since NFL seasons straddle two calendar years. Takes priority
+   * over startDate/endDate when set. */
+  season?: number;
 }
 
 export function useDashboardPerformance(leagueId?: number, dateRange?: DashboardDateRange) {
   const params = new URLSearchParams();
   if (leagueId) params.set("leagueId", String(leagueId));
-  if (dateRange?.startDate) params.set("startDate", dateRange.startDate);
-  if (dateRange?.endDate) params.set("endDate", dateRange.endDate);
+  if (dateRange?.season != null) {
+    params.set("season", String(dateRange.season));
+  } else {
+    if (dateRange?.startDate) params.set("startDate", dateRange.startDate);
+    if (dateRange?.endDate) params.set("endDate", dateRange.endDate);
+  }
   const query = params.toString();
 
   return useQuery<{ points: WinRateTimeSeriesPoint[] }>({
-    queryKey: [api.dashboard.performance.path, leagueId ?? "all", dateRange?.startDate ?? null, dateRange?.endDate ?? null],
+    queryKey: [api.dashboard.performance.path, leagueId ?? "all", dateRange?.season ?? null, dateRange?.startDate ?? null, dateRange?.endDate ?? null],
     queryFn: () =>
       apiRequest<{ points: WinRateTimeSeriesPoint[] }>(
         "GET",

@@ -2,6 +2,8 @@ import { db } from "../db";
 import { eq, and, inArray } from "drizzle-orm";
 import { leagueMembers, parlays, parlayLegs, games, weeks, leagues } from "@shared/schema";
 import { parseAmericanOdds } from "@shared/powerScore";
+import { getSlate } from "@shared/slate";
+import { storage } from "../storage";
 
 /** Mirrors LOSER_LABEL_TEXT in client/src/components/ParlayRollupCard.tsx —
  * kept in sync by hand since one is server-only and the other client-only. */
@@ -63,6 +65,19 @@ function decimalToAmericanLabel(decimal: number): string {
   return String(american);
 }
 
+/** Compact tile label for an NFL player name: "P. Mahomes" instead of
+ * "Patrick Mahomes" — same first-initial + last-name space-saving treatment
+ * applied to league member names on these tiles (see memberShortName on the
+ * mobile client). Multi-word surnames/suffixes ("Odell Beckham Jr.") keep
+ * everything after the first token. */
+function abbreviatePlayerName(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/);
+  if (parts.length < 2) return fullName;
+  const initial = parts[0].replace(/\./g, "").charAt(0);
+  if (!initial) return fullName;
+  return `${initial}. ${parts.slice(1).join(" ")}`;
+}
+
 function topEntry<T extends string>(counts: Record<T, number>): { key: T; count: number } | null {
   let best: { key: T; count: number } | null = null;
   for (const key in counts) {
@@ -96,6 +111,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       homeTeam: games.homeTeam,
       awayTeam: games.awayTeam,
       gameFinishedAt: games.finishedAt,
+      gameTime: games.gameTime,
     })
     .from(parlayLegs)
     .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
@@ -188,6 +204,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   if (bestParlay) {
     records.push({
       key: "highestParlayOdds",
+      title: "Spice Melange",
       label: "Highest Total Parlay Odds",
       value: `${bestParlay.decimal.toFixed(1)}x (${decimalToAmericanLabel(bestParlay.decimal)})`,
       holderUserId: bestParlay.userId,
@@ -365,8 +382,8 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
     records.push({
       key: "favoritePlayer",
       title: "Play the Hits",
-      label: "",
-      value: `${topPlayer.key} (${topPlayer.count} pick${topPlayer.count !== 1 ? "s" : ""})`,
+      label: "League Favorite Player",
+      value: `${abbreviatePlayerName(topPlayer.key)} (${topPlayer.count} pick${topPlayer.count !== 1 ? "s" : ""})`,
       holderUserId: null,
       winLoss: playerWins + playerLosses > 0 ? { wins: playerWins, losses: playerLosses } : null,
     });
@@ -382,10 +399,57 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
     const pct = (topBetType.count / rows.length) * 100;
     records.push({
       key: "favoriteBetType",
+      title: "Ol' Reliable",
       label: "League Favorite Bet Type",
       value: `${BET_TYPE_LABELS[topBetType.key] ?? topBetType.key} (${pct.toFixed(1)}%)`,
       holderUserId: null,
       detail: `${topBetType.count} pick${topBetType.count !== 1 ? "s" : ""}`,
+    });
+  }
+
+  // ── Weak Line: lowest participation rate among members with at least one
+  // eligible week (a brand-new member with zero eligible weeks isn't a
+  // meaningful "least participatory" claim). ──────────────────────────────
+  const memberStats = await storage.getLeagueStats(leagueId);
+  const eligibleStats = memberStats.filter(s => s.participationRate != null);
+  let weakestLink: { userId: string; rate: number } | null = null;
+  for (const s of eligibleStats) {
+    if (!weakestLink || s.participationRate < weakestLink.rate) {
+      weakestLink = { userId: s.userId, rate: s.participationRate };
+    }
+  }
+  if (weakestLink) {
+    records.push({
+      key: "weakLine",
+      title: "Weak Line",
+      label: "Lowest Participation Rate",
+      value: `${Math.round(weakestLink.rate * 100)}%`,
+      holderUserId: weakestLink.userId,
+    });
+  }
+
+  // ── Appointment Viewing: most legs bet on Primetime-slate games. Placed
+  // last in the grid per product request. ────────────────────────────────
+  const primetimeCounts = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.gameTime || getSlate(r.gameTime) !== "Primetime") continue;
+    primetimeCounts.set(r.leg.userId, (primetimeCounts.get(r.leg.userId) ?? 0) + 1);
+  }
+  const topPrimetime = topEntry(Object.fromEntries(primetimeCounts) as Record<string, number>);
+  if (topPrimetime) {
+    let primetimeWins = 0, primetimeLosses = 0;
+    for (const r of rows) {
+      if (!r.gameTime || getSlate(r.gameTime) !== "Primetime" || r.leg.userId !== topPrimetime.key) continue;
+      if (r.leg.result === "win") primetimeWins++;
+      else if (r.leg.result === "loss") primetimeLosses++;
+    }
+    records.push({
+      key: "appointmentViewing",
+      title: "Appointment Viewing",
+      label: "Most Primetime Games Bet",
+      value: `${topPrimetime.count} pick${topPrimetime.count !== 1 ? "s" : ""}`,
+      holderUserId: topPrimetime.key,
+      winLoss: primetimeWins + primetimeLosses > 0 ? { wins: primetimeWins, losses: primetimeLosses } : null,
     });
   }
 

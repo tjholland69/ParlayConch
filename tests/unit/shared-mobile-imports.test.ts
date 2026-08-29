@@ -5,7 +5,7 @@ import {
   deriveResultDetailFromGame,
   resolveResultDetail,
 } from "../../shared/legJustification";
-import { pickDeepLinkGame, SPORTSBOOK_PROVIDERS } from "../../shared/sportsbook-providers";
+import { pickDeepLinkGames, SPORTSBOOK_PROVIDERS } from "../../shared/sportsbook-providers";
 import type { Game } from "../../shared/schema";
 
 describe("shared/slate", () => {
@@ -68,8 +68,8 @@ describe("shared/sportsbook-providers", () => {
     );
   });
 
-  test("pickDeepLinkGame chooses earliest kickoff among legs with games", () => {
-    const picked = pickDeepLinkGame([
+  test("pickDeepLinkGames sorts by earliest kickoff and dedupes by gameId", () => {
+    const picked = pickDeepLinkGames([
       {
         gameId: 2,
         game: { homeTeam: "DAL", awayTeam: "PHI", gameTime: "2024-09-08T20:00:00Z" },
@@ -78,9 +78,18 @@ describe("shared/sportsbook-providers", () => {
         gameId: 1,
         game: { homeTeam: "KC", awayTeam: "BUF", gameTime: "2024-09-08T17:00:00Z" },
       },
+      // Same game as gameId 1 (e.g. a Spread + an Over/Under on one matchup)
+      // — must collapse to a single walkthrough step, not two.
+      {
+        gameId: 1,
+        game: { homeTeam: "KC", awayTeam: "BUF", gameTime: "2024-09-08T17:00:00Z" },
+      },
       { gameId: null, game: null },
     ]);
-    expect(picked).toEqual({ homeTeam: "KC", awayTeam: "BUF" });
-    expect(pickDeepLinkGame([{ gameId: null, game: null }])).toBeNull();
+    expect(picked).toEqual([
+      { homeTeam: "KC", awayTeam: "BUF" },
+      { homeTeam: "DAL", awayTeam: "PHI" },
+    ]);
+    expect(pickDeepLinkGames([{ gameId: null, game: null }])).toEqual([]);
   });
 });

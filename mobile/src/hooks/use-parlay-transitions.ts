@@ -18,6 +18,7 @@ export function useMarkParlaySent(leagueId: number, weekId: number) {
     mutationFn: (parlayId: number) => apiRequest("POST", `/api/parlays/${parlayId}/mark-sent`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "parlays"] });
     },
   });
 }

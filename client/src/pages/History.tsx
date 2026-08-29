@@ -50,12 +50,21 @@ type TileKey = "total" | "wins" | "losses" | "winRate" | "gameLegs" | "gameWinRa
 // closed parlay's status, so "closed" here just means "graded", not "locked".
 const TERMINAL_PARLAY_STATUSES = new Set(["win", "loss", "push", "rejected", "void"]);
 
-type HistoryDateRange = { startDate?: string; endDate?: string };
+type HistoryDateRange = { startDate?: string; endDate?: string; season?: number };
 type DateRangeMode = "all" | "year" | "month" | "custom";
 
 function toISODate(d: Date): string {
   const tzOffsetMs = d.getTimezoneOffset() * 60000;
   return new Date(d.getTime() - tzOffsetMs).toISOString().slice(0, 10);
+}
+
+/** NFL season year for a given date — a season runs Sept of its start year
+ * through the following February, so Jan/Feb belong to the PRIOR season year
+ * even though the calendar year has already ticked over. Without this,
+ * "This Year" (a plain Jan 1–today calendar range) pulls in the prior
+ * season's January/February playoff parlays and mislabels them as current. */
+function nflSeasonYear(date: Date): number {
+  return date.getMonth() <= 1 ? date.getFullYear() - 1 : date.getFullYear();
 }
 
 // Same All Time / This Year / This Month / Custom pattern as the Dashboard >
@@ -86,8 +95,7 @@ function HistoryDateRangeFilter({
     if (m === "all") {
       onRangeChange({});
     } else if (m === "year") {
-      const now = new Date();
-      onRangeChange({ startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) });
+      onRangeChange({ season: nflSeasonYear(new Date()) });
     } else if (m === "month") {
       const now = new Date();
       onRangeChange({ startDate: toISODate(new Date(now.getFullYear(), now.getMonth(), 1)), endDate: toISODate(now) });
@@ -517,6 +525,11 @@ export default function History() {
   // Structured filters (league members / bet types / time range) — applied
   // ahead of the hidden "Advanced Filter" raw query line.
   const dateFilteredParlays = useMemo(() => {
+    if (historyDateRange.season != null) {
+      // Match the parlay's actual NFL season (weeks.season) rather than a
+      // calendar-year createdAt range — see nflSeasonYear for why.
+      return baseParlays.filter(p => p.week?.season === historyDateRange.season);
+    }
     if (!historyDateRange.startDate && !historyDateRange.endDate) return baseParlays;
     return baseParlays.filter(p => {
       if (!p.createdAt) return false;
@@ -851,7 +864,7 @@ export default function History() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-muted-foreground">
               {filteredParlays.length} of {baseParlays.length} parlay{baseParlays.length !== 1 ? "s" : ""}
-              {parlayQuery.trim() || selectedBetTypes.length > 0 || selectedMemberIds.length > 0 || historyDateRange.startDate || ownPicksOnly
+              {parlayQuery.trim() || selectedBetTypes.length > 0 || selectedMemberIds.length > 0 || historyDateRange.startDate || historyDateRange.season != null || ownPicksOnly
                 ? " match"
                 : " in this league"}
             </p>
@@ -972,7 +985,7 @@ export default function History() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <p className="text-sm text-muted-foreground">
               {filteredMyLegs.length} of {baseLegs.length} leg{baseLegs.length !== 1 ? "s" : ""}
-              {legQuery.trim() || selectedBetTypes.length > 0 || selectedMemberIds.length > 0 || historyDateRange.startDate
+              {legQuery.trim() || selectedBetTypes.length > 0 || selectedMemberIds.length > 0 || historyDateRange.startDate || historyDateRange.season != null
                 ? " match"
                 : ownPicksOnly ? " I have placed" : " in this league"}
             </p>

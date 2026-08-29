@@ -31,6 +31,7 @@ import {
   withBar,
 } from "@shared/powerScore";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
+import { impliedPointsMoved, MAX_POINTS_MOVE } from "@shared/buyPoints";
 
 function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
   void publishLeagueEvent(leagueId, kind, weekId).catch((e) =>
@@ -52,6 +53,23 @@ function pickKey(leg: { betType: string; gameId?: number | null; pick: string; p
   return leg.betType === 'player_prop'
     ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
     : `game:${leg.gameId}:${leg.betType}:${leg.pick}`;
+}
+
+// Cross-user exclusivity, used only by addLegToDraftParlay/createParlay — a
+// stricter, betType-aware variant of pickKey. Moneyline is never exclusive
+// (any number of members can each take either side); spread/over-under are
+// exclusive per game regardless of SIDE (once one member has the spread on a
+// game, no one else may take the spread on that game at all, home or away —
+// same for over/under). Player props keep pickKey's exact-side exclusivity,
+// unchanged. Returns null for a leg that's never exclusive.
+function exclusivityKey(leg: { betType: string; gameId?: number | null; pick: string; playerName?: string | null; propType?: string | null }): string | null {
+  if (leg.betType === 'moneyline') return null;
+  if (leg.betType === 'player_prop') return pickKey(leg);
+  // 'over' and 'under' are stored as two distinct betType values (not two
+  // sides of one type) — group them under one key so taking either side of
+  // the total locks out the other, the same way spread's home/away do.
+  const market = leg.betType === 'over' || leg.betType === 'under' ? 'total' : leg.betType;
+  return `game:${leg.gameId}:${market}`;
 }
 
 // Lowercase, strip common suffixes (Jr, Sr, II–IV) and punctuation, collapse
@@ -129,7 +147,7 @@ export interface IStorage {
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(
     leagueId: number,
-    opts?: { limit?: number; offset?: number; all?: boolean },
+    opts?: { limit?: number; offset?: number; all?: boolean; weekIds?: number[] },
   ): Promise<{ items: ParlayWithLegs[]; total: number; limit: number; offset: number; hasMore: boolean }>;
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
@@ -979,6 +997,37 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId" | "userId">[]): Promise<Parlay> {
+    // Same cross-user exclusivity + kickoff-cutoff rules as
+    // addLegToDraftParlay, applied here too since this full-replace path
+    // (editing an already-submitted parlay) is the other way a leg reaches
+    // parlayLegs and would otherwise bypass both checks entirely.
+    const takenByOthers = await this.getTakenPicksForWeek(parlay.leagueId, parlay.weekId, userId);
+    const gameIds = [...new Set(legs.map(l => l.gameId).filter((id): id is number => id != null))];
+    const legGames = gameIds.length > 0 ? await db.select().from(games).where(inArray(games.id, gameIds)) : [];
+    const gameById = new Map(legGames.map(g => [g.id, g]));
+    for (const leg of legs) {
+      const legExclusivityKey = exclusivityKey(leg);
+      if (legExclusivityKey != null && takenByOthers.some(t => exclusivityKey(t) === legExclusivityKey)) {
+        throw new Error(
+          leg.betType === 'player_prop'
+            ? "This pick has already been taken by another player."
+            : "Someone else in the league already has this bet type on this game.",
+        );
+      }
+      if (leg.gameId != null) {
+        const game = gameById.get(leg.gameId);
+        if (game && (game.isFinished || (game.gameTime && new Date(game.gameTime) < new Date()))) {
+          throw new Error("This game has already started and can no longer be picked.");
+        }
+        if (game) {
+          const pointsMoved = impliedPointsMoved(leg.betType, leg.pick, game, leg.line);
+          if (pointsMoved > MAX_POINTS_MOVE + 0.01) {
+            throw new Error(`Points bought can't exceed ${MAX_POINTS_MOVE}.`);
+          }
+        }
+      }
+    }
+
     return await db.transaction(async (tx) => {
       const existing = await tx
         .select()
@@ -1055,10 +1104,29 @@ export class DatabaseStorage implements IStorage {
     maxLegsPerParlay: number,
     maxBetsPerGame: number,
   ): Promise<Parlay> {
-    const takenByOthers = await this.getTakenPicksForWeek(leagueId, weekId, userId);
-    const legKey = pickKey(leg);
-    if (takenByOthers.some(t => pickKey(t) === legKey)) {
-      throw new Error("This pick has already been taken by another player.");
+    const legExclusivityKey = exclusivityKey(leg);
+    if (legExclusivityKey != null) {
+      const takenByOthers = await this.getTakenPicksForWeek(leagueId, weekId, userId);
+      if (takenByOthers.some(t => exclusivityKey(t) === legExclusivityKey)) {
+        throw new Error(
+          leg.betType === 'player_prop'
+            ? "This pick has already been taken by another player."
+            : "Someone else in the league already has this bet type on this game.",
+        );
+      }
+    }
+
+    if (leg.gameId != null) {
+      const [game] = await db.select().from(games).where(eq(games.id, leg.gameId));
+      if (game && (game.isFinished || (game.gameTime && new Date(game.gameTime) < new Date()))) {
+        throw new Error("This game has already started and can no longer be picked.");
+      }
+      if (game) {
+        const pointsMoved = impliedPointsMoved(leg.betType, leg.pick, game, leg.line);
+        if (pointsMoved > MAX_POINTS_MOVE + 0.01) {
+          throw new Error(`Points bought can't exceed ${MAX_POINTS_MOVE}.`);
+        }
+      }
     }
 
     const parlayRecord = await db.transaction(async (tx) => {
@@ -1444,7 +1512,7 @@ export class DatabaseStorage implements IStorage {
 
   async getAllLeagueParlays(
     leagueId: number,
-    opts: { limit?: number; offset?: number; all?: boolean } = {},
+    opts: { limit?: number; offset?: number; all?: boolean; weekIds?: number[] } = {},
   ): Promise<{ items: ParlayWithLegs[]; total: number; limit: number; offset: number; hasMore: boolean }> {
     const DEFAULT_LIMIT = 50;
     const MAX_LIMIT = 100;
@@ -1453,10 +1521,18 @@ export class DatabaseStorage implements IStorage {
       ? Number.MAX_SAFE_INTEGER
       : Math.min(MAX_LIMIT, Math.max(1, opts.limit ?? DEFAULT_LIMIT));
 
+    // A weekIds scope (e.g. "this season + last season") is already a bounded
+    // set on the caller's side, so it's treated like `all` — no limit/offset —
+    // rather than silently truncating a multi-season view to 50 rows.
+    const unbounded = opts.all || (opts.weekIds != null && opts.weekIds.length > 0);
+    const scopeCondition = opts.weekIds != null && opts.weekIds.length > 0
+      ? and(eq(parlays.leagueId, leagueId), inArray(parlays.weekId, opts.weekIds))
+      : eq(parlays.leagueId, leagueId);
+
     const [{ count }] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(parlays)
-      .where(eq(parlays.leagueId, leagueId));
+      .where(scopeCondition);
     const total = Number(count) || 0;
 
     // leftJoin (not innerJoin) — a parlay must never disappear from the results just
@@ -1465,18 +1541,18 @@ export class DatabaseStorage implements IStorage {
     let query = db.select({ parlay: parlays, user: users })
       .from(parlays)
       .leftJoin(users, eq(parlays.userId, users.id))
-      .where(eq(parlays.leagueId, leagueId))
+      .where(scopeCondition)
       .orderBy(desc(parlays.createdAt))
       .$dynamic();
 
-    if (!opts.all) {
+    if (!unbounded) {
       query = query.limit(limit).offset(offset);
     }
 
     const leagueParlays = await query;
 
     if (leagueParlays.length === 0) {
-      return { items: [], total, limit: opts.all ? total : limit, offset, hasMore: false };
+      return { items: [], total, limit: unbounded ? total : limit, offset, hasMore: false };
     }
 
     const parlayIds = leagueParlays.map(({ parlay }) => parlay.id);
@@ -1513,13 +1589,13 @@ export class DatabaseStorage implements IStorage {
       user: user ? { firstName: user.firstName, email: user.email, profileImageUrl: user.profileImageUrl, isDemo: user.isDemo, settings: user.settings as any } : undefined,
     }));
 
-    const effectiveLimit = opts.all ? items.length : limit;
+    const effectiveLimit = unbounded ? items.length : limit;
     return {
       items,
       total,
       limit: effectiveLimit,
       offset,
-      hasMore: opts.all ? false : offset + items.length < total,
+      hasMore: unbounded ? false : offset + items.length < total,
     };
   }
 

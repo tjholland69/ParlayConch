@@ -46,7 +46,9 @@ describe("DatabaseStorage integration", () => {
         weekId: week.id,
         homeTeam: "A",
         awayTeam: "B",
-        gameTime: new Date(),
+        // Must be in the future — createParlay rejects legs on games that
+        // have already kicked off (see server/storage.ts's kickoff check).
+        gameTime: new Date(Date.now() + 3600_000),
       })
       .returning();
 
@@ -105,7 +107,7 @@ describe("DatabaseStorage integration", () => {
         weekId: week.id,
         homeTeam: "C",
         awayTeam: "D",
-        gameTime: new Date(),
+        gameTime: new Date(Date.now() + 3600_000),
       })
       .returning();
 
@@ -158,11 +160,11 @@ describe("DatabaseStorage integration", () => {
 
     const [gameA] = await db
       .insert(games)
-      .values({ weekId: week.id, homeTeam: "A", awayTeam: "B", gameTime: new Date() })
+      .values({ weekId: week.id, homeTeam: "A", awayTeam: "B", gameTime: new Date(Date.now() + 3600_000) })
       .returning();
     const [gameB] = await db
       .insert(games)
-      .values({ weekId: week.id, homeTeam: "C", awayTeam: "D", gameTime: new Date() })
+      .values({ weekId: week.id, homeTeam: "C", awayTeam: "D", gameTime: new Date(Date.now() + 3600_000) })
       .returning();
 
     // Parlay 1: win + push, zero losses — should roll up to 'win'.

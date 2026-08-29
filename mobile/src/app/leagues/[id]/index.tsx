@@ -15,7 +15,7 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
@@ -32,16 +32,17 @@ import {
   type LeagueRecordEntry,
 } from "@/hooks/use-leagues";
 import {
-  useLeagueParlays,
+  useAllLeagueParlaysForWeeks,
   useApproveParlay,
   useRejectParlay,
   useMyParlay,
 } from "@/hooks/use-parlays";
 import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
-import { useActiveWeek } from "@/hooks/use-weeks";
+import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
 import { useAuth } from "@/hooks/use-auth";
+import { useAppResume } from "@/hooks/use-app-resume";
 import { format } from "date-fns";
-import { SPORTSBOOK_PROVIDERS, pickDeepLinkGame, type SportsbookProvider } from "@shared/sportsbook-providers";
+import { SPORTSBOOK_PROVIDERS, pickDeepLinkGames, type SportsbookProvider, type DeepLinkGame } from "@shared/sportsbook-providers";
 import type { ParlayWithLegs } from "@shared/schema";
 import { resolveResultDetail } from "@shared/legJustification";
 import { getSlate } from "@shared/slate";
@@ -110,6 +111,14 @@ function ParlayCard({
   const markParlaySent = useMarkParlaySent(leagueId, weekId);
   const [expandedLegIndex, setExpandedLegIndex] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState(true);
+  // Multi-game "Send to Sportsbook" walkthrough — set only when the parlay
+  // spans 2+ distinct games, since a single game keeps the original one-shot
+  // deep link. Advances on app-resume (see useAppResume below); there's no
+  // callback from the sportsbook app, so "the user came back" is the only
+  // signal available that a step is done.
+  const [walkthroughGames, setWalkthroughGames] = useState<DeepLinkGame[] | null>(null);
+  const [walkthroughIndex, setWalkthroughIndex] = useState(0);
+  const [walkthroughProvider, setWalkthroughProvider] = useState<Exclude<SportsbookProvider, "other"> | null>(null);
 
   const name =
     parlay.user?.settings?.displayName ??
@@ -171,6 +180,46 @@ function ParlayCard({
   const canModerate = isAdmin && parlay.status === "pending";
   const canSendToSportsbook = isAdmin && parlay.status === "approved";
 
+  // Opens one game's deep link, falling back to the provider's website if
+  // the app isn't installed or the link fails. Returns whether the deep
+  // link itself opened (vs. the web fallback) — only a real app-open counts
+  // as evidence the maestro is actually staging the bet.
+  async function openGameDeepLink(provider: (typeof SPORTSBOOK_PROVIDERS)[keyof typeof SPORTSBOOK_PROVIDERS], game: DeepLinkGame | null): Promise<boolean> {
+    const deepLinkUrl = game ? provider.buildGameDeepLink(game) : `${provider.appScheme}://`;
+    try {
+      const canOpen = await Linking.canOpenURL(deepLinkUrl);
+      if (canOpen) {
+        await Linking.openURL(deepLinkUrl);
+        return true;
+      }
+    } catch {
+      // fall through to web fallback below
+    }
+    // App not installed or the deep link failed — best-effort web rescue.
+    await Linking.openURL(provider.webFallbackUrl);
+    return false;
+  }
+
+  // Once the app resumes after the walkthrough's last step, advance to the
+  // next leg — or, if that was the last one, mark the parlay sent, mirroring
+  // the original single-leg behavior (mark sent as soon as the last deep
+  // link opens). There's no callback from the sportsbook app, so a resume is
+  // the only signal available that the user is done with that step.
+  useAppResume(() => {
+    if (!walkthroughGames) return;
+    const nextIndex = walkthroughIndex + 1;
+    if (nextIndex >= walkthroughGames.length) {
+      markParlaySent.mutate(parlay.id);
+      setWalkthroughGames(null);
+      setWalkthroughProvider(null);
+      return;
+    }
+    setWalkthroughIndex(nextIndex);
+    if (walkthroughProvider) {
+      void openGameDeepLink(SPORTSBOOK_PROVIDERS[walkthroughProvider], walkthroughGames[nextIndex]);
+    }
+  });
+
   async function handleSendToSportsbook() {
     if (!preferredSportsbook) {
       Alert.alert(
@@ -197,26 +246,21 @@ function ParlayCard({
     }
 
     const provider = SPORTSBOOK_PROVIDERS[preferredSportsbook];
-    const game = pickDeepLinkGame(parlay.legs ?? []);
-    const deepLinkUrl = game ? provider.buildGameDeepLink(game) : `${provider.appScheme}://`;
+    const games = pickDeepLinkGames(parlay.legs ?? []);
 
-    try {
-      const canOpen = await Linking.canOpenURL(deepLinkUrl);
-      if (canOpen) {
-        await Linking.openURL(deepLinkUrl);
-        markParlaySent.mutate(parlay.id);
-        return;
-      }
-    } catch {
-      // fall through to web fallback below
+    if (games.length <= 1) {
+      // Common case, unchanged: one deep link (or the bare app-open if no
+      // leg resolves to a game), marking sent only on a real app-open.
+      const opened = await openGameDeepLink(provider, games[0] ?? null);
+      if (opened) markParlaySent.mutate(parlay.id);
+      return;
     }
 
-    // App not installed or the deep link failed — best-effort web rescue.
-    // Deliberately does NOT call markParlaySent: opening a plain website is
-    // not real evidence the maestro will actually place the bet in-app, and
-    // we don't want to trigger the "did you place this bet?" resume prompt
-    // for a handoff that probably didn't happen.
-    await Linking.openURL(provider.webFallbackUrl);
+    // Multiple distinct games — start the walkthrough at leg 1 of N.
+    setWalkthroughProvider(preferredSportsbook);
+    setWalkthroughGames(games);
+    setWalkthroughIndex(0);
+    await openGameDeepLink(provider, games[0]);
   }
 
   return (
@@ -376,6 +420,45 @@ function ParlayCard({
           </Pressable>
         </View>
       )}
+
+      {walkthroughGames && walkthroughProvider && (
+        <Modal visible transparent animationType="slide" onRequestClose={() => setWalkthroughGames(null)}>
+          <View style={styles.modalOverlay}>
+            <Pressable style={styles.modalBackdrop} onPress={() => setWalkthroughGames(null)} />
+            <View style={styles.modalSheet}>
+              <Text style={styles.modalTitle}>
+                Leg {walkthroughIndex + 1} of {walkthroughGames.length}
+              </Text>
+              <Text style={styles.walkthroughMatchup}>
+                {walkthroughGames[walkthroughIndex].awayTeam} @ {walkthroughGames[walkthroughIndex].homeTeam}
+              </Text>
+              <Text style={styles.modalSubtitle}>
+                Add this game's bet in {SPORTSBOOK_PROVIDERS[walkthroughProvider].label}, then come back here for the
+                next leg.
+              </Text>
+              <View style={styles.modalActions}>
+                <Pressable
+                  style={({ pressed }) => [styles.modalCancel, pressed && { opacity: 0.7 }]}
+                  onPress={() => {
+                    setWalkthroughGames(null);
+                    setWalkthroughProvider(null);
+                  }}
+                >
+                  <Text style={styles.modalCancelText}>Cancel</Text>
+                </Pressable>
+                <Pressable
+                  style={({ pressed }) => [styles.modalConfirm, pressed && { opacity: 0.85 }]}
+                  onPress={() => openGameDeepLink(SPORTSBOOK_PROVIDERS[walkthroughProvider!], walkthroughGames[walkthroughIndex])}
+                >
+                  <Text style={styles.modalConfirmText}>
+                    Open in {SPORTSBOOK_PROVIDERS[walkthroughProvider].label}
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
     </View>
   );
@@ -387,6 +470,15 @@ function memberDisplayName(member: any): string {
     : member.user?.firstName
     ? `${member.user.firstName}${member.user.lastName ? " " + member.user.lastName : ""}`
     : member.user?.email ?? "Unknown";
+}
+
+/** Compact tile label: "T. Holland" when a first + last name are both
+ * known, otherwise falls back to the regular display name/email. */
+function memberShortName(member: any): string {
+  const first = member.user?.firstName;
+  const last = member.user?.lastName;
+  if (first && last) return `${first.charAt(0)}. ${last}`;
+  return memberDisplayName(member);
 }
 
 const BET_TYPE_FILTERS: { key: string; label: string }[] = [
@@ -441,13 +533,14 @@ function roleMeta(role: string | undefined) {
   return { roleColor, roleLabel };
 }
 
-type MemberSortKey = "powerScore" | "winRate" | "record";
+type MemberSortKey = "powerScore" | "winRate" | "record" | "participationRate";
 type SortDir = "asc" | "desc";
 
 const MEMBER_SORT_COLUMNS: { key: MemberSortKey; label: string }[] = [
   { key: "powerScore", label: "Power" },
   { key: "winRate", label: "Win %" },
   { key: "record", label: "Record" },
+  { key: "participationRate", label: "Part. %" },
 ];
 
 function MemberRow({
@@ -461,6 +554,7 @@ function MemberRow({
     losses: number;
     winRate: number;
     powerScore: number;
+    participationRate: number;
   };
 }) {
   const { roleColor, roleLabel } = roleMeta(member.role);
@@ -474,6 +568,7 @@ function MemberRow({
       <Text style={styles.memberStatCol} numberOfLines={1}>{member.powerScore.toFixed(2)}</Text>
       <Text style={styles.memberStatCol} numberOfLines={1}>{Math.round(member.winRate)}%</Text>
       <Text style={styles.memberStatCol} numberOfLines={1}>{member.wins}-{member.losses}</Text>
+      <Text style={styles.memberStatCol} numberOfLines={1}>{Math.round(member.participationRate * 100)}%</Text>
     </View>
   );
 }
@@ -500,6 +595,7 @@ function MembersTable({
       losses: stat?.losses ?? 0,
       winRate: stat?.winRate ?? 0,
       powerScore: stat?.powerScore ?? 0,
+      participationRate: stat?.participationRate ?? 0,
     };
   });
 
@@ -571,6 +667,8 @@ const RECORD_ICONS: Record<string, IconName> = {
   favoriteTeam: "shield-outline",
   favoritePlayer: "person-outline",
   favoriteBetType: "dice-outline",
+  appointmentViewing: "tv-outline",
+  weakLine: "battery-dead-outline",
 };
 
 function formatRecordDateRange(range: LeagueRecordEntry["dateRange"]): string | null {
@@ -583,7 +681,7 @@ function formatRecordDateRange(range: LeagueRecordEntry["dateRange"]): string | 
 function LeagueRecordTile({ record, members }: { record: LeagueRecordEntry; members: any[] | undefined }) {
   const icon = RECORD_ICONS[record.key] ?? "trophy-outline";
   const holder = record.holderUserId ? members?.find((m) => m.userId === record.holderUserId) : null;
-  const holderName = holder ? memberDisplayName(holder) : null;
+  const holderName = holder ? memberShortName(holder) : null;
   const weekLabel = record.week ? `${record.week.label}, ${record.week.season}` : null;
   const dateRangeLabel = formatRecordDateRange(record.dateRange);
   const winLossLabel = record.winLoss
@@ -654,11 +752,20 @@ export default function LeagueDetailScreen() {
   const { data: leagueRecords, isLoading: recordsLoading } = useLeagueRecords(leagueId);
 
   const weekId = activeWeek?.id ?? 0;
+  // The Parlays tab shows every open/closed bet from this season + last
+  // season (not just the active week) — same "this year + last year" scope
+  // used on the Your Picks tab (mobile/src/app/(tabs)/picks.tsx).
+  const { data: allWeeks } = useWeeks();
+  const parlayTabWeekIds = useMemo(() => {
+    if (!activeWeek || !allWeeks) return [];
+    return allWeeks.filter((w) => w.season >= activeWeek.season - 1).map((w) => w.id);
+  }, [allWeeks, activeWeek]);
   const {
-    data: parlays,
+    data: parlaysPage,
     isLoading: parlaysLoading,
     refetch: refetchParlays,
-  } = useLeagueParlays(leagueId, weekId);
+  } = useAllLeagueParlaysForWeeks(leagueId, parlayTabWeekIds);
+  const parlays = parlaysPage?.items;
   const { data: lockStatus, refetch: refetchLock } = useWeekLockStatus(leagueId, weekId);
   const { data: myParlay } = useMyParlay(leagueId, weekId);
   const lockWeek = useLockWeekParlay(leagueId, weekId);
@@ -671,12 +778,21 @@ export default function LeagueDetailScreen() {
 
   const memberOptions = [
     { key: "all", label: "All Members" },
+    ...(user?.id ? [{ key: "me", label: "Just Me" }] : []),
     ...(members ?? []).map((m: any) => ({ key: m.userId, label: memberDisplayName(m) })),
   ];
+  // "me" is a stand-in for the caller's own userId — resolved here rather
+  // than storing the real id in state, so the chip stays labeled "Just Me"
+  // instead of showing the user's own name once selected.
+  const effectiveMemberFilter = memberFilter === "me" ? (user?.id ?? "me") : memberFilter;
   const filtersActive = memberFilter !== "all" || betTypeFilter !== "all" || resultFilter !== "all";
   const filteredParlays = (parlays ?? []).filter((parlay: ParlayWithLegs) => {
     const legs = parlay.legs ?? [];
-    if (memberFilter !== "all" && parlay.userId !== memberFilter && !legs.some((l) => l.userId === memberFilter)) {
+    if (
+      effectiveMemberFilter !== "all" &&
+      parlay.userId !== effectiveMemberFilter &&
+      !legs.some((l) => l.userId === effectiveMemberFilter)
+    ) {
       return false;
     }
     if (betTypeFilter !== "all" && !legs.some((l) => l.betType === betTypeFilter)) return false;
@@ -1321,6 +1437,7 @@ const styles = StyleSheet.create({
   },
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#f1f5f9" },
   modalSubtitle: { fontSize: 13, color: "#94a3b8", marginBottom: 4 },
+  walkthroughMatchup: { fontSize: 16, fontWeight: "700", color: "#f1f5f9" },
   codeRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1580,7 +1697,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     marginBottom: 8,
   },
-  memberIdentityCol: { flex: 1.6, minWidth: 0 },
+  memberIdentityCol: { flex: 1.3, minWidth: 0 },
   memberStatCol: { flex: 1, fontSize: 13, fontWeight: "700", color: "#f1f5f9", textAlign: "center" },
   memberName: { fontSize: 15, fontWeight: "600", color: "#f1f5f9" },
   memberRole: { fontSize: 12, fontWeight: "600", marginTop: 2 },

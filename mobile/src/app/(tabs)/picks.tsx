@@ -6,16 +6,18 @@ import {
   StyleSheet,
   Pressable,
   SectionList,
+  Modal,
 } from "react-native";
 import { useState, useEffect, useMemo } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from "react-native-reanimated";
 import { useLeagues, useWeekLockStatus } from "@/hooks/use-leagues";
 import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
 import { useMyParlay, useMyParlayHistory } from "@/hooks/use-parlays";
 import { format, formatDistanceToNow, isPast } from "date-fns";
-import type { ParlayWithLegs } from "@shared/schema";
+import type { ParlayWithLegs, Week } from "@shared/schema";
 import { CHIP_MIN_HEIGHT, shadows } from "@/lib/theme";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
@@ -237,6 +239,123 @@ function FilterChipRow({
   );
 }
 
+/** Tapping the active-week banner opens a picker of every loaded week
+ * (grouped by season, newest first) to filter the list down to one week.
+ * Picking "Current Week" clears the filter back to the normal open/past view. */
+function WeekFilterButton({
+  activeWeek,
+  loadedWeeks,
+  weekFilter,
+  onSelect,
+  deadline,
+  deadlinePast,
+}: {
+  activeWeek: Week;
+  /** Every week currently revealed/fetched — weeks further back than this
+   * haven't been loaded yet, so they're not offered until "Load" reveals them. */
+  loadedWeeks: Week[];
+  weekFilter: string;
+  onSelect: (weekId: string) => void;
+  deadline: Date | null;
+  deadlinePast: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const insets = useSafeAreaInsets();
+  const selectedWeek = loadedWeeks.find((w) => String(w.id) === weekFilter);
+  const displayWeek = selectedWeek ?? activeWeek;
+  const isFiltered = weekFilter !== "all";
+
+  const seasons = useMemo(() => {
+    const bySeason = new Map<number, Week[]>();
+    for (const w of loadedWeeks) {
+      const arr = bySeason.get(w.season);
+      if (arr) arr.push(w);
+      else bySeason.set(w.season, [w]);
+    }
+    return [...bySeason.entries()]
+      .sort(([a], [b]) => b - a)
+      .map(([season, weeks]) => ({
+        season,
+        weeks: [...weeks].sort((a, b) => b.weekNumber - a.weekNumber),
+      }));
+  }, [loadedWeeks]);
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [styles.weekBanner, pressed && { opacity: 0.85 }]}
+        testID="button-picks-week-filter"
+      >
+        <View style={styles.weekBannerLeft}>
+          <Ionicons name="calendar" size={18} color="#2563eb" />
+          <View>
+            <Text style={styles.weekName}>{displayWeek.label}</Text>
+            {!isFiltered && deadline && (
+              <Text style={[styles.deadlineText, deadlinePast && styles.deadlineTextPast]}>
+                {deadlinePast
+                  ? "Deadline passed"
+                  : `Closes ${formatDistanceToNow(deadline, { addSuffix: true })}`}
+              </Text>
+            )}
+            {isFiltered && <Text style={styles.deadlineText}>Filtered · tap to change</Text>}
+          </View>
+        </View>
+        {!isFiltered && deadline && !deadlinePast && (
+          <View style={styles.deadlinePill}>
+            <Text style={styles.deadlinePillText}>{format(deadline, "MMM d, h:mm a")}</Text>
+          </View>
+        )}
+        <Ionicons name="chevron-down" size={16} color="#64748b" />
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
+        <View style={styles.modalWrap}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setOpen(false)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Filter by Week</Text>
+            <ScrollView style={styles.sheetScroll}>
+              <Pressable
+                onPress={() => {
+                  onSelect("all");
+                  setOpen(false);
+                }}
+                style={({ pressed }) => [styles.weekOption, pressed && { opacity: 0.7 }]}
+                testID="option-week-current"
+              >
+                <Text style={styles.weekOptionText}>Current Week ({activeWeek.label})</Text>
+                {!isFiltered && <Ionicons name="checkmark" size={18} color="#2563eb" />}
+              </Pressable>
+              {seasons.map(({ season, weeks }) => (
+                <View key={season}>
+                  <Text style={styles.weekSeasonLabel}>{season} Season</Text>
+                  {weeks.map((w) => (
+                    <Pressable
+                      key={w.id}
+                      onPress={() => {
+                        onSelect(String(w.id));
+                        setOpen(false);
+                      }}
+                      style={({ pressed }) => [styles.weekOption, pressed && { opacity: 0.7 }]}
+                      testID={`option-week-${w.id}`}
+                    >
+                      <Text style={styles.weekOptionText} numberOfLines={1}>
+                        {w.label}
+                      </Text>
+                      {weekFilter === String(w.id) && <Ionicons name="checkmark" size={18} color="#2563eb" />}
+                    </Pressable>
+                  ))}
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
 export default function PicksScreen() {
   const router = useRouter();
   const { data: leagues, isLoading: leaguesLoading } = useLeagues();
@@ -244,6 +363,7 @@ export default function PicksScreen() {
   const activeWeek = useActiveWeek();
   const [leagueFilter, setLeagueFilter] = useState("all");
   const [resultFilter, setResultFilter] = useState("all");
+  const [weekFilter, setWeekFilter] = useState("all");
 
   // Every week on record, chronological (oldest first) — used to walk
   // backward from the active week one at a time as "load previous week" is
@@ -256,17 +376,42 @@ export default function PicksScreen() {
   const priorWeeks = activeWeekIndex >= 0 ? chronoWeeks.slice(0, activeWeekIndex).reverse() : [];
   const nextWeek = activeWeekIndex >= 0 ? chronoWeeks[activeWeekIndex + 1] : undefined;
 
-  // Starts showing just the active week's past-parlay context; each tap of
-  // "Load previous week" reveals one more, oldest-going, instead of the page
-  // fetching the user's entire season history up front.
-  const [revealedPastWeeks, setRevealedPastWeeks] = useState(0);
-  const visiblePriorWeeks = priorWeeks.slice(0, revealedPastWeeks);
-  const hasMorePriorWeeks = revealedPastWeeks < priorWeeks.length;
+  // Loaded a whole NFL season at a time (rather than one week per tap) so the
+  // default view is "this year + last year in full" without fetching the
+  // user's entire history up front. `null` means "not yet defaulted" — the
+  // effect below sets it once `activeWeek`/`priorWeeks` are available, since
+  // the default depends on data that isn't there yet on first paint.
+  const [revealedPastWeeks, setRevealedPastWeeks] = useState<number | null>(null);
+  useEffect(() => {
+    if (revealedPastWeeks !== null || !activeWeek || priorWeeks.length === 0) return;
+    // Every prior week whose season is this year's or last year's.
+    const defaultCount = priorWeeks.filter((w) => w.season >= activeWeek.season - 1).length;
+    setRevealedPastWeeks(defaultCount);
+  }, [activeWeek, priorWeeks, revealedPastWeeks]);
+  const effectiveRevealedPastWeeks = revealedPastWeeks ?? 0;
+  const visiblePriorWeeks = priorWeeks.slice(0, effectiveRevealedPastWeeks);
+  const hasMorePriorWeeks = effectiveRevealedPastWeeks < priorWeeks.length;
+  // The oldest season not yet revealed — "Load {season} Season" pulls in
+  // every remaining week from that season in one tap, not just one week.
+  const nextHiddenSeason = priorWeeks[effectiveRevealedPastWeeks]?.season;
 
   const weekIdsToFetch = activeWeek
     ? [activeWeek.id, ...visiblePriorWeeks.map((w) => w.id)]
     : undefined;
   const { data: parlayHistory } = useMyParlayHistory(weekIdsToFetch);
+
+  // Selecting a week further back than what's currently loaded (via the week
+  // filter picker) reveals it immediately rather than showing an empty list.
+  useEffect(() => {
+    if (weekFilter === "all") return;
+    const targetId = Number(weekFilter);
+    const targetIndex = priorWeeks.findIndex((w) => w.id === targetId);
+    if (targetIndex >= 0 && targetIndex + 1 > effectiveRevealedPastWeeks) {
+      setRevealedPastWeeks(targetIndex + 1);
+    }
+  }, [weekFilter, priorWeeks, effectiveRevealedPastWeeks]);
+
+  const matchesWeek = (weekId: number) => weekFilter === "all" || weekId === Number(weekFilter);
 
   const deadline = (activeWeek as any)?.deadline
     ? new Date((activeWeek as any).deadline)
@@ -310,16 +455,21 @@ export default function PicksScreen() {
   ];
   const matchesLeague = (id: number) => leagueFilter === "all" || String(id) === leagueFilter;
 
-  const leaguesNeedingPick = (activeWeek
+  // "Needs a pick" only ever applies to the active week — filtering to a
+  // past week via the week picker shouldn't invent an open-pick prompt for it.
+  const leaguesNeedingPick = (activeWeek && matchesWeek(activeWeek.id)
     ? leagues.filter((l) => !(parlayHistory ?? []).some((p) => p.leagueId === l.id && p.weekId === activeWeek.id))
     : []
   ).filter((l) => matchesLeague(l.id));
 
-  const openHistory = (parlayHistory ?? []).filter((p) => !PAST_STATUSES.has(p.status ?? "") && matchesLeague(p.leagueId));
+  const openHistory = (parlayHistory ?? []).filter(
+    (p) => !PAST_STATUSES.has(p.status ?? "") && matchesLeague(p.leagueId) && matchesWeek(p.weekId),
+  );
   const pastHistory = (parlayHistory ?? []).filter(
     (p) =>
       PAST_STATUSES.has(p.status ?? "") &&
       matchesLeague(p.leagueId) &&
+      matchesWeek(p.weekId) &&
       (resultFilter === "all" || p.status === resultFilter),
   );
 
@@ -368,28 +518,14 @@ export default function PicksScreen() {
   const listHeader = (
     <>
       {activeWeek ? (
-        <View style={styles.weekBanner}>
-          <View style={styles.weekBannerLeft}>
-            <Ionicons name="calendar" size={18} color="#2563eb" />
-            <View>
-              <Text style={styles.weekName}>{activeWeek.label}</Text>
-              {deadline && (
-                <Text style={[styles.deadlineText, deadlinePast && styles.deadlineTextPast]}>
-                  {deadlinePast
-                    ? "Deadline passed"
-                    : `Closes ${formatDistanceToNow(deadline, { addSuffix: true })}`}
-                </Text>
-              )}
-            </View>
-          </View>
-          {deadline && !deadlinePast && (
-            <View style={styles.deadlinePill}>
-              <Text style={styles.deadlinePillText}>
-                {format(deadline, "MMM d, h:mm a")}
-              </Text>
-            </View>
-          )}
-        </View>
+        <WeekFilterButton
+          activeWeek={activeWeek}
+          loadedWeeks={visiblePriorWeeks}
+          weekFilter={weekFilter}
+          onSelect={setWeekFilter}
+          deadline={deadline}
+          deadlinePast={deadlinePast}
+        />
       ) : (
         <View style={styles.noWeekBanner}>
           <Ionicons name="time-outline" size={16} color="#94a3b8" />
@@ -416,7 +552,7 @@ export default function PicksScreen() {
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={listHeader}
       ListEmptyComponent={
-        !hasOpen && !hasPast && (leagueFilter !== "all" || resultFilter !== "all") ? (
+        !hasOpen && !hasPast && (leagueFilter !== "all" || resultFilter !== "all" || weekFilter !== "all") ? (
           <View style={styles.listEmpty}>
             <Ionicons name="filter-outline" size={28} color="#2563eb" />
             <Text style={styles.emptyTitle}>No parlays match</Text>
@@ -449,13 +585,15 @@ export default function PicksScreen() {
         <View style={styles.footerActions}>
           {hasMorePriorWeeks && (
             <Pressable
-              onPress={() => setRevealedPastWeeks((n) => n + 1)}
+              onPress={() =>
+                setRevealedPastWeeks(priorWeeks.filter((w) => w.season >= nextHiddenSeason).length)
+              }
               style={({ pressed }) => [styles.loadMoreBtn, pressed && { opacity: 0.75 }]}
-              testID="button-picks-load-previous-week"
+              testID="button-picks-load-previous-season"
             >
               <Ionicons name="chevron-down-circle-outline" size={16} color="#94a3b8" />
               <Text style={styles.loadMoreBtnText}>
-                Load {priorWeeks[revealedPastWeeks]?.label ?? "previous week"}
+                Load {nextHiddenSeason ?? "previous"} season
               </Text>
             </Pressable>
           )}
@@ -542,6 +680,46 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   noWeekText: { fontSize: 13, color: "#94a3b8" },
+  modalWrap: { flex: 1, justifyContent: "flex-end" },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)" },
+  sheet: {
+    backgroundColor: "#1c2538",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderColor: "#2a3447",
+    maxHeight: "75%",
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#374151",
+    alignSelf: "center",
+    marginBottom: 20,
+  },
+  sheetTitle: { fontSize: 18, fontWeight: "700", color: "#f1f5f9", marginBottom: 12 },
+  sheetScroll: { flexGrow: 0 },
+  weekSeasonLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748b",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  weekOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: "#2a3447",
+  },
+  weekOptionText: { fontSize: 15, color: "#f1f5f9", flex: 1, marginRight: 12 },
   chipRow: { gap: 8, paddingRight: 8, marginBottom: 14 },
   filterRowDivider: {
     height: StyleSheet.hairlineWidth,

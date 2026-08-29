@@ -8,6 +8,10 @@ import {
   awaySpreadDisplay,
   isGamePast,
   shortLegLabel,
+  canBuyPoints,
+  derivePointsMoved,
+  MAX_POINTS_MOVE,
+  POINTS_STEP,
   type SelectedLeg,
 } from "@/lib/pickHelpers";
 
@@ -67,20 +71,38 @@ export function GamePickCard({
   selectedLeg,
   onSelect,
   onClear,
+  onAdjustPoints,
+  pointsPending,
   readOnly,
+  takenBy,
 }: {
   game: Game;
   selectedLeg?: SelectedLeg;
   onSelect: (leg: Omit<SelectedLeg, "gameId"> & { gameId?: number }) => void;
   onClear: () => void;
+  /** "Buy points" slider callback — re-prices the currently selected Spread/
+   * Over/Under leg at a new points-moved value (a safer line at worse odds).
+   * Omitted markets (moneyline, or no leg selected yet) never show the control. */
+  onAdjustPoints?: (pointsMoved: number) => void;
+  /** True while an onAdjustPoints call is in flight — disables the stepper
+   * so a second tap can't race the first. */
+  pointsPending?: boolean;
   /** Preview mode for a week that isn't open for picks yet — every market
    * renders disabled, same visual treatment as an already-started game. */
   readOnly?: boolean;
+  /** Who (if anyone) already has the Spread / Total market on this game —
+   * once one member takes either side, no one else may take that market at
+   * all, home or away / over or under. Moneyline is never exclusive. */
+  takenBy?: { spread?: string; total?: string };
 }) {
   const past = readOnly || isGamePast(game);
   const awaySpread = awaySpreadDisplay(game.spread);
   const homeSpread = game.spread || null;
   const hasPick = !!selectedLeg;
+  const spreadTaken = !!takenBy?.spread && selectedLeg?.betType !== "spread";
+  const totalTaken = !!takenBy?.total && selectedLeg?.betType !== "over" && selectedLeg?.betType !== "under";
+  const showPointsControl = !past && !!selectedLeg && !!onAdjustPoints && canBuyPoints(selectedLeg.betType);
+  const currentPoints = selectedLeg ? derivePointsMoved(game, selectedLeg.betType, selectedLeg.pick, selectedLeg.line) : 0;
 
   const { data: teams } = useTeams();
   const homeTeamData = teams?.find((t) => t.abbreviation === game.homeTeam);
@@ -170,7 +192,7 @@ export function GamePickCard({
             primary={awaySpread || "—"}
             secondary={game.spread ? game.spreadOdds || "-110" : null}
             selected={selectedLeg?.betType === "spread" && selectedLeg?.pick === "away"}
-            disabled={past || !game.spread}
+            disabled={past || !game.spread || spreadTaken}
             onPress={() => select("spread", "away")}
             accessibilityLabel={`${game.awayTeam} spread ${awaySpread || "unavailable"}`}
           />
@@ -178,11 +200,14 @@ export function GamePickCard({
             primary={homeSpread || "—"}
             secondary={game.spread ? game.spreadOdds || "-110" : null}
             selected={selectedLeg?.betType === "spread" && selectedLeg?.pick === "home"}
-            disabled={past || !game.spread}
+            disabled={past || !game.spread || spreadTaken}
             onPress={() => select("spread", "home")}
             accessibilityLabel={`${game.homeTeam} spread ${homeSpread || "unavailable"}`}
           />
         </View>
+        {spreadTaken && (
+          <Text style={styles.takenText}>Spread taken by {takenBy!.spread}</Text>
+        )}
         <View style={styles.pickGridRow}>
           <MarketButton
             primary={game.moneylineAway || "—"}
@@ -206,7 +231,7 @@ export function GamePickCard({
             primary={`O ${game.overUnder || "—"}`}
             secondary={game.overUnder ? game.overOdds || "-110" : null}
             selected={selectedLeg?.betType === "over" && selectedLeg?.pick === "over"}
-            disabled={past || !game.overUnder}
+            disabled={past || !game.overUnder || totalTaken}
             onPress={() => select("over", "over")}
             accessibilityLabel={`Over ${game.overUnder || "unavailable"}`}
           />
@@ -214,11 +239,14 @@ export function GamePickCard({
             primary={`U ${game.overUnder || "—"}`}
             secondary={game.overUnder ? game.underOdds || "-110" : null}
             selected={selectedLeg?.betType === "under" && selectedLeg?.pick === "under"}
-            disabled={past || !game.overUnder}
+            disabled={past || !game.overUnder || totalTaken}
             onPress={() => select("under", "under")}
             accessibilityLabel={`Under ${game.overUnder || "unavailable"}`}
           />
         </View>
+        {totalTaken && (
+          <Text style={styles.takenText}>Total taken by {takenBy!.total}</Text>
+        )}
       </View>
 
       {game.isFinished && game.awayScore != null && game.homeScore != null && (
@@ -245,6 +273,47 @@ export function GamePickCard({
           >
             <Text style={styles.clearBtnText}>Clear</Text>
           </Pressable>
+        </View>
+      )}
+
+      {showPointsControl && (
+        <View style={styles.pointsRow}>
+          <View style={styles.pointsLabelBlock}>
+            <Text style={styles.pointsLabel}>Buy Points</Text>
+            <Text style={styles.pointsValue}>
+              {currentPoints === 0 ? "No points bought" : `+${currentPoints} pts → ${selectedLeg!.line ?? ""}`}
+            </Text>
+          </View>
+          <View style={styles.pointsSteppers}>
+            <Pressable
+              onPress={() => onAdjustPoints!(Math.max(0, currentPoints - POINTS_STEP))}
+              disabled={pointsPending || currentPoints <= 0}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Buy fewer points"
+              style={({ pressed }) => [
+                styles.pointsStepBtn,
+                (pointsPending || currentPoints <= 0) && styles.pointsStepBtnDisabled,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Ionicons name="remove" size={16} color="#f1f5f9" />
+            </Pressable>
+            <Pressable
+              onPress={() => onAdjustPoints!(Math.min(MAX_POINTS_MOVE, currentPoints + POINTS_STEP))}
+              disabled={pointsPending || currentPoints >= MAX_POINTS_MOVE}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Buy more points"
+              style={({ pressed }) => [
+                styles.pointsStepBtn,
+                (pointsPending || currentPoints >= MAX_POINTS_MOVE) && styles.pointsStepBtnDisabled,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              <Ionicons name="add" size={16} color="#f1f5f9" />
+            </Pressable>
+          </View>
         </View>
       )}
     </View>
@@ -300,6 +369,7 @@ const styles = StyleSheet.create({
   record: { fontSize: 12, color: "#64748b", marginTop: 2 },
   pickGrid: { gap: 8 },
   pickGridRow: { flexDirection: "row", gap: 8 },
+  takenText: { fontSize: 11, color: "#64748b", marginTop: -2 },
   marketBtn: {
     minHeight: 52,
     borderRadius: 10,
@@ -356,4 +426,26 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   clearBtnText: { fontSize: 13, fontWeight: "600", color: "#2563eb" },
+  pointsRow: {
+    marginTop: 10,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: "#2a3447",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  pointsLabelBlock: { flex: 1, minWidth: 0 },
+  pointsLabel: { fontSize: 11, fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4 },
+  pointsValue: { fontSize: 13, color: "#f1f5f9", fontWeight: "500", marginTop: 2 },
+  pointsSteppers: { flexDirection: "row", gap: 8, flexShrink: 0 },
+  pointsStepBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "#2a3447",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pointsStepBtnDisabled: { opacity: 0.35 },
 });

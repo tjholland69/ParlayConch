@@ -11,6 +11,7 @@ import { InfoButton } from "@/components/InfoTip";
 import { Button } from "@/components/ui/Button";
 import { shadows } from "@/lib/theme";
 import { useAccentColor } from "@/hooks/use-accent-color";
+import { abbreviatePlayerName } from "@/lib/pickHelpers";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -32,12 +33,16 @@ function StatTile({
 }) {
   return (
     <View style={[styles.statTile, glowColor ? shadows.glow(glowColor, 0.3) : shadows.card]}>
+      {info && (
+        <View style={styles.statTileInfo}>
+          <InfoButton title={info.title} description={info.description} />
+        </View>
+      )}
       <View style={styles.statTileHeader}>
         <Ionicons name={icon} size={13} color="#94a3b8" />
         <Text style={styles.statTileLabel} numberOfLines={2}>
           {label}
         </Text>
-        {info && <InfoButton title={info.title} description={info.description} />}
       </View>
       <Text style={[styles.statTileValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
     </View>
@@ -152,7 +157,7 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
           />
         )}
         {data.favoritePlayer && (
-          <StatRow icon="person-outline" label="Favorite Prop Player" value={`${data.favoritePlayer.name} (${data.favoritePlayer.count})`} />
+          <StatRow icon="person-outline" label="Favorite Prop Player" value={`${abbreviatePlayerName(data.favoritePlayer.name)} (${data.favoritePlayer.count})`} />
         )}
         {data.favoriteDay && (
           <StatRow icon="calendar-outline" label="Most Active Day" value={`${data.favoriteDay.day} (${data.favoriteDay.count})`} />
@@ -313,26 +318,21 @@ const DATE_RANGE_LABELS: Record<DateRangeMode, string> = {
   custom: "Custom",
 };
 
-/** yyyy-mm-dd, matching the server's expected startDate/endDate query format.
- * Compensates for the local timezone offset before calling toISOString() —
- * without it, midnight local time in any timezone ahead of UTC converts to
- * the previous day (and, for Jan 1, the previous year), silently widening
- * "Current Year" to include trades from the prior year. */
-function toISODate(date: Date): string {
-  const tzOffsetMs = date.getTimezoneOffset() * 60000;
-  return new Date(date.getTime() - tzOffsetMs).toISOString().slice(0, 10);
+/** NFL season year for a given date — e.g. both "2025-11-01" and "2026-01-20"
+ * (the Super Bowl LX window) belong to the 2025 season, since the season runs
+ * Sept of its start year through the following February. Calendar year alone
+ * can't tell "Current Year" from "Prior Year" apart during Jan/Feb. */
+function nflSeasonYear(date: Date): number {
+  return date.getMonth() <= 1 ? date.getFullYear() - 1 : date.getFullYear();
 }
 
 function resolveDateRange(mode: DateRangeMode, customRange: DashboardDateRange): DashboardDateRange | undefined {
   const now = new Date();
   if (mode === "year") {
-    return { startDate: toISODate(new Date(now.getFullYear(), 0, 1)), endDate: toISODate(now) };
+    return { season: nflSeasonYear(now) };
   }
   if (mode === "priorYear") {
-    return {
-      startDate: toISODate(new Date(now.getFullYear() - 1, 0, 1)),
-      endDate: toISODate(new Date(now.getFullYear() - 1, 11, 31)),
-    };
+    return { season: nflSeasonYear(now) - 1 };
   }
   if (mode === "custom") {
     return customRange.startDate || customRange.endDate ? customRange : undefined;
@@ -498,8 +498,10 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 12,
     alignItems: "center",
+    position: "relative",
   },
-  statTileHeader: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 6 },
+  statTileInfo: { position: "absolute", top: 2, right: 2, zIndex: 1 },
+  statTileHeader: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 6, paddingHorizontal: 16 },
   statTileLabel: { fontSize: 10, fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, flexShrink: 1, textAlign: "center" },
   statTileValue: { fontSize: 18, fontWeight: "700", color: "#f1f5f9", textAlign: "center" },
   statRowList: { gap: 8 },

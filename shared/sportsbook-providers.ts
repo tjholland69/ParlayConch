@@ -1,8 +1,9 @@
 // Deep-link handoff to a sportsbook app for an approved parlay.
 //
-// Scope, intentionally: this only gets the maestro to the right game inside
-// their sportsbook app as fast as possible. It does NOT attempt to pre-fill
-// a bet slip — neither book publishes a public API for that, and
+// Scope, intentionally: this walks the maestro through each distinct game in
+// the parlay, one deep link at a time, so they can build the full bet
+// themselves inside the sportsbook app. It does NOT attempt to pre-fill a
+// bet slip in one shot — neither book publishes a public API for that, and
 // reverse-engineering one is fragile and outside their terms of service.
 //
 // The appScheme/query format below are best-effort placeholders. Neither
@@ -69,24 +70,27 @@ interface LegWithMaybeGame {
 }
 
 /**
- * A parlay's legs can span multiple games, or be all player-props with no
- * game at all. Picks the earliest-kickoff game among legs that have one —
- * that's the most time-sensitive game for the maestro to act on first.
- * Returns null if no leg resolves to a game (deep link should fall back to
- * the provider's generic web/app landing page in that case).
+ * A parlay's legs can span multiple games, share one game (e.g. a Spread and
+ * an Over/Under on the same matchup are two legs, one game), or be all
+ * player-props with no game at all. Returns every DISTINCT game referenced
+ * by the parlay's legs, earliest kickoff first — the walkthrough steps
+ * through these one at a time. Returns an empty array if no leg resolves to
+ * a game (deep link should fall back to the provider's generic web/app
+ * landing page in that case).
  */
-export function pickDeepLinkGame(legs: LegWithMaybeGame[]): DeepLinkGame | null {
-  const gamesWithTime = legs
-    .filter((leg) => leg.gameId != null && leg.game)
-    .map((leg) => ({
-      homeTeam: leg.game!.homeTeam,
-      awayTeam: leg.game!.awayTeam,
-      gameTime: leg.game!.gameTime ? new Date(leg.game!.gameTime).getTime() : Infinity,
-    }));
+export function pickDeepLinkGames(legs: LegWithMaybeGame[]): DeepLinkGame[] {
+  const byGameId = new Map<number, { homeTeam: string; awayTeam: string; gameTime: number }>();
+  for (const leg of legs) {
+    if (leg.gameId == null || !leg.game) continue;
+    if (byGameId.has(leg.gameId)) continue;
+    byGameId.set(leg.gameId, {
+      homeTeam: leg.game.homeTeam,
+      awayTeam: leg.game.awayTeam,
+      gameTime: leg.game.gameTime ? new Date(leg.game.gameTime).getTime() : Infinity,
+    });
+  }
 
-  if (gamesWithTime.length === 0) return null;
-
-  gamesWithTime.sort((a, b) => a.gameTime - b.gameTime);
-  const { homeTeam, awayTeam } = gamesWithTime[0];
-  return { homeTeam, awayTeam };
+  return [...byGameId.values()]
+    .sort((a, b) => a.gameTime - b.gameTime)
+    .map(({ homeTeam, awayTeam }) => ({ homeTeam, awayTeam }));
 }

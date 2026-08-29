@@ -367,7 +367,7 @@ export default function SettingsScreen() {
             </Pressable>
           </View>
         ) : (
-          <Row icon="person-outline" label="Name" value={nameForAvatar} onPress={() => setEditingName(true)} />
+          <Row icon="person-outline" label="Display Name" value={nameForAvatar} onPress={() => setEditingName(true)} />
         )}
         <Divider />
         <Row

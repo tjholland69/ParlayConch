@@ -260,9 +260,13 @@ export interface WinRateSeriesOptions {
   playerName?: string;
   /** Team abbreviation/name — matched against the leg's game (home/away) or the prop player's team. */
   teamName?: string;
-  /** Inclusive date range on the leg's parlay.createdAt — the "Performance Over Time" date filter. */
+  /** Inclusive date range on the leg's parlay.createdAt — the "Performance Over Time" custom date filter. */
   startDate?: Date;
   endDate?: Date;
+  /** NFL season year (weeks.season) — the "Current Year"/"Prior Year" filter. Takes
+   * priority over startDate/endDate when both are somehow supplied, since a season
+   * boundary (Sept–Feb) doesn't line up with a calendar-year date range. */
+  season?: number;
 }
 
 /**
@@ -275,7 +279,7 @@ export async function computeWinRateSeries(
   userId: string,
   opts: WinRateSeriesOptions = {}
 ): Promise<{ points: WinRateTimeSeriesPoint[] }> {
-  const { leagueIds, memberUserIds, betTypes, propTypes, playerName, teamName, startDate, endDate } = opts;
+  const { leagueIds, memberUserIds, betTypes, propTypes, playerName, teamName, startDate, endDate, season } = opts;
 
   let scopeLeagueIds: number[];
 
@@ -302,11 +306,14 @@ export async function computeWinRateSeries(
   if (playerName && playerName.trim()) {
     conditions.push(ilike(parlayLegs.playerName, `%${playerName.trim()}%`));
   }
-  if (startDate) {
-    conditions.push(gte(parlays.createdAt, startDate));
-  }
-  if (endDate) {
-    conditions.push(lte(parlays.createdAt, endDate));
+  if (season != null) {
+    // NFL season boundaries (Sept–Feb) don't line up with calendar years, so
+    // "Current Year"/"Prior Year" match the season the game was actually
+    // played in (weeks.season) rather than a Jan 1–Dec 31 createdAt range.
+    conditions.push(eq(weeks.season, season));
+  } else if (startDate || endDate) {
+    if (startDate) conditions.push(gte(parlays.createdAt, startDate));
+    if (endDate) conditions.push(lte(parlays.createdAt, endDate));
   }
 
   // Team filtering has no column on parlayLegs: a game-tied leg matches through
@@ -439,12 +446,13 @@ export async function computeWinRateSeries(
 export async function getWinRateTimeSeries(
   userId: string,
   leagueId?: number,
-  dateRange?: { startDate?: Date; endDate?: Date }
+  dateRange?: { startDate?: Date; endDate?: Date; season?: number }
 ): Promise<{ points: WinRateTimeSeriesPoint[] }> {
   return computeWinRateSeries(userId, {
     leagueIds: leagueId ? [leagueId] : undefined,
     startDate: dateRange?.startDate,
     endDate: dateRange?.endDate,
+    season: dateRange?.season,
   });
 }
 
