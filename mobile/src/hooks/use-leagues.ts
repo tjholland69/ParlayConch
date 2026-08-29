@@ -39,7 +39,7 @@ export function useLeagueRecords(leagueId: number) {
 }
 
 export function useLeagueStats(leagueId: number) {
-  return useQuery<import("@shared/schema").LeagueStats[]>({
+  return useQuery<import("@shared/schema").UserStat[]>({
     queryKey: ["/api/leagues", leagueId, "stats"],
     queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/stats`),
     enabled: !!leagueId,

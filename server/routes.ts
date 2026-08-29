@@ -274,7 +274,8 @@ export async function registerRoutes(
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
     const startDate = typeof req.query.startDate === "string" && req.query.startDate ? new Date(req.query.startDate) : undefined;
     const endDate = typeof req.query.endDate === "string" && req.query.endDate ? new Date(req.query.endDate) : undefined;
-    const series = await getWinRateTimeSeries(userId, leagueId, { startDate, endDate });
+    const season = typeof req.query.season === "string" && req.query.season ? Number(req.query.season) : undefined;
+    const series = await getWinRateTimeSeries(userId, leagueId, { startDate, endDate, season });
     res.json(series);
   });
 
@@ -568,7 +569,10 @@ export async function registerRoutes(
     if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
     const limit = req.query.limit != null ? Number(req.query.limit) : undefined;
     const offset = req.query.offset != null ? Number(req.query.offset) : undefined;
-    const page = await storage.getAllLeagueParlays(leagueId, { limit, offset });
+    const weekIds = typeof req.query.weekIds === "string" && req.query.weekIds
+      ? req.query.weekIds.split(",").map(Number).filter((n) => Number.isFinite(n))
+      : undefined;
+    const page = await storage.getAllLeagueParlays(leagueId, { limit, offset, weekIds });
     res.json(page);
   });
 
