@@ -21,9 +21,11 @@ import {
   useAddDraftLeg,
   useRemoveDraftLeg,
   useSubmitDraftParlay,
+  useCancelParlay,
   useTakenPicks,
 } from "@/hooks/use-parlays";
 import { GamePickCard } from "@/components/GamePickCard";
+import { AddPlayerPropModal } from "@/components/AddPlayerPropModal";
 import {
   getLineForBet,
   shortLegLabel,
@@ -81,6 +83,8 @@ export default function BuildPickScreen() {
   const addDraftLeg = useAddDraftLeg(leagueId, weekId);
   const removeDraftLeg = useRemoveDraftLeg(leagueId, weekId);
   const submitDraftParlay = useSubmitDraftParlay(leagueId, weekId);
+  const cancelParlay = useCancelParlay(leagueId, weekId);
+  const [propGame, setPropGame] = useState<Game | null>(null);
 
   const minLegs = league?.minLegsPerParlay ?? 3;
   const maxLegs = league?.maxLegsPerParlay ?? 5;
@@ -106,6 +110,8 @@ export default function BuildPickScreen() {
         betType: l.betType,
         pick: l.pick,
         line: l.line ?? undefined,
+        playerName: l.playerName ?? undefined,
+        propType: l.propType ?? undefined,
       }));
     if (legs.length) {
       setSelectedLegs(legs);
@@ -136,6 +142,8 @@ export default function BuildPickScreen() {
           betType: l.betType,
           pick: l.pick,
           line: l.line ?? undefined,
+          playerName: l.playerName ?? undefined,
+          propType: l.propType ?? undefined,
         })),
     [myParlay?.legs],
   );
@@ -151,7 +159,10 @@ export default function BuildPickScreen() {
     const line = getLineForBet(game, betType, pick);
     const applyChange = () => {
       setSelectedLegs((prev) => {
-        const existing = prev.findIndex((l) => l.gameId === game.id);
+        // Exclude player_prop legs from this game-slot lookup — a prop leg
+        // added for this game (via the separate Add Player Prop flow) lives
+        // outside the 2x3 grid and must never be overwritten by a grid tap.
+        const existing = prev.findIndex((l) => l.gameId === game.id && l.betType !== "player_prop");
         if (existing >= 0) {
           if (prev[existing].pick === pick && prev[existing].betType === betType) {
             return prev.filter((_, i) => i !== existing);
@@ -168,7 +179,7 @@ export default function BuildPickScreen() {
       });
     };
 
-    const existingLeg = selectedLegs.find((l) => l.gameId === game.id);
+    const existingLeg = selectedLegs.find((l) => l.gameId === game.id && l.betType !== "player_prop");
     const isDeselect = existingLeg?.pick === pick && existingLeg?.betType === betType;
     const conflictWith = !isDeselect ? correlatedMarketWarning(takenPicks, game.id, betType) : null;
     if (conflictWith) {
@@ -239,11 +250,54 @@ export default function BuildPickScreen() {
   }
 
   function clearGameSubmitted(gameId: number) {
-    setSelectedLegs((prev) => prev.filter((l) => l.gameId !== gameId));
+    // Same exclusion as toggleLegSubmitted — clearing this game's grid pick
+    // must never also remove a separately-added player_prop leg on it.
+    setSelectedLegs((prev) => prev.filter((l) => !(l.gameId === gameId && l.betType !== "player_prop")));
+  }
+
+  // Appends a player-prop leg while editing an already-submitted parlay —
+  // everything here is local state until the batch "Update pick" submit,
+  // same as every other submitted-edit mutation in this file.
+  function addPropSubmitted(leg: SelectedLeg) {
+    if (selectedLegs.length >= maxLegs) {
+      Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
+      return;
+    }
+    setSelectedLegs((prev) => [...prev, leg]);
   }
 
   async function clearGameDraft(gameId: number) {
-    const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === gameId);
+    // Same exclusion as clearGameSubmitted — the grid's Clear button must
+    // never remove a separately-added player_prop leg on this game.
+    const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === gameId && l.betType !== "player_prop");
+    if (!existingLeg || legMutationPending) return;
+    try {
+      await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+    } catch (err) {
+      Alert.alert("Couldn't remove leg", err instanceof Error ? err.message : "Please try again.");
+    }
+  }
+
+  // A game can carry both a grid pick (spread/ML/total) and one or more
+  // player_prop legs at once, so the slip list's per-row remove button needs
+  // to identify the exact leg it's showing — gameId alone (what the grid's
+  // own Clear button uses) isn't enough once props are in the mix.
+  async function removeSlipLeg(leg: SelectedLeg) {
+    if (leg.betType !== "player_prop") {
+      return isEditingSubmitted ? clearGameSubmitted(leg.gameId) : clearGameDraft(leg.gameId);
+    }
+    if (isEditingSubmitted) {
+      setSelectedLegs((prev) =>
+        prev.filter(
+          (l) =>
+            !(l.gameId === leg.gameId && l.betType === "player_prop" && l.playerName === leg.playerName && l.propType === leg.propType),
+        ),
+      );
+      return;
+    }
+    const existingLeg = (myParlay?.legs ?? []).find(
+      (l) => l.gameId === leg.gameId && l.betType === "player_prop" && l.playerName === leg.playerName && l.propType === leg.propType,
+    );
     if (!existingLeg || legMutationPending) return;
     try {
       await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
@@ -257,7 +311,7 @@ export default function BuildPickScreen() {
   // means the toggle's "tap same pick again → deselect" rule never applies here.
   function adjustPointsSubmitted(game: Game, pointsMoved: number) {
     setSelectedLegs((prev) => {
-      const idx = prev.findIndex((l) => l.gameId === game.id);
+      const idx = prev.findIndex((l) => l.gameId === game.id && l.betType !== "player_prop");
       if (idx < 0) return prev;
       const existing = prev[idx];
       const line = getLineForBet(game, existing.betType, existing.pick, pointsMoved);
@@ -314,6 +368,29 @@ export default function BuildPickScreen() {
         Alert.alert("Couldn't submit", err.message || "Please try again.");
       },
     });
+  }
+
+  // Owner can cancel their own parlay only before an admin has approved it —
+  // matches the server's cancelOwnParlay check (draft/pending only).
+  const canCancel = !!myParlay && (myParlay.status === "draft" || myParlay.status === "pending");
+
+  function cancelParlayAction() {
+    if (!myParlay) return;
+    Alert.alert("Cancel this parlay?", "This can't be undone.", [
+      { text: "Keep it", style: "cancel" },
+      {
+        text: "Discard",
+        style: "destructive",
+        onPress: () => {
+          cancelParlay.mutate(myParlay.id, {
+            onSuccess: () => router.back(),
+            onError: (err: Error) => {
+              Alert.alert("Couldn't cancel", err.message || "Please try again.");
+            },
+          });
+        },
+      },
+    ]);
   }
 
   const slipSummary = activeLegs
@@ -384,7 +461,10 @@ export default function BuildPickScreen() {
           </View>
         }
         renderItem={({ item }: { item: GameWithBet }) => {
-          const selected = activeLegs.find((l) => l.gameId === item.id);
+          // The grid's own selection strip only ever reflects a spread/ML/
+          // total pick — a player_prop leg on this game is shown separately
+          // (via the Add Player Prop footer), never in the 2x3 grid.
+          const selected = activeLegs.find((l) => l.gameId === item.id && l.betType !== "player_prop");
           return (
             <GamePickCard
               game={item}
@@ -399,6 +479,7 @@ export default function BuildPickScreen() {
                 isEditingSubmitted ? adjustPointsSubmitted(item, pointsMoved) : void adjustPointsDraft(item, pointsMoved)
               }
               pointsPending={!isEditingSubmitted && pointsAdjustingGameId === item.id}
+              onAddProp={!readOnly ? () => setPropGame(item) : undefined}
             />
           );
         }}
@@ -428,13 +509,13 @@ export default function BuildPickScreen() {
 
         {slipExpanded && activeLegs.length > 0 && (
           <View style={styles.slipList}>
-            {activeLegs.map((leg) => (
-              <View key={leg.gameId} style={styles.slipRow}>
+            {activeLegs.map((leg, i) => (
+              <View key={`${leg.gameId}-${leg.betType}-${leg.playerName ?? ""}-${leg.propType ?? ""}-${i}`} style={styles.slipRow}>
                 <Text style={styles.slipRowText} numberOfLines={1}>
                   {shortLegLabel(leg, gamesById.get(leg.gameId))}
                 </Text>
                 <Pressable
-                  onPress={() => (isEditingSubmitted ? clearGameSubmitted(leg.gameId) : clearGameDraft(leg.gameId))}
+                  onPress={() => removeSlipLeg(leg)}
                   hitSlop={8}
                   disabled={legMutationPending}
                 >
@@ -468,7 +549,28 @@ export default function BuildPickScreen() {
             </Text>
           )}
         </Pressable>
+
+        {canCancel && (
+          <Pressable
+            onPress={cancelParlayAction}
+            disabled={cancelParlay.isPending}
+            style={({ pressed }) => [styles.cancelParlayBtn, pressed && { opacity: 0.7 }]}
+          >
+            {cancelParlay.isPending ? (
+              <ActivityIndicator color="#ef4444" size="small" />
+            ) : (
+              <Text style={styles.cancelParlayBtnText}>Cancel Parlay</Text>
+            )}
+          </Pressable>
+        )}
       </View>}
+
+      <AddPlayerPropModal
+        game={propGame}
+        onClose={() => setPropGame(null)}
+        onAdd={isEditingSubmitted ? (leg) => addPropSubmitted(leg) : (leg) => addDraftLeg.mutateAsync(leg)}
+        isPending={!isEditingSubmitted && addDraftLeg.isPending}
+      />
     </View>
   );
 }
@@ -541,4 +643,6 @@ const styles = StyleSheet.create({
   },
   submitBtnDisabled: { opacity: 0.45 },
   submitBtnText: { fontSize: 16, fontWeight: "700", color: "#ffffff" },
+  cancelParlayBtn: { alignItems: "center", paddingVertical: 10, marginTop: 2 },
+  cancelParlayBtnText: { fontSize: 13, fontWeight: "600", color: "#ef4444" },
 });

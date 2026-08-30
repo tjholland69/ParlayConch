@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
-import type { LeagueWithMembers, LeagueMemberWithUser } from "@shared/schema";
+import type { LeagueWithMembers, LeagueMemberWithUser, ParlayLegWithParlayContext } from "@shared/schema";
 
 export function useLeagues() {
   return useQuery<LeagueWithMembers[]>({
@@ -25,8 +25,15 @@ export interface LeagueRecordEntry {
   winLoss?: { wins: number; losses: number } | null;
   week?: { season: number; weekNumber: number; label: string } | null;
   dateRange?: { start: string; end: string } | null;
-  link?: { leagueId: number; parlayId: number } | null;
+  /** parlay_leg ids behind this record — fetch via useParlayLegsByIds to show
+   * the "lookthrough" popup. Empty when a record has no leg-level lookthrough. */
+  legIds: number[];
+  /** "participation" fetches via useMissedWeeks instead — see the matching
+   * doc comment in server/services/leagueRecords.ts. */
+  lookthroughKind?: "participation";
 }
+
+export type MissedWeek = { weekId: number; season: number; weekNumber: number; label: string };
 
 /** League Records — same "superlatives" tiles as the web app's League
  * Records tab, mirrored here for mobile's Stats tab (see server/services/leagueRecords.ts). */
@@ -35,6 +42,27 @@ export function useLeagueRecords(leagueId: number) {
     queryKey: ["/api/leagues", leagueId, "records"],
     queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/records`),
     enabled: !!leagueId,
+  });
+}
+
+/** "Lookthrough" for a league-record tile — the specific parlay legs behind
+ * one superlative. Mirrors the web hook of the same name (client/src/hooks/use-bets.ts). */
+export function useParlayLegsByIds(leagueId: number, legIds: number[]) {
+  return useQuery<ParlayLegWithParlayContext[]>({
+    queryKey: ["/api/leagues", leagueId, "parlay-legs", legIds.join(",")],
+    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/parlay-legs?ids=${legIds.join(",")}`),
+    enabled: !!leagueId && legIds.length > 0,
+  });
+}
+
+/** "Lookthrough" for a participation-rate record (e.g. Weak Link) — the
+ * specific weeks the member was eligible for but didn't submit a parlay in.
+ * Mirrors the web hook of the same name (client/src/hooks/use-bets.ts). */
+export function useMissedWeeks(leagueId: number, userId: string | null) {
+  return useQuery<{ weeks: MissedWeek[] }>({
+    queryKey: ["/api/leagues", leagueId, "members", userId, "missed-weeks"],
+    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/members/${userId}/missed-weeks`),
+    enabled: !!leagueId && !!userId,
   });
 }
 

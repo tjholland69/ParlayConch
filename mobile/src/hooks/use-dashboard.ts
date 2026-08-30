@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@shared/routes";
+import { api, buildUrl } from "@shared/routes";
 import { apiRequest } from "@/lib/api";
+import type { CustomIndexWithAccess } from "@shared/schema";
 
 export interface UserSummary {
   leagueCount: number;
@@ -90,5 +91,27 @@ export function useDashboardPerformance(leagueId?: number, dateRange?: Dashboard
         "GET",
         query ? `${api.dashboard.performance.path}?${query}` : api.dashboard.performance.path
       ),
+  });
+}
+
+/** Custom indexes visible to the current user (owned, shared with them, or
+ * published in a league they belong to) — mirrors web's useCustomIndexes
+ * (client/src/hooks/use-custom-indexes.ts). Mobile only lets a user select
+ * from these, never build/edit one. */
+export function useCustomIndexes() {
+  return useQuery<CustomIndexWithAccess[]>({
+    queryKey: [api.customIndexes.list.path],
+    queryFn: () => apiRequest<CustomIndexWithAccess[]>("GET", api.customIndexes.list.path),
+  });
+}
+
+/** Per-week win-rate series for one custom index — same shape as
+ * useDashboardPerformance's series, so it can drop straight into a chart's
+ * `indexPoints` overlay. */
+export function useCustomIndexPerformance(id: number | null) {
+  return useQuery<{ points: WinRateTimeSeriesPoint[] }>({
+    queryKey: [api.customIndexes.performance.path, id],
+    queryFn: () => apiRequest<{ points: WinRateTimeSeriesPoint[] }>("GET", buildUrl(api.customIndexes.performance.path, { id: id! })),
+    enabled: id != null,
   });
 }

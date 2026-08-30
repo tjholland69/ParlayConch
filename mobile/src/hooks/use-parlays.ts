@@ -102,7 +102,7 @@ export function useCreateParlay(leagueId: number) {
 export function useAddDraftLeg(leagueId: number, weekId: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (leg: { gameId: number; betType: string; pick: string; line?: string }) =>
+    mutationFn: (leg: { gameId: number; betType: string; pick: string; line?: string; playerName?: string; propType?: string }) =>
       apiRequest<ParlayWithLegs>("POST", `/api/leagues/${leagueId}/weeks/${weekId}/draft-parlay/legs`, leg),
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data);
@@ -119,6 +119,20 @@ export function useRemoveDraftLeg(leagueId: number, weekId: number) {
       apiRequest<{ parlay: ParlayWithLegs | null }>("DELETE", `/api/parlays/${parlayId}/legs/${legId}`),
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data.parlay ?? null);
+      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+    },
+  });
+}
+
+/** Owner-facing self-cancel — only while the parlay is still draft/pending
+ * (before admin approval). Distinct from an admin deleting any member's
+ * parlay, which mobile doesn't expose. */
+export function useCancelParlay(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (parlayId: number) => apiRequest<{ success: boolean }>("DELETE", `/api/parlays/${parlayId}/cancel`),
+    onSuccess: () => {
+      queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], null);
       queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
     },
   });

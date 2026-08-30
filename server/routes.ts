@@ -560,6 +560,35 @@ export async function registerRoutes(
     res.json(records);
   });
 
+  // "Lookthrough" for a league-record tile — the specific parlay_legs behind
+  // one superlative (a streak, a favorite-X count, etc.), keyed by the
+  // `legIds` a /records response already carries per record.
+  app.get("/api/leagues/:id/parlay-legs", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(userId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const legIds = typeof req.query.ids === "string"
+      ? req.query.ids.split(",").map(Number).filter(n => Number.isFinite(n))
+      : [];
+    const legs = await storage.getParlayLegsByIds(leagueId, legIds, userId);
+    res.json(legs);
+  });
+
+  // "Lookthrough" for a participation-rate record (e.g. Weak Link) — the
+  // specific weeks the given member was eligible for but didn't submit a
+  // parlay in, while a member of the league.
+  app.get("/api/leagues/:id/members/:userId/missed-weeks", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const requestorId = (req.user as any).claims.sub;
+    const superUser = await storage.isSuperUser(requestorId);
+    const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === requestorId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    const weeks = await storage.getMissedWeeksForMember(leagueId, req.params.userId);
+    res.json({ weeks });
+  });
+
   // Member-facing read-only view of all parlays across all weeks (no demo/admin gating)
   app.get("/api/leagues/:id/parlays", isAuthenticated, async (req, res) => {
     const leagueId = Number(req.params.id);
@@ -1999,6 +2028,20 @@ export async function registerRoutes(
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Owner-facing self-cancel — only the parlay's own owner, only while it's
+  // still draft/pending (before admin approval). Distinct from the
+  // admin-only DELETE /api/parlays/:id above.
+  app.delete("/api/parlays/:id/cancel", isAuthenticated, auditLog("parlay.cancel", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const parlayId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      await storage.cancelOwnParlay(parlayId, userId);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
     }
   });
 

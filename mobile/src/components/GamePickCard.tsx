@@ -75,6 +75,7 @@ export function GamePickCard({
   pointsPending,
   readOnly,
   takenBy,
+  onAddProp,
 }: {
   game: Game;
   selectedLeg?: SelectedLeg;
@@ -94,6 +95,9 @@ export function GamePickCard({
    * once one member takes either side, no one else may take that market at
    * all, home or away / over or under. Moneyline is never exclusive. */
   takenBy?: { spread?: string; total?: string };
+  /** Opens the Add Player Prop sheet for this game. Omitted (e.g. read-only
+   * preview mode) hides the affordance entirely. */
+  onAddProp?: () => void;
 }) {
   const past = readOnly || isGamePast(game);
   const awaySpread = awaySpreadDisplay(game.spread);
@@ -316,6 +320,18 @@ export function GamePickCard({
           </View>
         </View>
       )}
+
+      {!past && onAddProp && (
+        <Pressable
+          onPress={onAddProp}
+          style={({ pressed }) => [styles.addPropBtn, pressed && { opacity: 0.7 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Add a player prop for this game"
+        >
+          <Ionicons name="add-circle-outline" size={15} color="#94a3b8" />
+          <Text style={styles.addPropBtnText}>Add Player Prop</Text>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -426,6 +442,19 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   clearBtnText: { fontSize: 13, fontWeight: "600", color: "#2563eb" },
+  addPropBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    marginTop: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderStyle: "dashed",
+  },
+  addPropBtnText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
   pointsRow: {
     marginTop: 10,
     paddingTop: 10,
