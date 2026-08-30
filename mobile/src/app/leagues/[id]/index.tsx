@@ -16,7 +16,7 @@ import {
 } from "react-native";
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { useState, useMemo } from "react";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import * as WebBrowser from "expo-web-browser";
@@ -24,6 +24,8 @@ import { apiRequest, API_BASE_URL } from "@/lib/api";
 import {
   useLeagueStats,
   useLeagueRecords,
+  useParlayLegsByIds,
+  useMissedWeeks,
   useLeagueMembersWithUsers,
   useWeekLockStatus,
   useLockWeekParlay,
@@ -55,6 +57,7 @@ import { ParlayMixBar } from "@/components/ParlayMixBar";
 import { DisputeLegBadge } from "@/components/DisputeLegSheet";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
+type MCIIconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
 type ParlayLegWithGame = ParlayWithLegs["legs"][number];
 
@@ -144,9 +147,11 @@ function ParlayCard({
     ? heroLeg.user.settings?.displayName ?? heroLeg.user.firstName ?? heroLeg.user.email ?? "Unknown"
     : name;
 
+  // getSlate buckets by kickoff time, not finish time, so this must use the
+  // decisive leg's game.gameTime — not decidedAt/finishedAt (see web's
+  // ParlayRollupCard.tsx for the matching fix).
   const decisiveLeg = bustedLeg ?? heroLeg;
-  const decisiveFinishTime = decisiveLeg?.decidedAt ?? decisiveLeg?.game?.finishedAt ?? null;
-  const decidedSlate = decisiveFinishTime ? getSlate(new Date(decisiveFinishTime)) : null;
+  const decidedSlate = decisiveLeg?.game?.gameTime ? getSlate(new Date(decisiveLeg.game.gameTime)) : null;
 
   const statusIcon =
     parlay.status === "approved"
@@ -347,10 +352,7 @@ function ParlayCard({
             const isWin = leg.result === "win";
             const isLoss = leg.result === "loss";
             const resultColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#cbd5e1";
-            const label =
-              leg.betType === "player_prop"
-                ? `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"}`
-                : `${leg.game?.homeTeam ?? "?"} vs ${leg.game?.awayTeam ?? "?"} — ${leg.pick}`;
+            const label = legMatchupLabel(leg);
             const expanded = expandedLegIndex === i;
 
             return (
@@ -462,6 +464,28 @@ function ParlayCard({
     </View>
     </View>
   );
+}
+
+/** "TeamA vs TeamB — <pick>" for a leg, resolving a spread/moneyline pick's
+ * raw "home"/"away" to the actual team name rather than printing it as-is —
+ * ticket displays elsewhere (build.tsx, GamePickCard.tsx) already do this
+ * via shortLegLabel; this is the equivalent for this file's two-team,
+ * both-sides-shown format. */
+function legMatchupLabel(leg: {
+  betType: string;
+  pick: string;
+  playerName?: string | null;
+  propType?: string | null;
+  game?: { homeTeam?: string | null; awayTeam?: string | null } | null;
+}): string {
+  if (leg.betType === "player_prop") {
+    return `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"}`;
+  }
+  const pickLabel =
+    leg.betType === "spread" || leg.betType === "moneyline"
+      ? (leg.pick === "home" ? leg.game?.homeTeam : leg.pick === "away" ? leg.game?.awayTeam : null) ?? leg.pick
+      : leg.pick;
+  return `${leg.game?.homeTeam ?? "?"} vs ${leg.game?.awayTeam ?? "?"} — ${pickLabel}`;
 }
 
 function memberDisplayName(member: any): string {
@@ -653,22 +677,32 @@ function MembersTable({
   );
 }
 
-/** Ionicons equivalent of the web app's per-record lucide icon (see
- * LEAGUE_RECORD_ICONS in client/src/pages/LeagueDetail.tsx) — keyed by the
- * record's stable `key`, not its (renameable) title/description text. */
+/** Icon for each record tile, keyed by the record's stable `key` (not its
+ * renameable title/description text). Most are Ionicons, matching the rest
+ * of the app's icon set; a few (no Ionicons equivalent) fall back to
+ * MaterialCommunityIcons — see RECORD_ICONS_MCI below. Web has its own
+ * lucide-based mapping (LEAGUE_RECORD_ICONS in client/src/pages/LeagueDetail.tsx)
+ * since lucide lacks matches for those same few. */
 const RECORD_ICONS: Record<string, IconName> = {
   highestSingleLegOdds: "flash-outline",
-  highestSingleLegOddsWon: "checkmark-done-outline",
-  highestParlayOdds: "trending-up-outline",
-  mostParlayLosses: "trending-down-outline",
+  longestWinStreak: "fish-outline",
   juiceman: "water-outline",
-  longestWinStreak: "flame-outline",
-  longestLossStreak: "warning-outline",
+  mostParlayLosses: "thumbs-down-outline",
   favoriteTeam: "shield-outline",
   favoritePlayer: "person-outline",
-  favoriteBetType: "dice-outline",
   appointmentViewing: "tv-outline",
   weakLine: "battery-dead-outline",
+};
+
+/** Records whose icon comes from MaterialCommunityIcons instead — Ionicons
+ * has no baseball bat, alien head, crucifix, or finger-guns glyph (the
+ * closest MCI has for "finger guns" is a pointed pistol). Checked before
+ * RECORD_ICONS in LeagueRecordTile. */
+const RECORD_ICONS_MCI: Record<string, MCIIconName> = {
+  highestSingleLegOddsWon: "baseball-bat",
+  highestParlayOdds: "alien-outline",
+  longestLossStreak: "cross-outline",
+  favoriteBetType: "pistol",
 };
 
 function formatRecordDateRange(range: LeagueRecordEntry["dateRange"]): string | null {
@@ -678,8 +712,13 @@ function formatRecordDateRange(range: LeagueRecordEntry["dateRange"]): string | 
   return start === end ? start : `${start} – ${end}`;
 }
 
-function LeagueRecordTile({ record, members }: { record: LeagueRecordEntry; members: any[] | undefined }) {
-  const icon = RECORD_ICONS[record.key] ?? "trophy-outline";
+function LeagueRecordIcon({ recordKey, size, color }: { recordKey: string; size: number; color: string }) {
+  const mciName = RECORD_ICONS_MCI[recordKey];
+  if (mciName) return <MaterialCommunityIcons name={mciName} size={size} color={color} />;
+  return <Ionicons name={RECORD_ICONS[recordKey] ?? "trophy-outline"} size={size} color={color} />;
+}
+
+function LeagueRecordTile({ record, members, onLookthrough }: { record: LeagueRecordEntry; members: any[] | undefined; onLookthrough: (record: LeagueRecordEntry) => void }) {
   const holder = record.holderUserId ? members?.find((m) => m.userId === record.holderUserId) : null;
   const holderName = holder ? memberShortName(holder) : null;
   const weekLabel = record.week ? `${record.week.label}, ${record.week.season}` : null;
@@ -687,13 +726,18 @@ function LeagueRecordTile({ record, members }: { record: LeagueRecordEntry; memb
   const winLossLabel = record.winLoss
     ? `${record.winLoss.wins}-${record.winLoss.losses} (${((record.winLoss.wins / (record.winLoss.wins + record.winLoss.losses || 1)) * 100).toFixed(1)}%)`
     : null;
+  const hasLookthrough = record.legIds.length > 0 || record.lookthroughKind === "participation";
 
   return (
-    <View style={styles.recordTile}>
+    <Pressable
+      style={({ pressed }) => [styles.recordTile, hasLookthrough && pressed && { opacity: 0.7 }]}
+      onPress={hasLookthrough ? () => onLookthrough(record) : undefined}
+      disabled={!hasLookthrough}
+    >
       {record.title ? (
         <>
           <View style={styles.recordTitleRow}>
-            <Ionicons name={icon} size={14} color="#2563eb" />
+            <LeagueRecordIcon recordKey={record.key} size={14} color="#2563eb" />
             <Text style={styles.recordTitle} numberOfLines={1}>{record.title}</Text>
           </View>
           {!!record.label && (
@@ -702,7 +746,7 @@ function LeagueRecordTile({ record, members }: { record: LeagueRecordEntry; memb
         </>
       ) : (
         <View style={styles.recordTitleRow}>
-          <Ionicons name={icon} size={13} color="#94a3b8" />
+          <LeagueRecordIcon recordKey={record.key} size={13} color="#94a3b8" />
           <Text style={styles.recordLabel} numberOfLines={2}>{record.label}</Text>
         </View>
       )}
@@ -714,7 +758,7 @@ function LeagueRecordTile({ record, members }: { record: LeagueRecordEntry; memb
       {holderName && <Text style={styles.recordMeta} numberOfLines={1}>{holderName}</Text>}
       {weekLabel && <Text style={styles.recordMeta} numberOfLines={1}>{weekLabel}</Text>}
       {dateRangeLabel && <Text style={styles.recordMeta} numberOfLines={1}>{dateRangeLabel}</Text>}
-    </View>
+    </Pressable>
   );
 }
 
@@ -750,6 +794,16 @@ export default function LeagueDetailScreen() {
   const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as SportsbookProvider | undefined;
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useLeagueStats(leagueId);
   const { data: leagueRecords, isLoading: recordsLoading } = useLeagueRecords(leagueId);
+  const [lookthroughRecord, setLookthroughRecord] = useState<LeagueRecordEntry | null>(null);
+  const isParticipationLookthrough = lookthroughRecord?.lookthroughKind === "participation";
+  const { data: lookthroughLegs, isLoading: loadingLookthrough } = useParlayLegsByIds(
+    leagueId,
+    !isParticipationLookthrough ? lookthroughRecord?.legIds ?? [] : [],
+  );
+  const { data: missedWeeksData, isLoading: loadingMissedWeeks } = useMissedWeeks(
+    leagueId,
+    isParticipationLookthrough ? lookthroughRecord?.holderUserId ?? null : null,
+  );
 
   const weekId = activeWeek?.id ?? 0;
   // The Parlays tab shows every open/closed bet from this season + last
@@ -1195,7 +1249,7 @@ export default function LeagueDetailScreen() {
               ) : (
                 <View style={styles.recordGrid}>
                   {leagueRecords.map((record) => (
-                    <LeagueRecordTile key={record.key} record={record} members={members} />
+                    <LeagueRecordTile key={record.key} record={record} members={members} onLookthrough={setLookthroughRecord} />
                   ))}
                 </View>
               )}
@@ -1272,6 +1326,84 @@ export default function LeagueDetailScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+
+      {/* League Record lookthrough — the specific parlay legs behind whichever
+          tile was tapped. */}
+      {lookthroughRecord && (
+        <Modal visible transparent animationType="slide" onRequestClose={() => setLookthroughRecord(null)}>
+          <View style={styles.modalOverlay}>
+            <Pressable style={styles.modalBackdrop} onPress={() => setLookthroughRecord(null)} />
+            <View style={[styles.modalSheet, styles.lookthroughSheet]}>
+              <Text style={styles.modalTitle}>{lookthroughRecord.title ?? lookthroughRecord.label}</Text>
+              {isParticipationLookthrough ? (
+                loadingMissedWeeks ? (
+                  <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
+                ) : !missedWeeksData?.weeks || missedWeeksData.weeks.length === 0 ? (
+                  <Text style={styles.modalSubtitle}>No missed weeks — full participation!</Text>
+                ) : (
+                  <ScrollView style={styles.lookthroughScroll}>
+                    {missedWeeksData.weeks.map((w) => (
+                      <View key={w.weekId} style={styles.lookthroughRow}>
+                        <Text style={styles.legText} numberOfLines={1}>
+                          {w.label}
+                        </Text>
+                        <Text style={styles.lookthroughMeta} numberOfLines={1}>{w.season}</Text>
+                      </View>
+                    ))}
+                  </ScrollView>
+                )
+              ) : loadingLookthrough ? (
+                <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
+              ) : !lookthroughLegs || lookthroughLegs.length === 0 ? (
+                <Text style={styles.modalSubtitle}>No legs found.</Text>
+              ) : (
+                <ScrollView style={styles.lookthroughScroll}>
+                  {lookthroughLegs.map((leg) => {
+                    const isWin = leg.result === "win";
+                    const isLoss = leg.result === "loss";
+                    const resultColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#cbd5e1";
+                    const matchupLabel = legMatchupLabel(leg);
+                    const dateLabel = leg.game?.gameTime
+                      ? new Date(leg.game.gameTime).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "2-digit", day: "2-digit", year: "2-digit" })
+                      : null;
+                    const slateLabel = leg.game?.gameTime ? getSlate(new Date(leg.game.gameTime)) : null;
+                    return (
+                      <View key={leg.id} style={styles.lookthroughRow}>
+                        <View style={styles.lookthroughRowHeader}>
+                          <Text style={styles.lookthroughParlay} numberOfLines={1}>
+                            {leg.parlay.week?.label ?? `Week ${leg.parlay.weekId}`} #{leg.parlay.id}
+                          </Text>
+                          <Text style={styles.lookthroughOwner} numberOfLines={1}>
+                            {leg.parlay.isOwnParlay ? "You" : memberDisplayName({ user: leg.parlay.owner })}
+                          </Text>
+                        </View>
+                        <Text style={[styles.legText, { color: resultColor }]} numberOfLines={1} ellipsizeMode="tail">
+                          {matchupLabel}
+                        </Text>
+                        <Text style={styles.lookthroughMeta} numberOfLines={1}>
+                          {(leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase()) || "—"}
+                          {leg.line ? ` · ${leg.line}` : ""}
+                          {leg.odds ? ` · ${leg.odds}` : ""}
+                          {dateLabel ? ` · ${dateLabel}` : ""}
+                          {slateLabel ? ` · ${slateLabel}` : ""}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              )}
+              <View style={styles.modalActions}>
+                <Pressable
+                  style={({ pressed }) => [styles.modalCancel, { flex: 1 }, pressed && { opacity: 0.7 }]}
+                  onPress={() => setLookthroughRecord(null)}
+                >
+                  <Text style={styles.modalCancelText}>Close</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </>
   );
 }
@@ -1438,6 +1570,18 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#f1f5f9" },
   modalSubtitle: { fontSize: 13, color: "#94a3b8", marginBottom: 4 },
   walkthroughMatchup: { fontSize: 16, fontWeight: "700", color: "#f1f5f9" },
+  lookthroughSheet: { maxHeight: "80%" },
+  lookthroughScroll: { flexGrow: 0 },
+  lookthroughRow: {
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderColor: "#2a3447",
+    gap: 2,
+  },
+  lookthroughRowHeader: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  lookthroughParlay: { fontSize: 11, fontWeight: "600", color: "#64748b" },
+  lookthroughOwner: { fontSize: 11, color: "#64748b" },
+  lookthroughMeta: { fontSize: 12, color: "#94a3b8" },
   codeRow: {
     flexDirection: "row",
     alignItems: "center",

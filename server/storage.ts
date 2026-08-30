@@ -107,6 +107,7 @@ export interface IStorage {
   // Stats
   getStats(): Promise<UserStat[]>;
   getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]>;
+  getMissedWeeksForMember(leagueId: number, userId: string): Promise<{ weekId: number; season: number; weekNumber: number; label: string }[]>;
 
   // Leagues
   createLeague(userId: string, league: InsertLeague): Promise<League>;
@@ -157,8 +158,10 @@ export interface IStorage {
   getSentParlaysForUser(userId: string): Promise<ParlayWithLegs[]>;
   getUserParlayHistory(userId: string, leagueId?: number, weekIds?: number[]): Promise<ParlayWithLegs[]>;
   getUserLegHistory(userId: string, leagueId?: number): Promise<ParlayLegWithParlayContext[]>;
+  getParlayLegsByIds(leagueId: number, legIds: number[], requestingUserId: string): Promise<ParlayLegWithParlayContext[]>;
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
+  cancelOwnParlay(parlayId: number, userId: string): Promise<void>;
   deleteParlayLeg(legId: number): Promise<void>;
   updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'resultDetail' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg>;
   bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]>;
@@ -525,6 +528,61 @@ export class DatabaseStorage implements IStorage {
     });
 
     return withBar(base).sort((a, b) => b.winRate - a.winRate);
+  }
+
+  /**
+   * Lookthrough for a "participation rate" record (e.g. Weak Link): the
+   * specific weeks a member was eligible for but didn't submit a parlay in,
+   * while a member of the league. Mirrors getLeagueStats's eligible-week
+   * logic (weeks anchored to their earliest real submission league-wide,
+   * eligibility = that anchor falling inside this member's own
+   * [startDate, endDate ?? now] window) for one user instead of every
+   * member, so the two stay consistent by construction.
+   */
+  async getMissedWeeksForMember(leagueId: number, userId: string): Promise<{ weekId: number; season: number; weekNumber: number; label: string }[]> {
+    const [membership] = await db.select().from(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+    if (!membership) return [];
+
+    const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
+    const memberIds = members.map(m => m.userId);
+
+    const legRows = await db.select({
+      userId: parlayLegs.userId,
+      weekId: parlays.weekId,
+      createdAt: parlays.createdAt,
+    })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(and(
+        eq(parlays.leagueId, leagueId),
+        not(inArray(parlays.status as any, ['void', 'rejected'])),
+        inArray(parlayLegs.userId, memberIds),
+      ));
+
+    const weekAnchor = new Map<number, number>();
+    for (const row of legRows) {
+      if (!row.createdAt) continue;
+      const t = new Date(row.createdAt).getTime();
+      const existing = weekAnchor.get(row.weekId);
+      if (existing === undefined || t < existing) weekAnchor.set(row.weekId, t);
+    }
+
+    const submittedWeeks = new Set(legRows.filter(r => r.userId === userId).map(r => r.weekId));
+
+    const windowStart = membership.startDate ? new Date(membership.startDate).getTime() : -Infinity;
+    const windowEnd = membership.endDate ? new Date(membership.endDate).getTime() : Date.now();
+
+    const missedWeekIds = [...weekAnchor.entries()]
+      .filter(([weekId, t]) => t >= windowStart && t <= windowEnd && !submittedWeeks.has(weekId))
+      .map(([weekId]) => weekId);
+
+    if (missedWeekIds.length === 0) return [];
+
+    const weekRows = await db.select().from(weeks).where(inArray(weeks.id, missedWeekIds));
+    return weekRows
+      .map(w => ({ weekId: w.id, season: w.season, weekNumber: w.weekNumber, label: w.label }))
+      .sort((a, b) => a.season - b.season || a.weekNumber - b.weekNumber);
   }
 
   async getLeagueDataStats(leagueId: number): Promise<LeagueDataStats> {
@@ -1478,6 +1536,50 @@ export class DatabaseStorage implements IStorage {
       });
   }
 
+  // "Lookthrough" for a league-record tile — fetches specific parlay_legs by
+  // id (e.g. the legs behind a win streak or a favorite-team superlative),
+  // scoped to one league so a record from another league's data can't leak
+  // through. Same join/shape as getUserLegHistory, just filtered by leg id
+  // instead of by owning user.
+  async getParlayLegsByIds(leagueId: number, legIds: number[], requestingUserId: string): Promise<ParlayLegWithParlayContext[]> {
+    if (legIds.length === 0) return [];
+
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(users, eq(parlays.userId, users.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(and(inArray(parlayLegs.id, legIds), eq(parlays.leagueId, leagueId)));
+
+    if (rows.length === 0) return [];
+
+    const weekIds = [...new Set(rows.map(r => r.parlay.weekId))];
+    const allWeeks = await db.select().from(weeks).where(inArray(weeks.id, weekIds));
+    const weekById = new Map(allWeeks.map(w => [w.id, w]));
+
+    return rows
+      .map(({ leg, game, parlay, owner }) => {
+        const isOwnParlay = parlay.userId === requestingUserId;
+        return {
+          ...leg,
+          game,
+          parlay: {
+            id: parlay.id,
+            weekId: parlay.weekId,
+            week: weekById.get(parlay.weekId)!,
+            status: parlay.status,
+            isOwnParlay,
+            owner: isOwnParlay || !owner ? null : { firstName: owner.firstName, email: owner.email, settings: owner.settings as any },
+          },
+        };
+      })
+      .sort((a, b) => {
+        const aTime = a.game?.gameTime ? new Date(a.game.gameTime).getTime() : 0;
+        const bTime = b.game?.gameTime ? new Date(b.game.gameTime).getTime() : 0;
+        return bTime - aTime || b.id - a.id;
+      });
+  }
+
   async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay> {
     return await db.transaction(async (tx) => {
       const existingLegs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
@@ -1597,6 +1699,21 @@ export class DatabaseStorage implements IStorage {
       offset,
       hasMore: unbounded ? false : offset + items.length < total,
     };
+  }
+
+  // Owner-facing self-cancel — distinct from deleteParlay (admin-only, no
+  // status restriction, used to remove any member's parlay). A user may only
+  // cancel their OWN parlay, and only before an admin has approved it (once
+  // approved/sent/placed, a real sportsbook bet may already be at risk, so
+  // cancellation from here stays admin-only past that point).
+  async cancelOwnParlay(parlayId: number, userId: string): Promise<void> {
+    const existing = await this.getParlay(parlayId);
+    if (!existing) throw new Error("Parlay not found");
+    if (existing.userId !== userId) throw new Error("You can only cancel your own parlay");
+    if (existing.status !== "draft" && existing.status !== "pending") {
+      throw new Error("Only draft or pending parlays can be canceled");
+    }
+    await this.deleteParlay(parlayId);
   }
 
   async deleteParlay(parlayId: number): Promise<void> {

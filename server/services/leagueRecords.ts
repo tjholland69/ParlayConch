@@ -38,8 +38,20 @@ export type LeagueRecordEntry = {
   week?: { season: number; weekNumber: number; label: string } | null;
   /** Start/end of a streak, as ISO timestamps. */
   dateRange?: { start: string; end: string } | null;
-  /** Deep-link target for a record tied to one specific bet. */
-  link?: { leagueId: number; parlayId: number } | null;
+  /** parlay_leg ids that produced this record — the "lookthrough" set a tile
+   * fetches (via GET /api/leagues/:id/parlay-legs?ids=...) and displays when
+   * clicked. Empty when a record has no meaningful leg-level lookthrough
+   * (e.g. weakLink, a participation-rate stat — see lookthroughKind below). */
+  legIds: number[];
+  /** What kind of lookthrough popup a tile opens, beyond the default
+   * legs-by-id one `legIds` already drives. "participation" fetches via
+   * GET /api/leagues/:id/members/:userId/missed-weeks instead, showing the
+   * weeks `holderUserId` was eligible for but didn't submit a parlay in.
+   * Omitted (or any value other than "participation") keeps today's
+   * legIds-gated behavior — this is additive, not a replacement, so a new
+   * participation-style tile only needs to set this to get the popup, no
+   * changes to the tile/modal plumbing itself. */
+  lookthroughKind?: "participation";
 };
 
 const BET_TYPE_LABELS: Record<string, string> = {
@@ -142,17 +154,17 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
 
   // ── Highest single-leg odds (biggest underdog single bet), and — tracked in
   // the same pass — the highest single-leg odds among legs that actually WON. ──
-  let bestLeg: { decimal: number; american: number; userId: string; weekId: number; parlayId: number } | null = null;
-  let bestWinningLeg: { decimal: number; american: number; userId: string; weekId: number; parlayId: number; decidedAt: number } | null = null;
+  let bestLeg: { decimal: number; american: number; userId: string; weekId: number; parlayId: number; legId: number } | null = null;
+  let bestWinningLeg: { decimal: number; american: number; userId: string; weekId: number; parlayId: number; legId: number; decidedAt: number } | null = null;
   for (const r of rows) {
     const american = parseAmericanOdds(r.leg.odds);
     if (american == null) continue;
     const decimal = americanToDecimal(american);
     if (!bestLeg || decimal > bestLeg.decimal) {
-      bestLeg = { decimal, american, userId: r.leg.userId, weekId: r.parlayWeekId, parlayId: r.parlayId };
+      bestLeg = { decimal, american, userId: r.leg.userId, weekId: r.parlayWeekId, parlayId: r.parlayId, legId: r.leg.id };
     }
     if (r.leg.result === "win" && (!bestWinningLeg || decimal > bestWinningLeg.decimal)) {
-      bestWinningLeg = { decimal, american, userId: r.leg.userId, weekId: r.parlayWeekId, parlayId: r.parlayId, decidedAt: legTime(r) };
+      bestWinningLeg = { decimal, american, userId: r.leg.userId, weekId: r.parlayWeekId, parlayId: r.parlayId, legId: r.leg.id, decidedAt: legTime(r) };
     }
   }
   if (bestLeg) {
@@ -163,7 +175,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       value: bestLeg.american > 0 ? `+${bestLeg.american}` : String(bestLeg.american),
       holderUserId: bestLeg.userId,
       week: weekContext(bestLeg.weekId),
-      link: { leagueId, parlayId: bestLeg.parlayId },
+      legIds: [bestLeg.legId],
     });
   }
   // Placed second on the grid, right after the tile it's a variant of.
@@ -176,7 +188,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       holderUserId: bestWinningLeg.userId,
       week: weekContext(bestWinningLeg.weekId),
       dateRange: bestWinningLeg.decidedAt ? { start: new Date(bestWinningLeg.decidedAt).toISOString(), end: new Date(bestWinningLeg.decidedAt).toISOString() } : null,
-      link: { leagueId, parlayId: bestWinningLeg.parlayId },
+      legIds: [bestWinningLeg.legId],
     });
   }
 
@@ -206,9 +218,13 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       key: "highestParlayOdds",
       title: "Spice Melange",
       label: "Highest Total Parlay Odds",
-      value: `${bestParlay.decimal.toFixed(1)}x (${decimalToAmericanLabel(bestParlay.decimal)})`,
+      // Product of each leg's posted odds at pick time — not the parlay's
+      // actual settled payout, so it's an approximation of what the book
+      // would offer, not an exact figure.
+      value: `${bestParlay.decimal.toFixed(1)}x (${decimalToAmericanLabel(bestParlay.decimal)}) (est.)`,
       holderUserId: bestParlay.userId,
       week: weekContext(bestParlay.weekId),
+      legIds: legsByParlay.get(bestParlay.parlayId)!.map(r => r.leg.id),
     });
   }
 
@@ -217,6 +233,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   // earliest among that parlay's losing legs — same rule as the per-tile
   // "Parlay Loser" badge (client/src/lib/parlayLoser.ts), just aggregated.
   const loserCounts = new Map<string, number>();
+  const loserLegIds = new Map<string, number[]>();
   for (const [, legs] of legsByParlay) {
     if (legs[0].parlayStatus !== "loss") continue;
     const busted = legs.filter(r => r.leg.result === "loss");
@@ -228,6 +245,8 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
     };
     const bustedLeg = [...busted].sort((a, b) => decidedTime(a) - decidedTime(b) || a.leg.id - b.leg.id)[0];
     loserCounts.set(bustedLeg.leg.userId, (loserCounts.get(bustedLeg.leg.userId) ?? 0) + 1);
+    const ids = loserLegIds.get(bustedLeg.leg.userId);
+    if (ids) ids.push(bustedLeg.leg.id); else loserLegIds.set(bustedLeg.leg.userId, [bustedLeg.leg.id]);
   }
   const topLoser = topEntry(Object.fromEntries(loserCounts) as Record<string, number>);
   if (topLoser) {
@@ -237,27 +256,29 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       label: "Most Times Breaking the Parlay",
       value: `${topLoser.count} time${topLoser.count !== 1 ? "s" : ""}`,
       holderUserId: topLoser.key,
+      legIds: loserLegIds.get(topLoser.key) ?? [],
     });
   }
 
   // ── The Juiceman: highest average odds among a member's WON legs. Unlike
   // highestSingleLegOddsWon (their single best win), this rewards someone who
   // consistently cashes plus-money underdogs rather than one lucky hit. ──
-  const juiceSums = new Map<string, { totalDecimal: number; count: number }>();
+  const juiceSums = new Map<string, { totalDecimal: number; count: number; legIds: number[] }>();
   for (const r of rows) {
     if (r.leg.result !== "win") continue;
     const american = parseAmericanOdds(r.leg.odds);
     if (american == null) continue;
-    const cur = juiceSums.get(r.leg.userId) ?? { totalDecimal: 0, count: 0 };
+    const cur = juiceSums.get(r.leg.userId) ?? { totalDecimal: 0, count: 0, legIds: [] };
     cur.totalDecimal += americanToDecimal(american);
     cur.count += 1;
+    cur.legIds.push(r.leg.id);
     juiceSums.set(r.leg.userId, cur);
   }
-  let juiceman: { userId: string; avgDecimal: number; count: number } | null = null;
+  let juiceman: { userId: string; avgDecimal: number; count: number; legIds: number[] } | null = null;
   for (const [userId, sum] of juiceSums) {
     const avgDecimal = sum.totalDecimal / sum.count;
     if (!juiceman || avgDecimal > juiceman.avgDecimal) {
-      juiceman = { userId, avgDecimal, count: sum.count };
+      juiceman = { userId, avgDecimal, count: sum.count, legIds: sum.legIds };
     }
   }
   if (juiceman) {
@@ -268,6 +289,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       value: decimalToAmericanLabel(juiceman.avgDecimal),
       detail: `avg over ${juiceman.count} win${juiceman.count !== 1 ? "s" : ""}`,
       holderUserId: juiceman.userId,
+      legIds: juiceman.legIds,
     });
   }
 
@@ -278,35 +300,38 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
     const arr = legsByUser.get(r.leg.userId);
     if (arr) arr.push(r); else legsByUser.set(r.leg.userId, [r]);
   }
-  let bestWinStreak: { count: number; userId: string; start: number; end: number } | null = null;
-  let bestLossStreak: { count: number; userId: string; start: number; end: number } | null = null;
+  let bestWinStreak: { count: number; userId: string; start: number; end: number; legIds: number[] } | null = null;
+  let bestLossStreak: { count: number; userId: string; start: number; end: number; legIds: number[] } | null = null;
   for (const [userId, legs] of legsByUser) {
     const ordered = [...legs].sort((a, b) => legTime(a) - legTime(b) || a.leg.id - b.leg.id);
     let curResult: "win" | "loss" | null = null;
     let curLen = 0;
     let curStart = 0;
+    let curIds: number[] = [];
     let maxWin = 0;
     let maxLoss = 0;
     let maxWinStart = 0;
     let maxWinEnd = 0;
+    let maxWinIds: number[] = [];
     let maxLossStart = 0;
     let maxLossEnd = 0;
+    let maxLossIds: number[] = [];
     for (const r of ordered) {
       const result = r.leg.result as "win" | "loss";
       const t = legTime(r);
-      if (result === curResult) curLen++;
-      else { curResult = result; curLen = 1; curStart = t; }
+      if (result === curResult) { curLen++; curIds.push(r.leg.id); }
+      else { curResult = result; curLen = 1; curStart = t; curIds = [r.leg.id]; }
       if (curResult === "win") {
-        if (curLen > maxWin) { maxWin = curLen; maxWinStart = curStart; maxWinEnd = t; }
+        if (curLen > maxWin) { maxWin = curLen; maxWinStart = curStart; maxWinEnd = t; maxWinIds = [...curIds]; }
       } else {
-        if (curLen > maxLoss) { maxLoss = curLen; maxLossStart = curStart; maxLossEnd = t; }
+        if (curLen > maxLoss) { maxLoss = curLen; maxLossStart = curStart; maxLossEnd = t; maxLossIds = [...curIds]; }
       }
     }
     if (maxWin > 0 && (!bestWinStreak || maxWin > bestWinStreak.count)) {
-      bestWinStreak = { count: maxWin, userId, start: maxWinStart, end: maxWinEnd };
+      bestWinStreak = { count: maxWin, userId, start: maxWinStart, end: maxWinEnd, legIds: maxWinIds };
     }
     if (maxLoss > 0 && (!bestLossStreak || maxLoss > bestLossStreak.count)) {
-      bestLossStreak = { count: maxLoss, userId, start: maxLossStart, end: maxLossEnd };
+      bestLossStreak = { count: maxLoss, userId, start: maxLossStart, end: maxLossEnd, legIds: maxLossIds };
     }
   }
   if (bestWinStreak) {
@@ -319,6 +344,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       dateRange: bestWinStreak.start && bestWinStreak.end
         ? { start: new Date(bestWinStreak.start).toISOString(), end: new Date(bestWinStreak.end).toISOString() }
         : null,
+      legIds: bestWinStreak.legIds,
     });
   }
   if (bestLossStreak) {
@@ -331,6 +357,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       dateRange: bestLossStreak.start && bestLossStreak.end
         ? { start: new Date(bestLossStreak.start).toISOString(), end: new Date(bestLossStreak.end).toISOString() }
         : null,
+      legIds: bestLossStreak.legIds,
     });
   }
 
@@ -345,10 +372,12 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   const topTeam = topEntry(teamCounts);
   if (topTeam) {
     let teamWins = 0, teamLosses = 0;
+    const teamLegIds: number[] = [];
     for (const r of rows) {
       if ((r.leg.betType === "spread" || r.leg.betType === "moneyline") && r.homeTeam && r.awayTeam) {
         const team = r.leg.pick === "home" ? r.homeTeam : r.leg.pick === "away" ? r.awayTeam : null;
         if (team !== topTeam.key) continue;
+        teamLegIds.push(r.leg.id);
         if (r.leg.result === "win") teamWins++;
         else if (r.leg.result === "loss") teamLosses++;
       }
@@ -360,6 +389,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       value: `${topTeam.key} (${topTeam.count} pick${topTeam.count !== 1 ? "s" : ""})`,
       holderUserId: null,
       winLoss: teamWins + teamLosses > 0 ? { wins: teamWins, losses: teamLosses } : null,
+      legIds: teamLegIds,
     });
   }
 
@@ -373,8 +403,10 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   const topPlayer = topEntry(playerCounts);
   if (topPlayer) {
     let playerWins = 0, playerLosses = 0;
+    const playerLegIds: number[] = [];
     for (const r of rows) {
       if (r.leg.betType === "player_prop" && r.leg.playerName === topPlayer.key) {
+        playerLegIds.push(r.leg.id);
         if (r.leg.result === "win") playerWins++;
         else if (r.leg.result === "loss") playerLosses++;
       }
@@ -386,6 +418,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       value: `${abbreviatePlayerName(topPlayer.key)} (${topPlayer.count} pick${topPlayer.count !== 1 ? "s" : ""})`,
       holderUserId: null,
       winLoss: playerWins + playerLosses > 0 ? { wins: playerWins, losses: playerLosses } : null,
+      legIds: playerLegIds,
     });
   }
 
@@ -404,6 +437,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       value: `${BET_TYPE_LABELS[topBetType.key] ?? topBetType.key} (${pct.toFixed(1)}%)`,
       holderUserId: null,
       detail: `${topBetType.count} pick${topBetType.count !== 1 ? "s" : ""}`,
+      legIds: rows.filter(r => r.leg.betType === topBetType.key).map(r => r.leg.id),
     });
   }
 
@@ -420,11 +454,13 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   }
   if (weakestLink) {
     records.push({
-      key: "weakLine",
-      title: "Weak Line",
+      key: "weakLink",
+      title: "Weak Link",
       label: "Lowest Participation Rate",
       value: `${Math.round(weakestLink.rate * 100)}%`,
       holderUserId: weakestLink.userId,
+      legIds: [],
+      lookthroughKind: "participation",
     });
   }
 
@@ -438,8 +474,10 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
   const topPrimetime = topEntry(Object.fromEntries(primetimeCounts) as Record<string, number>);
   if (topPrimetime) {
     let primetimeWins = 0, primetimeLosses = 0;
+    const primetimeLegIds: number[] = [];
     for (const r of rows) {
       if (!r.gameTime || getSlate(r.gameTime) !== "Primetime" || r.leg.userId !== topPrimetime.key) continue;
+      primetimeLegIds.push(r.leg.id);
       if (r.leg.result === "win") primetimeWins++;
       else if (r.leg.result === "loss") primetimeLosses++;
     }
@@ -450,6 +488,7 @@ export async function getLeagueRecords(leagueId: number): Promise<LeagueRecordEn
       value: `${topPrimetime.count} pick${topPrimetime.count !== 1 ? "s" : ""}`,
       holderUserId: topPrimetime.key,
       winLoss: primetimeWins + primetimeLosses > 0 ? { wins: primetimeWins, losses: primetimeLosses } : null,
+      legIds: primetimeLegIds,
     });
   }
 

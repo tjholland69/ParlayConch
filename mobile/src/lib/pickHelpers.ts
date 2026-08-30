@@ -8,6 +8,8 @@ export type SelectedLeg = {
   betType: string;
   pick: string;
   line?: string;
+  playerName?: string | null;
+  propType?: string | null;
 };
 
 /** Same line formatting as web LeagueDetail.getLineForBet. `pointsMoved`
@@ -64,6 +66,10 @@ export function awaySpreadDisplay(spread: string | null | undefined): string | n
 }
 
 export function shortLegLabel(leg: SelectedLeg, game: Game | undefined): string {
+  if (leg.betType === "player_prop") {
+    const line = leg.line ? ` ${leg.line}` : "";
+    return `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"} ${leg.pick}${line}`.trim();
+  }
   if (!game) return "Pick";
   // Prefer the leg's own stored line over the game's current market line —
   // they can differ (points bought, or the market line simply drifted since

@@ -370,13 +370,13 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
     ? getDisplayName(heroLeg.user, `User #${shortId(heroLeg.userId)}`)
     : memberName;
 
-  // Slate the parlay expired in: the decisive leg's game finish time — the
-  // leg that killed the parlay (bustedLeg) for a loss, or the leg that
-  // clinched it last (heroLeg) for a win. Same timestamp source as the
-  // Loser/Hero labels above, just bucketed into a broadcast slate.
+  // Slate the parlay was decided in: the decisive leg's game — the leg that
+  // killed the parlay (bustedLeg) for a loss, or the leg that clinched it
+  // last (heroLeg) for a win. getSlate buckets by kickoff time, not finish
+  // time, so this must use the leg's game.gameTime (same as the per-leg
+  // Slate column below), not decidedAt/finishedAt.
   const decisiveLeg = bustedLeg ?? heroLeg;
-  const decisiveFinishTime = decisiveLeg?.decidedAt ?? decisiveLeg?.game?.finishedAt ?? null;
-  const decidedSlate = decisiveFinishTime ? getSlate(new Date(decisiveFinishTime)) : null;
+  const decidedSlate = decisiveLeg?.game?.gameTime ? getSlate(new Date(decisiveLeg.game.gameTime)) : null;
 
   // Earliest decided (or, once resolved, finished) leg first; legs still
   // pending decision have no resolvable timestamp and fall back to their

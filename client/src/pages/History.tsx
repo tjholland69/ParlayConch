@@ -17,7 +17,7 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { DateRange } from "react-day-picker";
 import { MultiSelect } from "@/components/MultiSelect";
 import { BET_TYPE_OPTIONS } from "@/lib/bettingConstants";
-import { History as HistoryIcon, Trophy, Filter, Calendar, Loader2, ChevronsUpDown, Search, HelpCircle, LayoutGrid, Table2 } from "lucide-react";
+import { History as HistoryIcon, Trophy, Filter, Calendar, ChevronsUpDown, Search, HelpCircle, LayoutGrid, Table2, Info } from "lucide-react";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -30,6 +30,7 @@ import { PageLoader } from "@/components/PageLoader";
 import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
+import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { getSlate } from "@shared/slate";
@@ -148,99 +149,9 @@ function HistoryDateRangeFilter({
   );
 }
 
-// ── LegsWithParlayTable ──────────────────────────────────────────────────────
-// Flat per-leg rows pulled from (potentially) multiple parlays at once — shows
-// which parlay each leg belongs to (week/#id, and who owns it when it isn't
-// the current user's own parlay). Only calls out the parlay when it won —
-// losing parlays render with no red status framing, per the "lookthrough"
-// design: we highlight wins, not losses.
-
-function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
-  if (legs.length === 0) {
-    return <p className="text-sm text-muted-foreground italic py-2 px-1">No legs.</p>;
-  }
-  return (
-    <div className="rounded-lg border border-white/5 overflow-x-auto">
-      <table className="w-full min-w-[760px] text-sm">
-        <thead>
-          <tr className="bg-muted/30 text-muted-foreground text-xs">
-            <th className="text-left px-3 py-2 font-medium">Parlay</th>
-            <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
-            <th className="text-left px-3 py-2 font-medium">Type</th>
-            <th className="text-left px-3 py-2 font-medium">Pick</th>
-            <th className="text-left px-3 py-2 font-medium">Date</th>
-            <th className="text-left px-3 py-2 font-medium">Slate</th>
-            <th className="text-left px-3 py-2 font-medium">Result</th>
-          </tr>
-        </thead>
-        <tbody>
-          {legs.map((leg, i) => (
-            <tr
-              key={leg.id ?? i}
-              className={cn(
-                "border-t border-white/5",
-                i % 2 === 1 && "bg-muted/10",
-                leg.parlay.status === "win" && "bg-green-500/10",
-                leg.game?.isFinished && !leg.result && "bg-amber-500/10"
-              )}
-            >
-              <td className="px-3 py-2">
-                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                  <span className="text-xs font-medium">
-                    {leg.parlay.week?.label ?? `Week ${leg.parlay.weekId}`}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground/50">#{leg.parlay.id}</span>
-                  {leg.parlay.status === "win" && (
-                    <Badge variant="outline" className="text-[10px] px-1 py-0 border-green-500/40 text-green-400">
-                      Win
-                    </Badge>
-                  )}
-                  {!leg.parlay.isOwnParlay && (
-                    <span className="text-[10px] text-muted-foreground/70 italic">
-                      via {getDisplayName(leg.parlay.owner, "Member")}
-                    </span>
-                  )}
-                </div>
-              </td>
-              <td className="px-3 py-2 font-medium">
-                <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-                  {leg.gameSegment && (
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-amber-400/80 bg-amber-400/10 border border-amber-400/20 rounded px-1.5 py-0.5 leading-none shrink-0">
-                      {leg.gameSegment}
-                    </span>
-                  )}
-                  <span className="truncate max-w-[130px] text-xs">{legMatchup(leg)}</span>
-                </div>
-              </td>
-              <td className="px-3 py-2">
-                <Badge variant="outline" className="text-xs px-1.5 py-0">
-                  {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
-                </Badge>
-              </td>
-              <td className="px-3 py-2 text-muted-foreground text-xs">{formatPickLabel(leg)}</td>
-              <td className="px-3 py-2 text-muted-foreground text-xs whitespace-nowrap">
-                {leg.game?.gameTime
-                  ? new Date(leg.game.gameTime).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "2-digit", day: "2-digit", year: "2-digit" })
-                  : "—"}
-              </td>
-              <td className="px-3 py-2 text-muted-foreground text-xs whitespace-nowrap">
-                {leg.game?.gameTime ? getSlate(new Date(leg.game.gameTime)) : "—"}
-              </td>
-              <td className="px-3 py-2 font-medium text-xs">
-                <ParlayLegResultBadge leg={leg} game={leg.game} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // ── HistoryParlayTile ────────────────────────────────────────────────────────
 // Wraps the shared ParlayRollupCard (readOnly) with History-specific chrome:
-// a "copy bet slip" action and an opt-in view of every other league member's
-// parlay for the same week. Keeps the tile's own header/legs/badges/slate
+// a "copy bet slip" action. Keeps the tile's own header/legs/badges/slate
 // display in one place (ParlayRollupCard) instead of duplicating it here.
 
 function HistoryParlayTile({
@@ -260,27 +171,6 @@ function HistoryParlayTile({
   defaultExpanded?: boolean;
   highlighted?: boolean;
 }) {
-  const [showAll, setShowAll] = useState(false);
-
-  const {
-    data: allLeagueParlaysPages,
-    isLoading: loadingAll,
-    hasNextPage,
-    fetchNextPage,
-    isFetchingNextPage,
-  } = useAllLeagueParlaysReadOnly(parlay.leagueId, showAll);
-
-  useEffect(() => {
-    if (showAll && hasNextPage && !isFetchingNextPage) {
-      void fetchNextPage();
-    }
-  }, [showAll, hasNextPage, isFetchingNextPage, fetchNextPage]);
-
-  const allLeagueParlays = flattenParlayPages(allLeagueParlaysPages);
-
-  const otherParlays = showAll
-    ? (allLeagueParlays ?? []).filter(p => p.weekId === parlay.weekId && p.id !== parlay.id)
-    : [];
 
   if (parlay.status === "void") {
     return (
@@ -316,42 +206,6 @@ function HistoryParlayTile({
           copiedId={copiedId}
         />
       </CardErrorBoundary>
-
-      <div className="flex items-center gap-2.5 pl-2">
-        <Checkbox
-          id={`show-all-${parlay.id}`}
-          checked={showAll}
-          onCheckedChange={v => setShowAll(!!v)}
-        />
-        <label
-          htmlFor={`show-all-${parlay.id}`}
-          className="text-sm text-muted-foreground cursor-pointer select-none"
-        >
-          Show all league members' picks for this week
-        </label>
-        {loadingAll && showAll && (
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
-        )}
-      </div>
-
-      {showAll && !loadingAll && otherParlays.length === 0 && (
-        <p className="text-sm text-muted-foreground italic pl-2">
-          No other members submitted a parlay this week.
-        </p>
-      )}
-
-      {showAll && otherParlays.length > 0 && (
-        <div className="space-y-3 pl-2">
-          <p className="text-xs text-muted-foreground uppercase font-medium tracking-wide">
-            Other members ({otherParlays.length})
-          </p>
-          {otherParlays.map(other => (
-            <CardErrorBoundary key={other.id} parlayId={other.id}>
-              <ParlayRollupCard parlay={other} leagueId={other.leagueId} readOnly defaultExpanded={defaultExpanded} />
-            </CardErrorBoundary>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -418,11 +272,12 @@ export default function History() {
   const [parlayQuery, setParlayQuery] = useState("");
   const [showAdvancedFilter, setShowAdvancedFilter] = useState(false);
 
-  // Default view: only the current user's own picks. Uncheck to bring in
-  // every league member's picks (requires a specific league to be selected).
-  // A deep-linked parlay (see highlightParlayId above) may belong to someone
-  // else, so start unchecked in that case or it'd never be visible to jump to.
-  const [ownPicksOnly, setOwnPicksOnly] = useState(!highlightParlayId);
+  // Default view: every parlay tile, full legs. Checking "My picks only"
+  // narrows the legs shown inside each tile to the current user's own —
+  // it never hides a tile (see structurallyFilteredParlays below), so this
+  // is safe to default off even for a deep-linked parlay belonging to
+  // someone else (see highlightParlayId above).
+  const [ownPicksOnly, setOwnPicksOnly] = useState(false);
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [selectedBetTypes, setSelectedBetTypes] = useState<string[]>([]);
   const [historyDateRangeMode, setHistoryDateRangeMode] = useState<DateRangeMode>("all");
@@ -548,11 +403,11 @@ export default function History() {
         .map(p => ({ ...p, legs: p.legs.filter(l => selectedMemberIds.includes(l.userId)) }));
     } else if (!canShowOthers) {
       // "My picks only": scope every parlay tile down to just this user's own
-      // legs. Unchecking the top-level checkbox is the only way to bring
-      // other members' legs back in.
-      result = result
-        .filter(p => p.legs.some(l => l.userId === user?.id))
-        .map(p => ({ ...p, legs: p.legs.filter(l => l.userId === user?.id) }));
+      // legs — it never hides a tile, even one the user has no legs in at
+      // all (that leaves it with an empty legs array, which the tile itself
+      // renders as "no picks"). Unchecking the top-level checkbox is the
+      // only way to bring other members' legs back in.
+      result = result.map(p => ({ ...p, legs: p.legs.filter(l => l.userId === user?.id) }));
     }
     if (selectedBetTypes.length > 0) {
       result = result.filter(p => p.legs.some(l => selectedBetTypes.includes(l.betType)));

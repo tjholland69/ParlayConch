@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, type LeagueRecordEntry } from "@/hooks/use-bets";
+import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -395,6 +396,16 @@ export default function LeagueDetail() {
 
   // Records tab state
   const { data: leagueRecords, isLoading: loadingRecords } = useLeagueRecords(leagueId);
+  const [lookthroughRecord, setLookthroughRecord] = useState<LeagueRecordEntry | null>(null);
+  const isParticipationLookthrough = lookthroughRecord?.lookthroughKind === "participation";
+  const { data: lookthroughLegs, isLoading: loadingLookthrough } = useParlayLegsByIds(
+    leagueId,
+    !isParticipationLookthrough ? lookthroughRecord?.legIds ?? [] : [],
+  );
+  const { data: missedWeeksData, isLoading: loadingMissedWeeks } = useMissedWeeks(
+    leagueId,
+    isParticipationLookthrough ? lookthroughRecord?.holderUserId ?? null : null,
+  );
   const inviteByEmail = useInviteByEmail(leagueId);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmails, setInviteEmails] = useState<string[]>(['']);
@@ -1329,8 +1340,17 @@ export default function LeagueDetail() {
                     const winLossLabel = record.winLoss
                       ? `${record.winLoss.wins}-${record.winLoss.losses} (${((record.winLoss.wins / (record.winLoss.wins + record.winLoss.losses || 1)) * 100).toFixed(1)}%)`
                       : null;
+                    const hasLookthrough = record.legIds.length > 0 || record.lookthroughKind === "participation";
                     return (
-                      <div key={record.key} className="bg-white/5 border border-white/10 rounded-2xl p-4">
+                      <div
+                        key={record.key}
+                        className={cn(
+                          "bg-white/5 border border-white/10 rounded-2xl p-4",
+                          hasLookthrough && "cursor-pointer hover:border-white/20 hover:bg-white/[0.07] transition-colors"
+                        )}
+                        onClick={hasLookthrough ? () => setLookthroughRecord(record) : undefined}
+                        role={hasLookthrough ? "button" : undefined}
+                      >
                         {record.title ? (
                           <>
                             <div className="flex items-center gap-2 font-display font-bold text-sm mb-0.5">
@@ -1366,14 +1386,6 @@ export default function LeagueDetail() {
                         )}
                         {dateRangeLabel && (
                           <p className="text-xs text-muted-foreground truncate">{dateRangeLabel}</p>
-                        )}
-                        {record.link && (
-                          <Link
-                            href={`/history?league=${record.link.leagueId}&parlay=${record.link.parlayId}`}
-                            className="text-xs text-primary hover:underline mt-1 inline-block"
-                          >
-                            View bet →
-                          </Link>
                         )}
                       </div>
                     );
@@ -1492,6 +1504,36 @@ export default function LeagueDetail() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* League Record lookthrough — the specific parlay legs behind whichever
+          tile was clicked. Same table used by History's own tile drilldown. */}
+      <Dialog open={lookthroughRecord !== null} onOpenChange={(open) => !open && setLookthroughRecord(null)}>
+        <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{lookthroughRecord?.title ?? lookthroughRecord?.label}</DialogTitle>
+          </DialogHeader>
+          {isParticipationLookthrough ? (
+            loadingMissedWeeks ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>
+            ) : !missedWeeksData?.weeks || missedWeeksData.weeks.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic py-4">No missed weeks — full participation!</p>
+            ) : (
+              <ul className="divide-y divide-white/5">
+                {missedWeeksData.weeks.map((w) => (
+                  <li key={w.weekId} className="flex items-center justify-between py-2 text-sm">
+                    <span>{w.label}</span>
+                    <span className="text-muted-foreground">{w.season}</span>
+                  </li>
+                ))}
+              </ul>
+            )
+          ) : loadingLookthrough ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>
+          ) : (
+            <LegsWithParlayTable legs={lookthroughLegs ?? []} />
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Invite Members Dialog */}
       <Dialog open={inviteOpen} onOpenChange={(open) => { setInviteOpen(open); if (!open) setInviteResults(null); }}>

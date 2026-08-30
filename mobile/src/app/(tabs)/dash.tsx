@@ -2,7 +2,7 @@ import { View, Text, ScrollView, RefreshControl, Pressable, Modal, TextInput, St
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useDashboardSummary, useDashboardPatterns, useDashboardPerformance, type DashboardDateRange } from "@/hooks/use-dashboard";
+import { useDashboardSummary, useDashboardPatterns, useDashboardPerformance, useCustomIndexes, useCustomIndexPerformance, type DashboardDateRange, type WinRateTimeSeriesPoint } from "@/hooks/use-dashboard";
 import { useLeagues } from "@/hooks/use-leagues";
 import { DashboardStack, DashboardLoading, DashboardEmptyState } from "@/components/DashboardSlider";
 import { SimpleLineChart } from "@/components/charts/SimpleLineChart";
@@ -183,16 +183,40 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
   );
 }
 
-function PerformanceSlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
+/** The dashed overlay line's source: the plain league average (default) from
+ * the same series already being charted, or a swapped-in custom index's own
+ * series. A custom index's performance is computed independently of the Dash
+ * page's own league/date-range filters, so its weeks aren't guaranteed to
+ * line up positionally with the base series — match by weekLabel instead of
+ * zipping arrays, `null` for any base week the index has no data for. */
+function resolveIndexPoints(
+  decided: { weekLabel: string; indexWinRate: number | null }[],
+  customIndexPoints: WinRateTimeSeriesPoint[] | undefined,
+): (number | null)[] {
+  if (!customIndexPoints) return decided.map((p) => p.indexWinRate);
+  const byWeekLabel = new Map(customIndexPoints.map((p) => [p.weekLabel, p.indexWinRate]));
+  return decided.map((p) => byWeekLabel.get(p.weekLabel) ?? null);
+}
+
+function PerformanceSlide({
+  leagueId,
+  dateRange,
+  selectedIndexId,
+}: {
+  leagueId?: number;
+  dateRange?: DashboardDateRange;
+  selectedIndexId: number | null;
+}) {
   const accent = useAccentColor();
   const { data, isLoading, error } = useDashboardPerformance(leagueId, dateRange);
+  const { data: customIndexData } = useCustomIndexPerformance(selectedIndexId);
 
   if (isLoading) return <DashboardLoading message="Loading performance…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load performance data right now." />;
 
   const decided = data.points.filter((p) => p.myWinRate !== null);
   const points = decided.map((p) => ({ label: p.weekLabel, value: p.myWinRate as number }));
-  const indexPoints = decided.map((p) => p.indexWinRate);
+  const indexPoints = resolveIndexPoints(decided, customIndexData?.points);
 
   if (points.length === 0) {
     return <DashboardEmptyState message="No decided parlay legs yet — check back once some weeks are settled." />;
@@ -206,9 +230,18 @@ function PerformanceSlide({ leagueId, dateRange }: { leagueId?: number; dateRang
   );
 }
 
-function WeekOverWeekSlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
+function WeekOverWeekSlide({
+  leagueId,
+  dateRange,
+  selectedIndexId,
+}: {
+  leagueId?: number;
+  dateRange?: DashboardDateRange;
+  selectedIndexId: number | null;
+}) {
   const accent = useAccentColor();
   const { data, isLoading, error } = useDashboardPerformance(leagueId, dateRange);
+  const { data: customIndexData } = useCustomIndexPerformance(selectedIndexId);
 
   if (isLoading) return <DashboardLoading message="Loading performance…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load performance data right now." />;
@@ -217,7 +250,7 @@ function WeekOverWeekSlide({ leagueId, dateRange }: { leagueId?: number; dateRan
   const points = decided.map((p) => ({ label: p.weekLabel, value: p.allWeekWinRate as number }));
   // Same cumulative trendline shown on the "Performance Over Time" line chart above,
   // not the per-week index rate — the trend should read consistently between slides.
-  const indexPoints = decided.map((p) => p.indexWinRate);
+  const indexPoints = resolveIndexPoints(decided, customIndexData?.points);
 
   if (points.length === 0) {
     return <DashboardEmptyState message="No decided parlay legs yet — check back once some weeks are settled." />;
@@ -300,6 +333,83 @@ function LeagueFilter({
                   {league.name}
                 </Text>
                 {selectedLeagueId === league.id && <Ionicons name="checkmark" size={18} color={accent} />}
+              </Pressable>
+            ))}
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+/** Dropdown to swap the charts' dashed overlay line between the plain league
+ * average (default) and one of the user's own custom indexes — selecting
+ * only, building/editing an index stays web-only. */
+function IndexFilter({
+  indexes,
+  selectedIndexId,
+  onSelect,
+}: {
+  indexes: { id: number; displayName: string }[];
+  selectedIndexId: number | null;
+  onSelect: (indexId: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const insets = useSafeAreaInsets();
+  const accent = useAccentColor();
+  const selectedName = indexes.find((i) => i.id === selectedIndexId)?.displayName ?? "Overall Average";
+
+  if (indexes.length === 0) return null;
+
+  return (
+    <>
+      <Pressable
+        onPress={() => setOpen(true)}
+        style={({ pressed }) => [styles.leagueFilterBtn, styles.indexFilterBtn, pressed && { opacity: 0.85 }]}
+        testID="button-dashboard-index-filter"
+      >
+        <View style={styles.leagueFilterRow}>
+          <Ionicons name="analytics-outline" size={16} color={accent} />
+          <Text style={[styles.leagueFilterText, { color: accent }]} numberOfLines={1}>
+            {selectedName}
+          </Text>
+          <Ionicons name="chevron-down" size={16} color={accent} />
+        </View>
+      </Pressable>
+
+      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
+        <View style={styles.modalWrap}>
+          <Pressable style={styles.modalBackdrop} onPress={() => setOpen(false)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]}>
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Compare Against</Text>
+
+            <Pressable
+              onPress={() => {
+                onSelect(null);
+                setOpen(false);
+              }}
+              style={({ pressed }) => [styles.leagueOption, pressed && { opacity: 0.7 }]}
+              testID="option-index-overall"
+            >
+              <Text style={styles.leagueOptionText}>Overall Average</Text>
+              {selectedIndexId === null && <Ionicons name="checkmark" size={18} color={accent} />}
+            </Pressable>
+
+            {indexes.map((index) => (
+              <Pressable
+                key={index.id}
+                onPress={() => {
+                  onSelect(index.id);
+                  setOpen(false);
+                }}
+                style={({ pressed }) => [styles.leagueOption, pressed && { opacity: 0.7 }]}
+                testID={`option-index-${index.id}`}
+              >
+                <Text style={styles.leagueOptionText} numberOfLines={1}>
+                  {index.displayName}
+                </Text>
+                {selectedIndexId === index.id && <Ionicons name="checkmark" size={18} color={accent} />}
               </Pressable>
             ))}
           </View>
@@ -444,6 +554,14 @@ export default function DashScreen() {
   const [dateMode, setDateMode] = useState<DateRangeMode>("all");
   const [customRange, setCustomRange] = useState<DashboardDateRange>({});
   const dateRange = resolveDateRange(dateMode, customRange);
+  const [selectedIndexId, setSelectedIndexId] = useState<number | null>(null);
+  const { data: allIndexes } = useCustomIndexes();
+  // "All Leagues" (selectedLeagueId undefined) has no single league to scope
+  // by, so show every index visible to the user; otherwise only ones whose
+  // saved filters include this league or apply to all of the user's leagues.
+  const availableIndexes = (allIndexes ?? []).filter(
+    (idx) => selectedLeagueId === undefined || !idx.filters?.leagueIds?.length || idx.filters.leagueIds.includes(selectedLeagueId)
+  );
 
   return (
     <View style={styles.container}>
@@ -469,12 +587,18 @@ export default function DashScreen() {
           onCustomRangeChange={setCustomRange}
         />
 
+        <IndexFilter
+          indexes={availableIndexes}
+          selectedIndexId={selectedIndexId}
+          onSelect={setSelectedIndexId}
+        />
+
         <DashboardStack
           slides={[
             { label: "Summary", content: <SummarySlide leagueId={selectedLeagueId} /> },
             { label: "My Analytics", content: <AnalyticsSlide leagueId={selectedLeagueId} /> },
-            { label: "Performance", content: <PerformanceSlide leagueId={selectedLeagueId} dateRange={dateRange} /> },
-            { label: "Weekly", content: <WeekOverWeekSlide leagueId={selectedLeagueId} dateRange={dateRange} /> },
+            { label: "Performance", content: <PerformanceSlide leagueId={selectedLeagueId} dateRange={dateRange} selectedIndexId={selectedIndexId} /> },
+            { label: "Weekly", content: <WeekOverWeekSlide leagueId={selectedLeagueId} dateRange={dateRange} selectedIndexId={selectedIndexId} /> },
           ]}
         />
       </ScrollView>
@@ -570,6 +694,13 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     minWidth: 0,
     letterSpacing: 0.2,
+  },
+  indexFilterBtn: {
+    backgroundColor: "transparent",
+    borderColor: "#2a3447",
+    shadowOpacity: 0,
+    elevation: 0,
+    marginBottom: 16,
   },
   dateFilterRow: { gap: 8, paddingRight: 8, marginBottom: 16 },
   dateChip: {

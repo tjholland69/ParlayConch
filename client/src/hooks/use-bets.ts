@@ -213,8 +213,15 @@ export type LeagueRecordEntry = {
   winLoss?: { wins: number; losses: number } | null;
   week?: { season: number; weekNumber: number; label: string } | null;
   dateRange?: { start: string; end: string } | null;
-  link?: { leagueId: number; parlayId: number } | null;
+  /** parlay_leg ids behind this record — fetch via useParlayLegsByIds to show
+   * the "lookthrough" popup. Empty when a record has no leg-level lookthrough. */
+  legIds: number[];
+  /** "participation" fetches via useMissedWeeks instead — see the matching
+   * doc comment in server/services/leagueRecords.ts. */
+  lookthroughKind?: "participation";
 };
+
+export type MissedWeek = { weekId: number; season: number; weekNumber: number; label: string };
 
 export function useLeagueRecords(leagueId: number) {
   return useQuery<LeagueRecordEntry[]>({
@@ -225,6 +232,30 @@ export function useLeagueRecords(leagueId: number) {
       return res.json();
     },
     enabled: !!leagueId,
+  });
+}
+
+export function useParlayLegsByIds(leagueId: number, legIds: number[]) {
+  return useQuery<ParlayLegWithParlayContext[]>({
+    queryKey: ["/api/leagues", leagueId, "parlay-legs", legIds.join(",")],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlay-legs?ids=${legIds.join(",")}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch parlay legs");
+      return res.json();
+    },
+    enabled: !!leagueId && legIds.length > 0,
+  });
+}
+
+export function useMissedWeeks(leagueId: number, userId: string | null) {
+  return useQuery<{ weeks: MissedWeek[] }>({
+    queryKey: ["/api/leagues", leagueId, "members", userId, "missed-weeks"],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/members/${userId}/missed-weeks`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch missed weeks");
+      return res.json();
+    },
+    enabled: !!leagueId && !!userId,
   });
 }
 
