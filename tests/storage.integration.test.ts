@@ -8,7 +8,7 @@ import {
   games,
   parlays,
   parlayLegs,
-} from "@shared/schema";
+} from "@shared/db-schema";
 import { setupTestDatabase, skipIfNoDb } from "./helpers/test-db";
 
 describe("DatabaseStorage integration", () => {
