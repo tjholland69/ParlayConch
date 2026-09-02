@@ -13,7 +13,7 @@ import {
   insertPlayerSchema,
   insertPlayerWeekStatSchema,
   insertWeekSchema,
-} from "../../shared/schema";
+} from "../../shared/db-schema";
 
 export type SchemaValidationRule = {
   id: string;
