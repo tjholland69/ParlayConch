@@ -11,7 +11,7 @@
  */
 
 import { db } from "../db";
-import { parlayLegs, parlays, weeks } from "@shared/schema";
+import { parlayLegs, parlays, weeks } from "@shared/db-schema";
 import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import { storage } from "../storage";
 import { buildResultDetail } from "@shared/legJustification";

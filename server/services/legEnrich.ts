@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { logger } from "../logger";
-import { parlayLegs, games, players, playerWeekStats } from "@shared/schema";
+import { parlayLegs, games, players, playerWeekStats } from "@shared/db-schema";
 import type { Game, ParlayLeg, PlayerWeekStat, Player } from "@shared/schema";
 import { storage } from "../storage";
 import { syncGameScoresFromNflverse, syncAllPlayerStatsForWeek } from "./nflverse";

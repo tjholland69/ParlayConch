@@ -1,5 +1,5 @@
 import { db } from "../../db";
-import { parlayLegs, parlays, weeks, games, leagues, leagueMembers, users } from "@shared/schema";
+import { parlayLegs, parlays, weeks, games, leagues, leagueMembers, users } from "@shared/db-schema";
 import { eq, and } from "drizzle-orm";
 import type { AnalyticsReport, WeeklyMemberStanding } from "@shared/schema";
 

@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { storage } from "../storage";
-import { parlayLegs, parlays, weeks, leagueMembers, games, players } from "@shared/schema";
+import { parlayLegs, parlays, weeks, leagueMembers, games, players } from "@shared/db-schema";
 import { eq, and, or, inArray, sql, isNotNull, ilike, exists, gte, lte } from "drizzle-orm";
 import { getSlate, SLATE_NAMES, type SlateName } from "@shared/slate";
 

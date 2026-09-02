@@ -3,6 +3,8 @@ import { logger } from "./logger";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
   players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes, teams,
+} from "@shared/db-schema";
+import {
   type Team,
   type ParlayLegDispute, type InsertParlayLegDispute,
   type CustomIndex, type CustomIndexWithAccess, type InsertCustomIndex, type UpdateCustomIndex,

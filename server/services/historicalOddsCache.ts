@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { historicalOddsSnapshots } from "@shared/schema";
+import { historicalOddsSnapshots } from "@shared/db-schema";
 import { and, eq } from "drizzle-orm";
 import { fetchHistoricalGames, parseGameLines, shortenTeamName, type OddsGame, type ParsedGameLines } from "./oddsApi";
 

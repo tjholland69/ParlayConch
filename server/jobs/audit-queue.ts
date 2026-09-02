@@ -1,7 +1,8 @@
 import { Queue, Worker, type Job } from "bullmq";
 import { createBullMqConnection, isRedisConfigured } from "../redis-clients";
 import { db } from "../db";
-import { auditEvents, type InsertAuditEvent } from "@shared/schema";
+import { auditEvents } from "@shared/db-schema";
+import type { InsertAuditEvent } from "@shared/schema";
 import { logger } from "../logger";
 
 // Single-writer, many-producers audit ledger.
