@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { games, weeks } from "@shared/schema";
+import { games, weeks } from "@shared/db-schema";
 import { eq } from "drizzle-orm";
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;

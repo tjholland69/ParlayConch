@@ -8,7 +8,7 @@ import {
   games,
   importBatches,
   parlayLegs,
-} from "@shared/schema";
+} from "@shared/db-schema";
 import { setupTestDatabase, skipIfNoDb } from "./helpers/test-db";
 import { expectDbNull, expectNormalizedGameJoin } from "./helpers/null-assertions";
 import {

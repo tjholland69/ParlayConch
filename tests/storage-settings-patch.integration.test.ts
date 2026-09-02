@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { eq } from "drizzle-orm";
-import { users } from "@shared/schema";
+import { users } from "@shared/db-schema";
 import { setupTestDatabase, skipIfNoDb } from "./helpers/test-db";
 import { expectJsonbIntact } from "./helpers/null-assertions";
 
@@ -46,7 +46,7 @@ describe("user settings DB integrity", () => {
     skipIfNoDb(skip);
     const { db } = await import("../server/db");
     const { storage } = await import("../server/storage");
-    const { weeks, leagues, leagueMembers, games, parlayLegs } = await import("@shared/schema");
+    const { weeks, leagues, leagueMembers, games, parlayLegs } = await import("@shared/db-schema");
 
     const userId = "leg-patch-user";
     await db.insert(users).values({ id: userId, email: "legpatch@example.com" });

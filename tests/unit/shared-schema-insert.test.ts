@@ -4,7 +4,7 @@ import {
   insertGameSchema,
   insertLeagueSchema,
   insertParlayLegSchema,
-} from "../../shared/schema";
+} from "../../shared/db-schema";
 
 describe("shared/schema insert Zod validators", () => {
   describe("insertWeekSchema", () => {

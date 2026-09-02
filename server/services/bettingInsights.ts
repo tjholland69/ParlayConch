@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { db } from "../db";
-import { parlayLegs, parlays, games, leagueMembers } from "@shared/schema";
+import { parlayLegs, parlays, games, leagueMembers } from "@shared/db-schema";
 import { eq, and, inArray } from "drizzle-orm";
 
 let _openai: OpenAI | null = null;

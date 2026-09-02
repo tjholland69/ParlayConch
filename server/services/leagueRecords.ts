@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { eq, and, inArray } from "drizzle-orm";
-import { leagueMembers, parlays, parlayLegs, games, weeks, leagues } from "@shared/schema";
+import { leagueMembers, parlays, parlayLegs, games, weeks, leagues } from "@shared/db-schema";
 import { parseAmericanOdds } from "@shared/powerScore";
 import { getSlate } from "@shared/slate";
 import { storage } from "../storage";

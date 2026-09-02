@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { eq } from "drizzle-orm";
-import { users, leagues, leagueMembers, weeks, parlays, parlayLegs } from "@shared/schema";
+import { users, leagues, leagueMembers, weeks, parlays, parlayLegs } from "@shared/db-schema";
 import { countParlayOutcomes } from "../shared/statsAggregation";
 import { setupTestDatabase, skipIfNoDb } from "./helpers/test-db";
 
