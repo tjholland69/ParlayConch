@@ -6,3 +6,5 @@ vite.config.ts.*
 *.tar.gz
 .env.local
 .env.*.local
+# Claude Code agent worktrees (local only)
+.claude/worktrees/
