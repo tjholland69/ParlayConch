@@ -5,11 +5,11 @@ import { eq, and, inArray } from "drizzle-orm";
 
 let _openai: OpenAI | null = null;
 function getOpenAI(): OpenAI | null {
-  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return null;
+  if (!process.env.OPENAI_API_KEY) return null;
   if (!_openai) {
     _openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL,
     });
   }
   return _openai;
@@ -317,7 +317,7 @@ async function generateCommentary(
 
   const client = getOpenAI();
   if (!client) {
-    return "AI insights are not available in this environment. Set AI_INTEGRATIONS_OPENAI_API_KEY to enable them.";
+    return "AI insights are not available in this environment. Set OPENAI_API_KEY to enable them.";
   }
 
   const prompt = buildPrompt(stats, focus);

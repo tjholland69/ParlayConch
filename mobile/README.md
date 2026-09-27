@@ -62,13 +62,13 @@ npm install
 
 **Development** — set in your shell or a `.env` file:
 ```
-EXPO_PUBLIC_API_URL=https://your-replit-username.replit.app
+EXPO_PUBLIC_API_URL=http://localhost:5000
 ```
 
 **Production** — update `app.json`:
 ```json
 "extra": {
-  "apiUrl": "https://your-replit-app.replit.app"
+  "apiUrl": "https://parlayconch.com"
 }
 ```
 
@@ -100,9 +100,7 @@ iOS builds pin `ios.image` to `sdk-54` in `eas.json` for cache stability. Upload
 
 ## Authentication Notes
 
-The web app uses Replit's OpenID Connect with HTTP session cookies. On iOS, the auth flow uses `expo-web-browser` to open the OAuth page in a secure browser session, then stores the session token in `expo-secure-store`.
-
-**Important:** The server needs to support returning a session token as a query parameter on the redirect URI for mobile clients. This bridge will need to be added to `server/routes.ts` when ready to fully wire up mobile auth.
+The app signs in with email and password through `POST /api/auth/login-local` (or `/api/auth/register`). The server returns a `sessionToken`, which the app stores in `expo-secure-store` and sends back as a `Cookie: connect.sid=<token>` header.
 
 ## Styling
 

@@ -24,7 +24,7 @@ import crypto from "crypto";
 import { db } from "../server/db";
 import { users, passwordResetTokens } from "../shared/schema";
 import { eq } from "drizzle-orm";
-import { hashResetToken } from "../server/replit_integrations/auth/localAuth";
+import { hashResetToken } from "../server/auth/localAuth";
 import { sendClaimAccountEmail } from "../server/services/email";
 
 const APPLY = process.argv.includes("--apply");

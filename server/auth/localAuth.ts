@@ -4,14 +4,15 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { sign as signCookie } from "cookie-signature";
 import rateLimit from "express-rate-limit";
-import { db } from "../../db";
+import { db } from "../db";
 import { users, userPasswords, passwordResetTokens } from "@shared/models/auth";
 import { eq } from "drizzle-orm";
 import type { Express, Request, RequestHandler } from "express";
 import { z } from "zod";
-import { auditLog } from "../../services/audit";
-import { logger } from "../../logger";
+import { auditLog } from "../services/audit";
+import { logger } from "../logger";
 import { SESSION_SECRET } from "./session";
+import { sendSetPasswordLink } from "./setPasswordLink";
 
 const SALT_ROUNDS = 12;
 
@@ -95,10 +96,12 @@ export function setupLocalStrategy() {
             .where(eq(userPasswords.userId, user.id));
 
           if (!pwRow) {
-            // User exists but has no local password (Replit-only account)
+            // Account from the retired single sign-on, no password yet. Email a
+            // set-password link rather than pointing at a login that no longer exists.
+            await sendSetPasswordLink(user);
             return done(null, false, {
               message:
-                "This account uses Replit login. Please use 'Login with Replit' instead.",
+                "This account doesn't have a password yet. We've emailed you a link to set one.",
             });
           }
 
@@ -107,7 +110,7 @@ export function setupLocalStrategy() {
             return done(null, false, { message: "Invalid email or password" });
           }
 
-          // Return in the same shape that Replit-auth uses so isAuthenticated works for both
+          // Same session shape the rest of the app expects ({ claims: { sub, email } })
           return done(null, {
             claims: { sub: user.id, email: user.email },
             localAuth: true,
@@ -155,7 +158,6 @@ export function registerLocalAuthRoutes(app: Express) {
         .where(eq(users.email, normalizedEmail));
 
       if (existing) {
-        // Check if they already have a password (don't leak info if Replit-only)
         const [pwRow] = await db
           .select({ userId: userPasswords.userId })
           .from(userPasswords)
@@ -165,24 +167,14 @@ export function registerLocalAuthRoutes(app: Express) {
             .status(409)
             .json({ message: "An account with this email already exists." });
         }
-        // Replit-only account — add password to it so they can use both methods
-        const hash = await hashPassword(password);
-        await db.insert(userPasswords).values({
-          userId: existing.id,
-          passwordHash: hash,
+        // Account from the retired single sign-on, no password yet. Never attach
+        // a password here: anyone could register with someone else's email and
+        // take over the account. Email the owner a set-password link instead.
+        const [owner] = await db.select().from(users).where(eq(users.id, existing.id));
+        await sendSetPasswordLink(owner);
+        return res.status(409).json({
+          message: "An account with this email already exists. We've emailed a link to set its password.",
         });
-        const sessionUser = {
-          claims: { sub: existing.id, email: normalizedEmail },
-          localAuth: true,
-        };
-        req.login(sessionUser, (err) => {
-          if (err) return res.status(500).json({ message: "Login failed after register" });
-          return res.json({
-            message: "Password added to existing account",
-            sessionToken: signMobileSessionToken(req),
-          });
-        });
-        return;
       }
 
       // Create new user
@@ -245,9 +237,9 @@ export function registerLocalAuthRoutes(app: Express) {
   });
 
   // POST /api/auth/set-password
-  // Consumes a one-time token (issued by the Replit-auth migration backfill,
-  // see scripts/backfill-local-auth.ts) to give an existing Replit-only
-  // account a local password, then logs the user in.
+  // Consumes a one-time token (emailed by sendSetPasswordLink or the
+  // scripts/backfill-local-auth.ts backfill) to give an account without a
+  // password one, then logs the user in.
   app.post("/api/auth/set-password", authRateLimiter, auditLog("auth.set_password"), async (req, res) => {
     const parsed = setPasswordSchema.safeParse(req.body);
     if (!parsed.success) {

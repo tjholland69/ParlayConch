@@ -83,11 +83,7 @@ Expo mobile client ───────── REST ─────────�
 │       └── pages/          Route-level components
 ├── server/
 │   ├── jobs/               BullMQ jobs
-│   ├── replit_integrations/
-│   │   ├── auth/           Replit OIDC and local authentication
-│   │   ├── audio/          Audio integration
-│   │   ├── chat/           Conversation integration
-│   │   └── image/          Image generation integration
+│   ├── auth/               Email/password authentication and sessions
 │   ├── services/           Odds, enrichment, AI, email, and NFL data
 │   ├── index.ts            Server entry point
 │   ├── routes.ts           REST endpoints
@@ -164,7 +160,7 @@ SESSION_SECRET=replace-with-a-long-random-value
 PORT=5000
 ```
 
-`DATABASE_URL` is required. The application can run locally with email/password authentication without Replit OIDC, Redis, or external API credentials.
+`DATABASE_URL` is required. The application can run locally with email/password authentication without Redis or external API credentials.
 
 #### Sharing secrets across machines
 
@@ -203,17 +199,18 @@ Optional variables:
 | `REDIS_KEY_PREFIX` | Overrides the default Redis key prefix |
 | `USE_ODDS_SYNC_QUEUE=1` | Runs odds synchronization through BullMQ |
 | `ODDS_API_KEY` | Enables game odds and score synchronization through The Odds API |
-| `AI_INTEGRATIONS_OPENAI_API_KEY` | Enables AI insights and screenshot parsing |
-| `AI_INTEGRATIONS_OPENAI_BASE_URL` | Overrides the OpenAI-compatible API base URL |
-| `REPL_ID` | Enables Replit OpenID Connect authentication |
-| `ISSUER_URL` | Overrides the Replit OIDC issuer |
+| `OPENAI_API_KEY` | Enables AI insights and screenshot parsing |
+| `OPENAI_BASE_URL` | Overrides the OpenAI-compatible API base URL |
 | `PG_SSL=1` | Enables PostgreSQL SSL |
 | `PG_SSL_REJECT_UNAUTHORIZED=false` | Allows a PostgreSQL certificate that cannot be verified |
 | `PG_POOL_MAX` | Sets the PostgreSQL connection-pool limit |
 | `PG_POOL_IDLE_MS` | Sets the pool idle timeout |
 | `PG_POOL_CONNECT_TIMEOUT_MS` | Sets the pool connection timeout |
 
-Email delivery currently uses the Replit Resend connector and therefore also depends on the Replit connector environment.
+| `RESEND_API_KEY` | Sends invitation and password emails (required in production) |
+| `RESEND_FROM_EMAIL` | Overrides the sender address (default `invites@parlayconch.com`) |
+
+In production, `SESSION_SECRET` must be set or the server refuses to start.
 
 ### Initialize the database
 
@@ -292,15 +289,9 @@ Local authentication is available in every environment:
 - Passwords must contain 8–128 characters
 - Authentication endpoints are rate limited
 
-### Replit OpenID Connect
+### Accounts without a password
 
-When `REPL_ID` is configured, users may also authenticate through Replit:
-
-- `GET /api/login`
-- `GET /api/callback`
-- `GET /api/logout`
-
-Both authentication methods use the same combined authorization middleware and session model.
+Some older accounts were created through a single sign-on that has since been retired, so they have no password. Signing in or registering with one of those emails never attaches a password directly. Instead the owner is emailed a one-time link to `/set-password` (valid 14 days, at most one every 15 minutes).
 
 ### League roles
 
@@ -388,11 +379,11 @@ An OpenAI-compatible service powers:
 - User and league betting insights
 - Screenshot extraction for sportsbook tickets
 
-Configure `AI_INTEGRATIONS_OPENAI_API_KEY` and, when required, `AI_INTEGRATIONS_OPENAI_BASE_URL`.
+Configure `OPENAI_API_KEY` and, when required, `OPENAI_BASE_URL`.
 
 ### Resend
 
-Resend sends league invitations and member-added emails. The current implementation obtains credentials through the Replit connector environment.
+Resend sends league invitations, member-added and set-password emails. Configure `RESEND_API_KEY`.
 
 ## Real-time updates and Redis
 

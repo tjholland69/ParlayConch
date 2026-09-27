@@ -3,7 +3,7 @@ import type { Server } from "http";
 import { storage } from "./storage";
 import { logger } from "./logger";
 import { db } from "./db";
-import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./auth";
 import { z } from "zod";
 import { insertLeagueSchema, users, leagueMembers, parlayLegs, parlays } from "@shared/db-schema";
 import { type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";

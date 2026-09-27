@@ -3,10 +3,14 @@ import session from "express-session";
 import type { Express } from "express";
 import connectPg from "connect-pg-simple";
 import { RedisStore } from "connect-redis";
-import { getSessionRedis, redisKeyPrefix } from "../../redis-clients";
-import { pool } from "../../db";
-import { recordAuditEvent } from "../../services/audit";
+import { getSessionRedis, redisKeyPrefix } from "../redis-clients";
+import { pool } from "../db";
+import { recordAuditEvent } from "../services/audit";
 
+if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+  // The fallback below is public in this repo; signing production sessions with it is unsafe.
+  throw new Error("SESSION_SECRET must be set in production");
+}
 export const SESSION_SECRET = process.env.SESSION_SECRET ?? "dev-secret-local";
 
 export function getSession() {

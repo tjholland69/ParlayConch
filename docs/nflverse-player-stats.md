@@ -1,7 +1,4 @@
----
-name: nflverse player stats URL format
-description: The correct release/filename pattern for nflverse player stats CSVs — confirmed against GitHub release assets. Updated 2026-08-03 after nflverse retired the old release.
----
+# nflverse player stats URL format
 
 ## Rule (current, as of 2026-08-03)
 nflverse retired the `player_stats` release — it is frozen at season 2024 (last-modified 2025-05-07) and will never get new seasons. Current data lives in the `stats_player` release, one file per season, kept up to date (confirmed covering 1999-2025 as of 2026-08-03):

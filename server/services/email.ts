@@ -1,53 +1,14 @@
 import { Resend } from "resend";
 
-let connectionSettings: any;
-
-async function getResendCredentials(): Promise<{ apiKey: string; fromEmail: string }> {
-  // Plain env vars take priority — required outside Replit (local dev, prod
-  // hosts, CI) and work fine on Replit too.
-  if (process.env.RESEND_API_KEY) {
-    return {
-      apiKey: process.env.RESEND_API_KEY,
-      fromEmail: process.env.RESEND_FROM_EMAIL || "invites@parlayconch.com",
-    };
-  }
-
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY
-    ? "repl " + process.env.REPL_IDENTITY
-    : process.env.WEB_REPL_RENEWAL
-    ? "depl " + process.env.WEB_REPL_RENEWAL
-    : null;
-
-  if (!hostname || !xReplitToken) {
-    throw new Error("Resend connector environment not available");
-  }
-
-  connectionSettings = await fetch(
-    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=resend",
-    {
-      headers: {
-        Accept: "application/json",
-        "X-Replit-Token": xReplitToken,
-      },
-    }
-  )
-    .then((res) => res.json())
-    .then((data) => data.items?.[0]);
-
-  if (!connectionSettings?.settings?.api_key) {
-    throw new Error("Resend not connected");
-  }
-
-  return {
-    apiKey: connectionSettings.settings.api_key,
-    fromEmail: connectionSettings.settings.from_email || "invites@parlayconch.com",
-  };
+function getResendCredentials(): { apiKey: string; fromEmail: string } {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) throw new Error("RESEND_API_KEY is not set");
+  return { apiKey, fromEmail: process.env.RESEND_FROM_EMAIL || "invites@parlayconch.com" };
 }
 
 // WARNING: Never cache this client — tokens expire.
 async function getUncachableResendClient() {
-  const { apiKey, fromEmail } = await getResendCredentials();
+  const { apiKey, fromEmail } = getResendCredentials();
   return { client: new Resend(apiKey), fromEmail };
 }
 
@@ -141,7 +102,7 @@ export async function sendMemberAddedEmail(opts: {
 /**
  * Sent when an existing (demo/seed) account is handed off to a real person —
  * see scripts/claim-demo-user.ts. Distinct from sendSetPasswordEmail's
- * Replit-migration copy: this one explains they're inheriting an existing
+ * copy: this one explains they're inheriting an existing
  * account's history, not just regaining access to their own.
  */
 export async function sendClaimAccountEmail(opts: {
@@ -176,9 +137,8 @@ export async function sendClaimAccountEmail(opts: {
 }
 
 /**
- * Sent during the Replit-auth -> email/password migration: asks an existing
- * Replit-only user to set a password so they can keep signing in once
- * Replit login is removed.
+ * Asks the owner of an account without a password (created through the
+ * retired single sign-on) to set one. See server/auth/setPasswordLink.ts.
  */
 export async function sendSetPasswordEmail(opts: {
   toEmail: string;
@@ -192,11 +152,11 @@ export async function sendSetPasswordEmail(opts: {
   const html = baseHtml(`
     <h1>Set a password for your account</h1>
     <p>${greeting}</p>
-    <p>We're retiring "Sign in with Replit." To keep using Parlay.Conch without interruption, set a password for your account — you'll then sign in with your email and that password.</p>
+    <p>Your Parlay.Conch account doesn't have a password yet. Set one to keep using the app — you'll then sign in with your email and that password.</p>
     <a class="cta" href="${opts.setPasswordUrl}">Set Your Password →</a>
     <hr class="divider" />
     <p style="font-size:13px;">Or copy this link into your browser:<br/><span style="color:#71717a;">${opts.setPasswordUrl}</span></p>
-    <p style="font-size:13px;">This link expires in 14 days. If you don't set a password before then, just request a new link from the sign-in page.</p>
+    <p style="font-size:13px;">This link expires in 14 days. If it expires, just try signing in with your email and we'll send a new one.</p>
   `);
 
   await sendChecked(client, {

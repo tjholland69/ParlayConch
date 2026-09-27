@@ -1,8 +1,8 @@
 /**
- * One-off backfill for the Replit-auth -> email/password migration.
+ * One-off backfill for accounts from the retired single sign-on (no password yet).
  *
  * Finds every user with no row in `user_passwords` (i.e. accounts that can
- * currently only sign in via Replit), issues a one-time "set your password"
+ * have no password yet), issues a one-time "set your password"
  * token (shared/models/auth.ts:passwordResetTokens), and emails them a link
  * to client's /set-password page.
  *
@@ -23,7 +23,7 @@ import crypto from "crypto";
 import { db } from "../server/db";
 import { users, userPasswords, passwordResetTokens } from "../shared/schema";
 import { eq, isNull, and, gt, notExists } from "drizzle-orm";
-import { hashResetToken } from "../server/replit_integrations/auth/localAuth";
+import { hashResetToken } from "../server/auth/localAuth";
 import { sendSetPasswordEmail } from "../server/services/email";
 
 const APPLY = process.argv.includes("--apply");
@@ -33,7 +33,7 @@ const TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const APP_BASE_URL = process.env.APP_BASE_URL ?? "https://parlayconch.com";
 
 async function main() {
-  const replitOnlyUsers = await db
+  const passwordlessUsers = await db
     .select()
     .from(users)
     .where(
@@ -42,14 +42,14 @@ async function main() {
       )
     );
 
-  console.log(`Found ${replitOnlyUsers.length} account(s) without a local password.`);
+  console.log(`Found ${passwordlessUsers.length} account(s) without a local password.`);
 
   let skippedNoEmail = 0;
   let skippedPendingToken = 0;
   let migrated = 0;
   let failed = 0;
 
-  for (const user of replitOnlyUsers) {
+  for (const user of passwordlessUsers) {
     if (!user.email) {
       skippedNoEmail++;
       console.log(`  SKIP (no email on file): user ${user.id}`);
