@@ -1,5 +1,5 @@
 import { useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useAllMyLeaguesParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages, useMissingParlayMembers, useBackfillMissingParlays } from "@/hooks/use-bets";
-import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { useSearch } from "wouter";
 import { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -247,7 +247,7 @@ function MissingBettorBanner({ leagueId, weekId, weekLabel }: { leagueId: number
 
 export default function History() {
   const { toast } = useToast();
-  const { user } = useAuth();
+  const effectiveUserId = useEffectiveUserId();
   const { data: leagues } = useLeagues();
   const search = useSearch();
   // Deep-link target from e.g. a League Records "View bet" link
@@ -363,8 +363,8 @@ export default function History() {
               weekId: p.weekId,
               week: p.week,
               status: p.status,
-              isOwnParlay: p.userId === user?.id,
-              owner: p.userId === user?.id ? null : { firstName: p.user?.firstName, email: p.user?.email },
+              isOwnParlay: p.userId === effectiveUserId,
+              owner: p.userId === effectiveUserId ? null : { firstName: p.user?.firstName, email: p.user?.email },
               userId: p.userId,
             },
           })),
@@ -375,7 +375,7 @@ export default function History() {
       const bTime = b.game?.gameTime ? new Date(b.game.gameTime).getTime() : 0;
       return bTime - aTime || b.id - a.id;
     });
-  }, [canShowOthers, allLeagueParlays, myLegs, user?.id]);
+  }, [canShowOthers, allLeagueParlays, myLegs, effectiveUserId]);
 
   // Structured filters (league members / bet types / time range) — applied
   // ahead of the hidden "Advanced Filter" raw query line.
@@ -407,13 +407,13 @@ export default function History() {
       // all (that leaves it with an empty legs array, which the tile itself
       // renders as "no picks"). Unchecking the top-level checkbox is the
       // only way to bring other members' legs back in.
-      result = result.map(p => ({ ...p, legs: p.legs.filter(l => l.userId === user?.id) }));
+      result = result.map(p => ({ ...p, legs: p.legs.filter(l => l.userId === effectiveUserId) }));
     }
     if (selectedBetTypes.length > 0) {
       result = result.filter(p => p.legs.some(l => selectedBetTypes.includes(l.betType)));
     }
     return result;
-  }, [dateFilteredParlays, canShowOthers, selectedMemberIds, selectedBetTypes, user?.id]);
+  }, [dateFilteredParlays, canShowOthers, selectedMemberIds, selectedBetTypes, effectiveUserId]);
 
   const allowedParlayIdsForDate = useMemo(
     () => new Set(dateFilteredParlays.map(p => p.id)),

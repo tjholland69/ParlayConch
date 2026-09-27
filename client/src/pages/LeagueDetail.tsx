@@ -677,9 +677,14 @@ export default function LeagueDetail() {
                 </Card>
               )}
 
-              {/* Games Grid */}
+              {/* Games Grid — only games still open to pick, plus any already-
+                  started/finished game the user has an existing leg on (so
+                  they can still see what they picked). */}
               <div className="grid gap-4 md:grid-cols-2">
-                {games?.map((game) => {
+                {games?.filter((game) => {
+                  const isPast = !!game.isFinished || (game.gameTime ? new Date(game.gameTime) < new Date() : false);
+                  return !isPast || legsForGame(game.id).length > 0;
+                }).map((game) => {
                   const isPast = game.gameTime ? new Date(game.gameTime) < new Date() : false;
                   const capReached = legsForGame(game.id).length >= maxBetsPerGame;
 
