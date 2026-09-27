@@ -14,15 +14,25 @@ function StatCard({
   value,
   valueClassName,
   info,
+  onClick,
 }: {
   icon: React.ElementType;
   label: string;
   value: string;
   valueClassName?: string;
   info?: { fullName: string; description: string };
+  /** Present when this stat has underlying legs to drill into ("lookthrough"). */
+  onClick?: () => void;
 }) {
   return (
-    <div className="bg-white/5 border border-white/10 rounded-2xl p-5">
+    <div
+      className={cn(
+        "bg-white/5 border border-white/10 rounded-2xl p-5",
+        onClick && "cursor-pointer hover:bg-white/10 hover:border-white/20 transition-colors",
+      )}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+    >
       <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
         <Icon className="w-3.5 h-3.5" />
         {label}
@@ -49,8 +59,30 @@ function StatCard({
   );
 }
 
+type Lookthrough = { title: string; legIds: number[] };
+
+/** The legs behind whichever dashboard number was clicked. */
+function LegsLookthroughDialog({ lookthrough, onClose }: { lookthrough: Lookthrough | null; onClose: () => void }) {
+  const { data: legs, isLoading } = useMyParlayLegsByIds(lookthrough?.legIds ?? []);
+  return (
+    <Dialog open={lookthrough !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{lookthrough?.title}</DialogTitle>
+        </DialogHeader>
+        {isLoading ? (
+          <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>
+        ) : (
+          <LegsWithParlayTable legs={legs ?? []} />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function SummarySlide() {
   const { data, isLoading, error } = useDashboardSummary();
+  const [lookthrough, setLookthrough] = useState<Lookthrough | null>(null);
 
   if (isLoading) {
     return (
@@ -68,6 +100,10 @@ function SummarySlide() {
   const powerScore = data.powerScore ?? 0;
   const participationRate = data.participationRate ?? 0;
   const bar = data.bar ?? 0;
+  const ids = data.lookthrough;
+  // Only clickable when there's something to show.
+  const open = (title: string, legIds: number[] | undefined) =>
+    legIds && legIds.length > 0 ? () => setLookthrough({ title, legIds }) : undefined;
 
   return (
     <div>
@@ -77,11 +113,26 @@ function SummarySlide() {
       </h2>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatCard icon={Users} label="Leagues" value={String(data.leagueCount)} />
-        <StatCard icon={ListChecks} label="Parlays Owned" value={String(data.parlaysPlaced)} />
-        <StatCard icon={ListChecks} label="Legs Placed" value={String(data.legsPlaced)} />
-        <StatCard icon={TrendingUp} label="Leg Win Rate" value={`${data.legWinRate.toFixed(1)}%`} />
-        <StatCard icon={Trophy} label="Leg Wins" value={String(data.legWins)} />
-        <StatCard icon={Dices} label="Leg Losses" value={String(data.legLosses)} />
+        <StatCard
+          icon={ListChecks}
+          label="Parlays Owned"
+          value={String(data.parlaysPlaced)}
+          onClick={open("Parlays Owned", ids?.ownedParlayLegIds)}
+        />
+        <StatCard
+          icon={ListChecks}
+          label="Legs Placed"
+          value={String(data.legsPlaced)}
+          onClick={open("Legs Placed", ids?.placedLegIds)}
+        />
+        <StatCard
+          icon={TrendingUp}
+          label="Leg Win Rate"
+          value={`${data.legWinRate.toFixed(1)}%`}
+          onClick={open("Decided Legs", ids && [...ids.winLegIds, ...ids.lossLegIds])}
+        />
+        <StatCard icon={Trophy} label="Leg Wins" value={String(data.legWins)} onClick={open("Leg Wins", ids?.winLegIds)} />
+        <StatCard icon={Dices} label="Leg Losses" value={String(data.legLosses)} onClick={open("Leg Losses", ids?.lossLegIds)} />
         <StatCard
           icon={Activity}
           label="Participation Rate"
@@ -111,6 +162,7 @@ function SummarySlide() {
           }}
         />
       </div>
+      <LegsLookthroughDialog lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
     </div>
   );
 }
@@ -155,8 +207,7 @@ const BET_TYPE_LABELS: Record<string, string> = {
 
 function AnalyticsSlide() {
   const { data, isLoading, error } = useDashboardPatterns();
-  const [lookthrough, setLookthrough] = useState<{ title: string; legIds: number[] } | null>(null);
-  const { data: lookthroughLegs, isLoading: loadingLookthrough } = useMyParlayLegsByIds(lookthrough?.legIds ?? []);
+  const [lookthrough, setLookthrough] = useState<Lookthrough | null>(null);
 
   if (isLoading) {
     return (
@@ -259,18 +310,7 @@ function AnalyticsSlide() {
         )}
       </div>
 
-      <Dialog open={lookthrough !== null} onOpenChange={(open) => !open && setLookthrough(null)}>
-        <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{lookthrough?.title}</DialogTitle>
-          </DialogHeader>
-          {loadingLookthrough ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>
-          ) : (
-            <LegsWithParlayTable legs={lookthroughLegs ?? []} />
-          )}
-        </DialogContent>
-      </Dialog>
+      <LegsLookthroughDialog lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
     </div>
   );
 }

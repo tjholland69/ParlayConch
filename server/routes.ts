@@ -107,7 +107,9 @@ export async function registerRoutes(
       const realUser = req.user as any;
       req.user = {
         ...realUser,
-        claims: { ...realUser.claims, sub: session.actingAsUserId },
+        // realSub keeps the signed-in super user's own id reachable, for
+        // checks that are about who's really at the keyboard (see realUserId).
+        claims: { ...realUser.claims, sub: session.actingAsUserId, realSub: realUser.claims.sub },
       } as Express.User;
     }
     next();
@@ -256,7 +258,8 @@ export async function registerRoutes(
   app.get("/api/dashboard/summary", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
-    const cacheKey = `dashboard:summary:${userId}:${leagueId ?? "all"}`;
+    // v2: summary now carries lookthrough leg ids.
+    const cacheKey = `dashboard:summary:v2:${userId}:${leagueId ?? "all"}`;
     const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserSummary>>>(cacheKey);
     if (cached) return res.json(cached);
     const summary = await getUserSummary(userId, leagueId);
@@ -1943,12 +1946,19 @@ export async function registerRoutes(
   // Helper: verify super user acting on a demo league. Demo-data tooling is
   // the app owner's own testing/QA surface — never a regular league admin's
   // capability, even over their own demo league.
+  // The signed-in user, ignoring any act-for override. Super-user-only tools
+  // must check this: while acting for a regular member, claims.sub is that
+  // member, who isn't a super user, which locked the Data Editor out.
+  function realUserId(req: any): string {
+    return req.user.claims.realSub ?? req.user.claims.sub;
+  }
+
   async function requireDemoAdmin(req: any, res: any, leagueId: number): Promise<string | null> {
     const userId = (req.user as any).claims.sub;
     const league = await storage.getLeague(leagueId);
     if (!league) { res.status(404).json({ message: "League not found" }); return null; }
     if (!league.isDemo) { res.status(403).json({ message: "Data editor only available in demo leagues" }); return null; }
-    const isSuper = await storage.isSuperUser(userId);
+    const isSuper = await storage.isSuperUser(realUserId(req));
     if (!isSuper) { res.status(403).json({ message: "Only a super user can use the data editor" }); return null; }
     return userId;
   }

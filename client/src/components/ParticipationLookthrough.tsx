@@ -3,6 +3,9 @@ import { cn } from "@/lib/utils";
 import type { MissedWeeksSummary } from "@/hooks/use-bets";
 import type { UserStat } from "@shared/schema";
 
+/** How many members the "lowest participation" chart lists. */
+const WORST_SHOWN = 5;
+
 function StatBlock({ label, value, tone }: { label: string; value: string; tone?: "bad" }) {
   return (
     <div className="rounded-xl bg-white/5 border border-white/10 px-3 py-2.5">
@@ -35,7 +38,8 @@ export function ParticipationLookthrough({
 
   const ranked = [...(leagueStats ?? [])]
     .filter((s) => s.participationRate != null)
-    .sort((a, b) => (a.participationRate ?? 0) - (b.participationRate ?? 0));
+    .sort((a, b) => (a.participationRate ?? 0) - (b.participationRate ?? 0))
+    .slice(0, WORST_SHOWN);
 
   const missedBySeason = new Map<number, typeof missed>();
   for (const w of missed) {
@@ -63,10 +67,37 @@ export function ParticipationLookthrough({
         />
       </div>
 
+      <div>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
+          Weeks missed
+        </h3>
+        {missed.length === 0 ? (
+          <p className="text-sm text-muted-foreground italic">No missed weeks: full participation!</p>
+        ) : (
+          <div className="space-y-3">
+            {seasonsDesc.map((season) => (
+              <div key={season}>
+                <p className="text-xs text-muted-foreground mb-1.5">{season} season</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {missedBySeason.get(season)!.map((w) => (
+                    <span
+                      key={w.weekId}
+                      className="text-xs rounded-md border border-white/10 bg-white/5 px-2 py-1"
+                    >
+                      {w.label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {ranked.length > 1 && (
         <div>
           <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-            League participation, lowest first
+            {WORST_SHOWN} lowest participation rates
           </h3>
           <ul className="space-y-1.5">
             {ranked.map((s) => {
@@ -95,33 +126,6 @@ export function ParticipationLookthrough({
           </ul>
         </div>
       )}
-
-      <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">
-          Weeks missed
-        </h3>
-        {missed.length === 0 ? (
-          <p className="text-sm text-muted-foreground italic">No missed weeks: full participation!</p>
-        ) : (
-          <div className="space-y-3">
-            {seasonsDesc.map((season) => (
-              <div key={season}>
-                <p className="text-xs text-muted-foreground mb-1.5">{season} season</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {missedBySeason.get(season)!.map((w) => (
-                    <span
-                      key={w.weekId}
-                      className="text-xs rounded-md border border-white/10 bg-white/5 px-2 py-1"
-                    >
-                      {w.label}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
 
       <p className="text-[11px] text-muted-foreground">
         A week counts as eligible once anyone in the league submits a parlay for it, and only
