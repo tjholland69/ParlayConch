@@ -8,7 +8,7 @@ import { z } from "zod";
 import { insertLeagueSchema, users, leagueMembers, parlayLegs, parlays } from "@shared/db-schema";
 import { type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";
 import { ilike, eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
-import { getApiUsage, fetchUpcomingGames, syncGameScores, syncGamesFromOddsApi } from "./services/oddsApi";
+import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { runOddsSyncQueued, startOddsSyncWorker, getOddsSyncJobStatus } from "./jobs/odds-sync-queue";
 import {
   enqueueNflverseSync,
@@ -16,6 +16,8 @@ import {
   startNflverseSyncWorker,
 } from "./jobs/nflverse-sync-queue";
 import { startSeasonRolloverWorker, runSeasonRolloverCheckNow } from "./jobs/season-rollover-queue";
+import { startWeekRolloverWorker } from "./jobs/week-rollover-queue";
+import { startMaintenanceWorker } from "./jobs/maintenance-queue";
 import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
@@ -77,6 +79,8 @@ export async function registerRoutes(
     startOddsSyncWorker();
     startNflverseSyncWorker();
     await startSeasonRolloverWorker();
+    await startWeekRolloverWorker();
+    await startMaintenanceWorker();
   }
   registerRealtimeWebSocket(httpServer, app);
 
@@ -575,6 +579,19 @@ export async function registerRoutes(
       ? req.query.ids.split(",").map(Number).filter(n => Number.isFinite(n))
       : [];
     const legs = await storage.getParlayLegsByIds(leagueId, legIds, userId);
+    res.json(legs);
+  });
+
+  // Cross-league "lookthrough" for the caller's own legs — used by Dashboard
+  // tiles, which aggregate across every league the user belongs to (unlike
+  // the League Records lookthrough above, which is scoped to one league).
+  // No membership check needed: always filtered to the caller's own legs.
+  app.get("/api/parlay-legs/my/by-ids", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const legIds = typeof req.query.ids === "string"
+      ? req.query.ids.split(",").map(Number).filter(n => Number.isFinite(n))
+      : [];
+    const legs = await storage.getMyParlayLegsByIds(userId, legIds);
     res.json(legs);
   });
 
@@ -1431,14 +1448,20 @@ export async function registerRoutes(
 
   // POST /api/admin/weeks/:id/sync-games — pulls the current OddsAPI board (upcoming
   // games) into this week, matching by team names. Safe to re-run to pick up line moves.
+  // Routes through the same runOddsSyncQueued entry point as POST /api/odds/sync
+  // so there's exactly one code path from "trigger a sync" to the actual API call,
+  // whether it's this admin button, the league-admin route, or the scheduled job.
   app.post("/api/admin/weeks/:id/sync-games", isAuthenticated, auditLog("admin.week_sync_games", { targetParam: "id", targetType: "week" }), async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
       if (!(await storage.isSuperUser(userId))) {
         return res.status(403).json({ message: "Super user access required" });
       }
-      const result = await syncGamesFromOddsApi(Number(req.params.id));
-      res.json({ message: "Games sync complete", ...result });
+      const result = await runOddsSyncQueued(Number(req.params.id));
+      if (result.queued) {
+        return res.status(202).json({ message: "Games sync queued", queued: true, jobId: result.jobId });
+      }
+      res.json({ message: "Games sync complete", queued: false, added: result.added, updated: result.updated });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -1777,7 +1800,6 @@ export async function registerRoutes(
         unselectUserPick: z.boolean(),
         approveMemberInvites: z.boolean(),
         importHistory: z.boolean(),
-        markLeagueDemo: z.boolean(),
       });
       const permissions = schema.parse(req.body);
       const league = await storage.updateLieutenantPermissions(leagueId, permissions);
@@ -1803,6 +1825,11 @@ export async function registerRoutes(
   app.patch("/api/users/me/demo", isAuthenticated, async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
+      // Demo flagging is specific to the app owner's own testing/QA workflow —
+      // never a capability regular users should have over their own account.
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Only a super user can flag an account as demo" });
+      }
       const { isDemo } = z.object({ isDemo: z.boolean() }).parse(req.body);
       await storage.setUserDemoFlag(userId, isDemo);
       res.json({ success: true, isDemo });
@@ -1817,9 +1844,8 @@ export async function registerRoutes(
       const userId = (req.user as any).claims.sub;
       const { isDemo } = z.object({ isDemo: z.boolean() }).parse(req.body);
 
-      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
-      if (!isAdmin) {
-        return res.status(403).json({ message: "Only the Parlay Maestro can change demo status" });
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Only a super user can change demo status" });
       }
 
       await storage.setLeagueDemoFlag(leagueId, isDemo);
@@ -1835,9 +1861,8 @@ export async function registerRoutes(
       const userId = (req.user as any).claims.sub;
       const { useDemoWeekData } = z.object({ useDemoWeekData: z.boolean() }).parse(req.body);
 
-      const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
-      if (!isAdmin) {
-        return res.status(403).json({ message: "Only the Parlay Maestro can change this setting" });
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Only a super user can change this setting" });
       }
 
       const league = await storage.getLeague(leagueId);
@@ -1878,14 +1903,16 @@ export async function registerRoutes(
 
   // ===== DEMO DATA EDITOR (Admin + Demo League only) =====
 
-  // Helper: verify admin of a demo league
+  // Helper: verify super user acting on a demo league. Demo-data tooling is
+  // the app owner's own testing/QA surface — never a regular league admin's
+  // capability, even over their own demo league.
   async function requireDemoAdmin(req: any, res: any, leagueId: number): Promise<string | null> {
     const userId = (req.user as any).claims.sub;
     const league = await storage.getLeague(leagueId);
     if (!league) { res.status(404).json({ message: "League not found" }); return null; }
     if (!league.isDemo) { res.status(403).json({ message: "Data editor only available in demo leagues" }); return null; }
-    const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
-    if (!isAdmin) { res.status(403).json({ message: "Only the Parlay Maestro can use the data editor" }); return null; }
+    const isSuper = await storage.isSuperUser(userId);
+    if (!isSuper) { res.status(403).json({ message: "Only a super user can use the data editor" }); return null; }
     return userId;
   }
 
@@ -2024,7 +2051,7 @@ export async function registerRoutes(
       const parlayId = Number(req.params.id);
       const parlay = await storage.getParlay(parlayId);
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
-      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      const uid = await requireLeagueAdmin(req, res, parlay.leagueId);
       if (!uid) return;
       await storage.deleteParlay(parlayId);
       res.json({ success: true });
@@ -2054,7 +2081,7 @@ export async function registerRoutes(
       if (!leg) return res.status(404).json({ message: "Leg not found" });
       const parlay = await storage.getParlay(leg.parlayId);
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
-      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      const uid = await requireLeagueAdmin(req, res, parlay.leagueId);
       if (!uid) return;
       await storage.deleteParlayLeg(legId);
       res.json({ success: true });

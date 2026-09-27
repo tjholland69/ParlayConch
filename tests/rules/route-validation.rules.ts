@@ -152,7 +152,7 @@ export const ROUTE_VALIDATION_RULES: RouteValidationRule[] = [
     id: "updateParlayLeg.unknown-field",
     description: "Rejects unknown fields (strict)",
     schema: updateParlayLegInputSchema,
-    payload: { gameId: 99 },
+    payload: { hacker: true },
     expect: "fail",
   },
 
@@ -311,10 +311,17 @@ export const ROUTE_VALIDATION_RULES: RouteValidationRule[] = [
     expect: "fail",
   },
   {
+    id: "addParlayLeg.game-id",
+    description: "Accepts an optional gameId (links a leg to a real game/market for enrichment)",
+    schema: addParlayLegInputSchema,
+    payload: { betType: "spread", pick: "home", gameId: 42 },
+    expect: "pass",
+  },
+  {
     id: "addParlayLeg.unknown-field",
     description: "Rejects unknown fields (strict)",
     schema: addParlayLegInputSchema,
-    payload: { betType: "spread", pick: "home", gameId: 1 },
+    payload: { betType: "spread", pick: "home", hacker: true },
     expect: "fail",
   },
 ];

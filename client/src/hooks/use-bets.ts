@@ -247,6 +247,20 @@ export function useParlayLegsByIds(leagueId: number, legIds: number[]) {
   });
 }
 
+/** Cross-league variant of useParlayLegsByIds — for "my own legs" lookthroughs
+ * that aggregate across every league (e.g. Dashboard's My Analytics tile). */
+export function useMyParlayLegsByIds(legIds: number[]) {
+  return useQuery<ParlayLegWithParlayContext[]>({
+    queryKey: ["/api/parlay-legs/my/by-ids", legIds.join(",")],
+    queryFn: async () => {
+      const res = await fetch(`/api/parlay-legs/my/by-ids?ids=${legIds.join(",")}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch parlay legs");
+      return res.json();
+    },
+    enabled: legIds.length > 0,
+  });
+}
+
 export function useMissedWeeks(leagueId: number, userId: string | null) {
   return useQuery<{ weeks: MissedWeek[] }>({
     queryKey: ["/api/leagues", leagueId, "members", userId, "missed-weeks"],

@@ -150,7 +150,13 @@ npm install
 
 ### Configure the environment
 
-Create `.env.local` in the repository root:
+**New machine (recommended):** run `./setup.sh` from the repo root. It installs
+dependencies, creates a local Postgres database, writes a machine-local
+`.env.local` (`DATABASE_URL`, `PORT`, `SESSION_SECRET`), pulls the shared
+third-party secrets from Railway (see below), and applies migrations. Requires
+the [Railway CLI](https://docs.railway.com/guides/cli) and `railway login`.
+
+**Manual setup:** create `.env.local` in the repository root:
 
 ```dotenv
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/parlayconch
@@ -159,6 +165,34 @@ PORT=5000
 ```
 
 `DATABASE_URL` is required. The application can run locally with email/password authentication without Replit OIDC, Redis, or external API credentials.
+
+#### Sharing secrets across machines
+
+`.env.local` is gitignored on purpose — it holds machine-local values
+(`DATABASE_URL`, `PORT`) alongside real credentials, and each machine is
+expected to have its own local Postgres database rather than sharing one.
+
+The shared third-party secrets (Resend, XWeather, the Odds API, dispute
+screenshot bucket) live in a Railway environment called `local-secrets` in the
+`parlay-conch` project — variables only, no deployed service, and
+deliberately excluding `DATABASE_URL`/`REDIS_URL` so it never overrides your
+local database. Pull them into `.env.local` any time (initial setup, or after
+rotating a key) with:
+
+```bash
+npm run env:sync
+```
+
+This preserves `NODE_ENV`, `PORT`, `DATABASE_URL`, and `SESSION_SECRET` as
+already set in your `.env.local` and only refreshes the shared secrets. To add
+or rotate a shared secret, update it via `railway variables --environment
+local-secrets --service ParlayConch --set KEY=value` (or the Railway
+dashboard) and re-run `npm run env:sync` on each machine — no more manually
+copying `.env.local` between computers.
+
+Production/staging secrets are managed the same way, per environment
+(`production`, `staging`, `dev`) — `.env.railway.example` documents what each
+variable is for.
 
 Optional variables:
 
@@ -194,6 +228,21 @@ Seed development data if needed:
 ```bash
 npm run db:seed
 ```
+
+For a much larger, realistic dataset instead, pull a filtered replica of
+production's demo data:
+
+```bash
+npm run db:seed:prod-replica
+```
+
+This wipes local app data (same as `db:seed`) and reloads it from production
+— but only the subset owned by production users with `is_demo = true`.
+Real accounts and anything referencing them (their leagues, parlays,
+disputes, notifications, ...) are excluded before anything is written
+locally; only `railway` read access to the `production` environment is
+required, and nothing is written back to production. Safe to re-run any time
+you want to refresh local data to match what's currently live.
 
 For schema development:
 

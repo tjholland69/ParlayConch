@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
-import type { ParlayWithLegs, ParlayLegDispute, TakenPick } from "@shared/schema";
+import type { ParlayWithLegs, ParlayLegDispute, ParlayLegWithParlayContext, TakenPick } from "@shared/schema";
 
 /** Every pick a DIFFERENT league member has already locked in (submitted)
  * for this week — used to gray out taken markets and to detect a same-game
@@ -44,6 +44,16 @@ export function useMyParlayHistory(weekIds?: number[]) {
   return useQuery<ParlayWithLegs[]>({
     queryKey: ["/api/parlays/my", key ?? "all"],
     queryFn: async () => apiRequest("GET", key ? `/api/parlays/my?weekIds=${key}` : "/api/parlays/my"),
+  });
+}
+
+/** Cross-league "my own legs" lookthrough — for Dashboard stat tiles that
+ * aggregate across every league (mirrors the web app's useMyParlayLegsByIds). */
+export function useMyParlayLegsByIds(legIds: number[]) {
+  return useQuery<ParlayLegWithParlayContext[]>({
+    queryKey: ["/api/parlay-legs/my/by-ids", legIds.join(",")],
+    queryFn: async () => apiRequest("GET", `/api/parlay-legs/my/by-ids?ids=${legIds.join(",")}`),
+    enabled: legIds.length > 0,
   });
 }
 

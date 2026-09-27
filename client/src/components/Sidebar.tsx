@@ -174,22 +174,24 @@ export function Sidebar() {
               </p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              "w-full justify-start text-xs mb-1",
-              user?.isDemo
-                ? "text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10"
-                : "text-muted-foreground hover:text-yellow-400 hover:bg-yellow-500/10"
-            )}
-            onClick={() => setUserDemo.mutate(!user?.isDemo)}
-            disabled={setUserDemo.isPending}
-            data-testid="button-toggle-user-demo"
-          >
-            <FlaskConical className="w-3 h-3 mr-2" />
-            {user?.isDemo ? "Remove Demo Flag" : "Mark as Demo Account"}
-          </Button>
+          {user?.isSuperUser && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "w-full justify-start text-xs mb-1",
+                user?.isDemo
+                  ? "text-yellow-400 hover:text-yellow-300 hover:bg-yellow-500/10"
+                  : "text-muted-foreground hover:text-yellow-400 hover:bg-yellow-500/10"
+              )}
+              onClick={() => setUserDemo.mutate(!user?.isDemo)}
+              disabled={setUserDemo.isPending}
+              data-testid="button-toggle-user-demo"
+            >
+              <FlaskConical className="w-3 h-3 mr-2" />
+              {user?.isDemo ? "Remove Demo Flag" : "Mark as Demo Account"}
+            </Button>
+          )}
           <Button 
             variant="ghost" 
             className="w-full justify-start text-destructive hover:text-destructive hover:bg-destructive/10"

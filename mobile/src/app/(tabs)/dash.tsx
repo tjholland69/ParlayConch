@@ -4,6 +4,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useDashboardSummary, useDashboardPatterns, useDashboardPerformance, useCustomIndexes, useCustomIndexPerformance, type DashboardDateRange, type WinRateTimeSeriesPoint } from "@/hooks/use-dashboard";
 import { useLeagues } from "@/hooks/use-leagues";
+import { useMyParlayLegsByIds } from "@/hooks/use-parlays";
 import { DashboardStack, DashboardLoading, DashboardEmptyState } from "@/components/DashboardSlider";
 import { SimpleLineChart } from "@/components/charts/SimpleLineChart";
 import { SimpleBarChart } from "@/components/charts/SimpleBarChart";
@@ -11,7 +12,8 @@ import { InfoButton } from "@/components/InfoTip";
 import { Button } from "@/components/ui/Button";
 import { shadows } from "@/lib/theme";
 import { useAccentColor } from "@/hooks/use-accent-color";
-import { abbreviatePlayerName } from "@/lib/pickHelpers";
+import { abbreviatePlayerName, awaySpreadDisplay } from "@/lib/pickHelpers";
+import type { ParlayLegWithParlayContext } from "@shared/schema";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -96,9 +98,24 @@ function SummarySlide({ leagueId }: { leagueId?: number }) {
   );
 }
 
-function StatRow({ icon, label, value }: { icon: IconName; label: string; value: string }) {
+function StatRow({
+  icon,
+  label,
+  value,
+  onPress,
+}: {
+  icon: IconName;
+  label: string;
+  value: string;
+  /** Present when this stat has underlying legs to drill into ("lookthrough"). */
+  onPress?: () => void;
+}) {
   return (
-    <View style={styles.statRow}>
+    <Pressable
+      style={({ pressed }) => [styles.statRow, onPress && pressed && { opacity: 0.7 }]}
+      onPress={onPress}
+      disabled={!onPress}
+    >
       <View style={styles.statRowLeft}>
         <Ionicons name={icon} size={15} color="#94a3b8" />
         <Text style={styles.statRowLabel}>{label}</Text>
@@ -106,7 +123,7 @@ function StatRow({ icon, label, value }: { icon: IconName; label: string; value:
       <Text style={styles.statRowValue} numberOfLines={1}>
         {value}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -118,8 +135,87 @@ const BET_TYPE_LABELS: Record<string, string> = {
   player_prop: "Player Prop",
 };
 
+/** A settled leg from history can carry a null gameId (player props aren't
+ * linked to a game row) — a lighter-weight label than pickHelpers' SelectedLeg/
+ * shortLegLabel, which assume a non-null gameId from the live picks board. */
+function lookthroughLegLabel(leg: ParlayLegWithParlayContext): string {
+  if (leg.betType === "player_prop") {
+    const line = leg.line ? ` ${leg.line}` : "";
+    return `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"} ${leg.pick}${line}`.trim();
+  }
+  const game = leg.game;
+  if (!game) return leg.pick;
+  if (leg.betType === "spread") {
+    const line = leg.pick === "home" ? game.spread : awaySpreadDisplay(game.spread);
+    const team = leg.pick === "home" ? game.homeTeam : game.awayTeam;
+    return `${team} ${line ?? ""}`.trim();
+  }
+  if (leg.betType === "moneyline") {
+    const team = leg.pick === "home" ? game.homeTeam : game.awayTeam;
+    return `${team} ML`;
+  }
+  if (leg.betType === "over" || leg.betType === "under") {
+    return `${leg.betType === "over" ? "O" : "U"} ${game.overUnder ?? ""}`.trim();
+  }
+  return leg.pick;
+}
+
+/** One row of a lookthrough bottom sheet — a compact leg summary. */
+function LookthroughLegRow({ leg }: { leg: ParlayLegWithParlayContext }) {
+  const resultColor =
+    leg.result === "win" ? "#22c55e" : leg.result === "loss" ? "#ef4444" : leg.result === "push" ? "#94a3b8" : "#64748b";
+  const resultLabel = leg.result ? leg.result.toUpperCase() : "PENDING";
+  return (
+    <View style={styles.lookthroughRow}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={styles.lookthroughRowLabel} numberOfLines={1}>
+          {lookthroughLegLabel(leg)}
+        </Text>
+        <Text style={styles.lookthroughRowMeta} numberOfLines={1}>
+          {leg.parlay.week.label}
+        </Text>
+      </View>
+      <Text style={[styles.lookthroughRowResult, { color: resultColor }]}>{resultLabel}</Text>
+    </View>
+  );
+}
+
+/** Bottom sheet showing the legs behind a tapped "My Analytics" stat. */
+function LookthroughSheet({
+  lookthrough,
+  onClose,
+}: {
+  lookthrough: { title: string; legIds: number[] } | null;
+  onClose: () => void;
+}) {
+  const insets = useSafeAreaInsets();
+  const { data: legs, isLoading } = useMyParlayLegsByIds(lookthrough?.legIds ?? []);
+
+  return (
+    <Modal visible={lookthrough !== null} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.modalWrap}>
+        <Pressable style={styles.modalBackdrop} onPress={onClose} />
+        <View style={[styles.sheet, { maxHeight: "75%", paddingBottom: insets.bottom + 24 }]}>
+          <View style={styles.sheetHandle} />
+          <Text style={styles.sheetTitle}>{lookthrough?.title}</Text>
+          {isLoading ? (
+            <DashboardLoading message="Loading…" />
+          ) : (
+            <ScrollView style={{ flexGrow: 0 }}>
+              {(legs ?? []).map((leg) => (
+                <LookthroughLegRow key={leg.id} leg={leg} />
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
   const { data, isLoading, error } = useDashboardPatterns(leagueId);
+  const [lookthrough, setLookthrough] = useState<{ title: string; legIds: number[] } | null>(null);
 
   if (isLoading) return <DashboardLoading message="Loading analytics…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load your analytics right now." />;
@@ -144,23 +240,43 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
             icon="shuffle-outline"
             label="Top Bet Type"
             value={`${BET_TYPE_LABELS[data.topBetType.type] ?? data.topBetType.type} (${data.topBetType.count})`}
+            onPress={() => setLookthrough({ title: "Top Bet Type", legIds: data.topBetType!.legIds })}
           />
         )}
         {data.favoriteTeam && (
-          <StatRow icon="shield-outline" label="Favorite Team" value={`${data.favoriteTeam.team} (${data.favoriteTeam.count})`} />
+          <StatRow
+            icon="shield-outline"
+            label="Favorite Team"
+            value={`${data.favoriteTeam.team} (${data.favoriteTeam.count})`}
+            onPress={() => setLookthrough({ title: "Favorite Team", legIds: data.favoriteTeam!.legIds })}
+          />
         )}
         {data.overUnderPreference && (
           <StatRow
             icon="swap-vertical-outline"
             label="Over/Under Lean"
             value={`${data.overUnderPreference.pick === "over" ? "Over" : "Under"} (${data.overUnderPreference.overCount}-${data.overUnderPreference.underCount})`}
+            onPress={() => setLookthrough({
+              title: "Over/Under Lean",
+              legIds: [...data.overUnderPreference!.overLegIds, ...data.overUnderPreference!.underLegIds],
+            })}
           />
         )}
         {data.favoritePlayer && (
-          <StatRow icon="person-outline" label="Favorite Prop Player" value={`${abbreviatePlayerName(data.favoritePlayer.name)} (${data.favoritePlayer.count})`} />
+          <StatRow
+            icon="person-outline"
+            label="Favorite Prop Player"
+            value={`${abbreviatePlayerName(data.favoritePlayer.name)} (${data.favoritePlayer.count})`}
+            onPress={() => setLookthrough({ title: "Favorite Prop Player", legIds: data.favoritePlayer!.legIds })}
+          />
         )}
         {data.favoriteDay && (
-          <StatRow icon="calendar-outline" label="Most Active Day" value={`${data.favoriteDay.day} (${data.favoriteDay.count})`} />
+          <StatRow
+            icon="calendar-outline"
+            label="Most Active Day"
+            value={`${data.favoriteDay.day} (${data.favoriteDay.count})`}
+            onPress={() => setLookthrough({ title: "Most Active Day", legIds: data.favoriteDay!.legIds })}
+          />
         )}
         {data.slateBreakdown.some((s) => s.count > 0) && (
           <View style={styles.slateCard}>
@@ -170,15 +286,22 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
             </View>
             <View style={{ gap: 6 }}>
               {data.slateBreakdown.map((s) => (
-                <View key={s.slate} style={styles.slateRow}>
+                <Pressable
+                  key={s.slate}
+                  style={({ pressed }) => [styles.slateRow, s.count > 0 && pressed && { opacity: 0.7 }]}
+                  onPress={s.count > 0 ? () => setLookthrough({ title: `${s.slate} Slate`, legIds: s.legIds }) : undefined}
+                  disabled={s.count === 0}
+                >
                   <Text style={styles.slateRowLabel}>{s.slate}</Text>
                   <Text style={styles.slateRowValue}>{s.count}</Text>
-                </View>
+                </Pressable>
               ))}
             </View>
           </View>
         )}
       </View>
+
+      <LookthroughSheet lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
     </View>
   );
 }
@@ -653,9 +776,22 @@ const styles = StyleSheet.create({
   },
   slateCardHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 10 },
   slateCardTitle: { fontSize: 13, color: "#94a3b8" },
-  slateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  slateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 },
   slateRowLabel: { fontSize: 13, color: "#94a3b8" },
   slateRowValue: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
+
+  lookthroughRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#2a3447",
+  },
+  lookthroughRowLabel: { fontSize: 14, fontWeight: "600", color: "#f1f5f9" },
+  lookthroughRowMeta: { fontSize: 12, color: "#64748b", marginTop: 2 },
+  lookthroughRowResult: { fontSize: 12, fontWeight: "700", flexShrink: 0 },
 
   leagueFilterWrap: {
     width: "100%",

@@ -836,7 +836,6 @@ export default function Settings() {
                           { key: "unlockParlay", label: "Unlock Weekly Parlay" },
                           { key: "unselectUserPick", label: "Remove a Member's Pick" },
                           { key: "approveMemberInvites", label: "Approve Member Invites" },
-                          { key: "markLeagueDemo", label: "Mark League as Demo" },
                         ];
                         const granted = PERM_DISPLAY.filter(p => lp?.[p.key]);
                         const denied = PERM_DISPLAY.filter(p => !lp?.[p.key]);
@@ -883,40 +882,42 @@ export default function Settings() {
 
         {/* Account Tab */}
         <TabsContent value="account" className="space-y-4">
-          <Card className="bg-card/50 border-white/5">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FlaskConical className="w-5 h-5 text-yellow-400" />
-                Demo / QA Mode
-              </CardTitle>
-              <CardDescription>
-                Flag your account as demo or QA data to distinguish it from live production records
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="flex items-center justify-between p-4 rounded-xl bg-yellow-500/5 border border-yellow-500/20">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium text-sm">Demo Account</p>
-                    {user?.isDemo && (
-                      <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4">
-                        ACTIVE
-                      </Badge>
-                    )}
+          {user?.isSuperUser && (
+            <Card className="bg-card/50 border-white/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FlaskConical className="w-5 h-5 text-yellow-400" />
+                  Demo / QA Mode
+                </CardTitle>
+                <CardDescription>
+                  Flag your account as demo or QA data to distinguish it from live production records
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between p-4 rounded-xl bg-yellow-500/5 border border-yellow-500/20">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-sm">Demo Account</p>
+                      {user?.isDemo && (
+                        <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] px-1 py-0 h-4">
+                          ACTIVE
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      When enabled, a DEMO badge appears next to your name in all leagues. Useful for separating test accounts from real players in a shared production database.
+                    </p>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    When enabled, a DEMO badge appears next to your name in all leagues. Useful for separating test accounts from real players in a shared production database.
-                  </p>
+                  <Switch
+                    checked={!!user?.isDemo}
+                    onCheckedChange={(checked) => setUserDemo.mutate(checked)}
+                    disabled={setUserDemo.isPending}
+                    data-testid="switch-user-demo"
+                  />
                 </div>
-                <Switch
-                  checked={!!user?.isDemo}
-                  onCheckedChange={(checked) => setUserDemo.mutate(checked)}
-                  disabled={setUserDemo.isPending}
-                  data-testid="switch-user-demo"
-                />
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="bg-card/50 border-white/5">
             <CardHeader>

@@ -45,6 +45,7 @@ const STATUSES = ["pending", "approved", "rejected", "win", "loss", "push", "voi
 const CLONEABLE_STATUSES = ["approved", "win", "loss", "push"];
 
 export type LegFormState = {
+  gameId?: number | null;
   betType: string;
   pick: string;
   line: string;
@@ -58,12 +59,13 @@ export type LegFormState = {
 };
 
 export const blankLeg = (): LegFormState => ({
-  betType: "spread", pick: "home", line: "", odds: "", oddsSource: "",
+  gameId: null, betType: "spread", pick: "home", line: "", odds: "", oddsSource: "",
   result: "", playerName: "", propType: "", gameSegment: "", notes: "",
 });
 
 export function legToForm(leg: ParlayLeg): LegFormState {
   return {
+    gameId: leg.gameId ?? null,
     betType: leg.betType ?? "spread",
     pick: leg.pick ?? "home",
     line: leg.line?.toString() ?? "",

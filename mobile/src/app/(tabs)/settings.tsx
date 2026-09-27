@@ -490,27 +490,31 @@ export default function SettingsScreen() {
       {/* Preferences */}
       <Section label="Preferences" />
       <View style={styles.card}>
-        <Row
-          icon="flask-outline"
-          iconColor="#f59e0b"
-          label="Demo / QA mode"
-          value="Marks your account as test data"
-          right={
-            toggleDemoMutation.isPending ? (
-              <ActivityIndicator size="small" color={accent} />
-            ) : (
-              <Switch
-                value={!!user?.isDemo}
-                onValueChange={(val) => toggleDemoMutation.mutate(val)}
-                trackColor={{ false: "#1e2a3b", true: accent }}
-                thumbColor="#ffffff"
-                disabled={toggleDemoMutation.isPending}
-                testID="switch-demo-mode"
-              />
-            )
-          }
-        />
-        <Divider />
+        {user?.isSuperUser && (
+          <>
+            <Row
+              icon="flask-outline"
+              iconColor="#f59e0b"
+              label="Demo / QA mode"
+              value="Marks your account as test data"
+              right={
+                toggleDemoMutation.isPending ? (
+                  <ActivityIndicator size="small" color={accent} />
+                ) : (
+                  <Switch
+                    value={!!user?.isDemo}
+                    onValueChange={(val) => toggleDemoMutation.mutate(val)}
+                    trackColor={{ false: "#1e2a3b", true: accent }}
+                    thumbColor="#ffffff"
+                    disabled={toggleDemoMutation.isPending}
+                    testID="switch-demo-mode"
+                  />
+                )
+              }
+            />
+            <Divider />
+          </>
+        )}
         <Row
           icon="football-outline"
           iconColor={accent}

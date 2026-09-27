@@ -116,16 +116,16 @@ export interface UserPatterns {
   losses: number;
   pushes: number;
   winRate: number;
-  topBetType: { type: string; count: number } | null;
-  favoritePlayer: { name: string; count: number } | null;
-  favoriteDay: { day: string; count: number } | null;
-  favoriteTimeOfDay: { label: string; count: number } | null;
+  topBetType: { type: string; count: number; legIds: number[] } | null;
+  favoritePlayer: { name: string; count: number; legIds: number[] } | null;
+  favoriteDay: { day: string; count: number; legIds: number[] } | null;
+  favoriteTimeOfDay: { label: string; count: number; legIds: number[] } | null;
   /** Full breakdown of legs across all 4 broadcast slates (zero-filled for unused slates). */
-  slateBreakdown: { slate: SlateName; count: number }[];
+  slateBreakdown: { slate: SlateName; count: number; legIds: number[] }[];
   /** Most-picked team across spread/moneyline legs (favorite or underdog side, whichever the user actually picked). */
-  favoriteTeam: { team: string; count: number } | null;
+  favoriteTeam: { team: string; count: number; legIds: number[] } | null;
   /** Which side of over/under the user leans toward, across game totals and numeric player props. */
-  overUnderPreference: { pick: "over" | "under"; overCount: number; underCount: number } | null;
+  overUnderPreference: { pick: "over" | "under"; overCount: number; underCount: number; overLegIds: number[]; underLegIds: number[] } | null;
 }
 
 /** Day of week the game kicked off, as observed in US Eastern time. */
@@ -133,11 +133,23 @@ function easternDayName(date: Date): string {
   return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(date);
 }
 
-function topEntry<T extends string>(counts: Record<T, number>): { key: T; count: number } | null {
-  let best: { key: T; count: number } | null = null;
+type Bucket = { count: number; legIds: number[] };
+
+function bump(counts: Record<string, Bucket>, key: string, legId: number): void {
+  const existing = counts[key];
+  if (existing) {
+    existing.count++;
+    existing.legIds.push(legId);
+  } else {
+    counts[key] = { count: 1, legIds: [legId] };
+  }
+}
+
+function topEntry(counts: Record<string, Bucket>): { key: string; count: number; legIds: number[] } | null {
+  let best: { key: string; count: number; legIds: number[] } | null = null;
   for (const key in counts) {
-    const count = counts[key];
-    if (!best || count > best.count) best = { key, count };
+    const { count, legIds } = counts[key];
+    if (!best || count > best.count) best = { key, count, legIds };
   }
   return best;
 }
@@ -146,6 +158,7 @@ function topEntry<T extends string>(counts: Record<T, number>): { key: T; count:
 export async function getUserPatterns(userId: string, leagueId?: number): Promise<UserPatterns> {
   const rows = await db
     .select({
+      id: parlayLegs.id,
       result: parlayLegs.result,
       betType: parlayLegs.betType,
       pick: parlayLegs.pick,
@@ -166,44 +179,46 @@ export async function getUserPatterns(userId: string, leagueId?: number): Promis
   let wins = 0;
   let losses = 0;
   let pushes = 0;
-  const betTypeCounts: Record<string, number> = {};
-  const playerCounts: Record<string, number> = {};
-  const dayCounts: Record<string, number> = {};
-  const timeCounts: Partial<Record<SlateName, number>> = {};
-  const teamCounts: Record<string, number> = {};
+  const betTypeCounts: Record<string, Bucket> = {};
+  const playerCounts: Record<string, Bucket> = {};
+  const dayCounts: Record<string, Bucket> = {};
+  const timeCounts: Record<string, Bucket> = {};
+  const teamCounts: Record<string, Bucket> = {};
   let overCount = 0;
   let underCount = 0;
+  const overLegIds: number[] = [];
+  const underLegIds: number[] = [];
 
   for (const row of rows) {
     if (row.result === "win") wins++;
     else if (row.result === "loss") losses++;
     else if (row.result === "push") pushes++;
 
-    betTypeCounts[row.betType] = (betTypeCounts[row.betType] ?? 0) + 1;
+    bump(betTypeCounts, row.betType, row.id);
 
     if (row.betType === "player_prop" && row.playerName) {
-      playerCounts[row.playerName] = (playerCounts[row.playerName] ?? 0) + 1;
+      bump(playerCounts, row.playerName, row.id);
     }
 
     // Spread/moneyline legs pick a side of the game (home/away) — resolve that
     // to the team name via the joined game.
     if ((row.betType === "spread" || row.betType === "moneyline") && row.homeTeam && row.awayTeam) {
       const team = row.pick === "home" ? row.homeTeam : row.pick === "away" ? row.awayTeam : null;
-      if (team) teamCounts[team] = (teamCounts[team] ?? 0) + 1;
+      if (team) bump(teamCounts, team, row.id);
     }
 
     // Over/under tendency spans game totals (betType 'over'/'under' directly)
     // and numeric player props (betType 'player_prop', pick 'over'/'under';
     // yes/no props like anytime-TD don't carry a direction and are excluded).
-    if (row.betType === "over" || row.pick === "over") overCount++;
-    else if (row.betType === "under" || row.pick === "under") underCount++;
+    if (row.betType === "over" || row.pick === "over") { overCount++; overLegIds.push(row.id); }
+    else if (row.betType === "under" || row.pick === "under") { underCount++; underLegIds.push(row.id); }
 
     if (row.gameTime) {
       const date = new Date(row.gameTime);
       const day = easternDayName(date);
-      dayCounts[day] = (dayCounts[day] ?? 0) + 1;
+      bump(dayCounts, day, row.id);
       const bucket = getSlate(date);
-      timeCounts[bucket] = (timeCounts[bucket] ?? 0) + 1;
+      bump(timeCounts, bucket, row.id);
     }
   }
 
@@ -211,9 +226,13 @@ export async function getUserPatterns(userId: string, leagueId?: number): Promis
   const topBetType = topEntry(betTypeCounts);
   const favoritePlayer = topEntry(playerCounts);
   const favoriteDay = topEntry(dayCounts);
-  const favoriteTimeOfDay = topEntry(timeCounts as Record<SlateName, number>);
+  const favoriteTimeOfDay = topEntry(timeCounts);
   const favoriteTeamEntry = topEntry(teamCounts);
-  const slateBreakdown = SLATE_NAMES.map(slate => ({ slate, count: timeCounts[slate] ?? 0 }));
+  const slateBreakdown = SLATE_NAMES.map(slate => ({
+    slate,
+    count: timeCounts[slate]?.count ?? 0,
+    legIds: timeCounts[slate]?.legIds ?? [],
+  }));
 
   return {
     totalLegs: rows.length,
@@ -221,15 +240,15 @@ export async function getUserPatterns(userId: string, leagueId?: number): Promis
     losses,
     pushes,
     winRate: totalDecided > 0 ? (wins / totalDecided) * 100 : 0,
-    topBetType: topBetType ? { type: topBetType.key, count: topBetType.count } : null,
-    favoritePlayer: favoritePlayer ? { name: favoritePlayer.key, count: favoritePlayer.count } : null,
-    favoriteDay: favoriteDay ? { day: favoriteDay.key, count: favoriteDay.count } : null,
-    favoriteTimeOfDay: favoriteTimeOfDay ? { label: favoriteTimeOfDay.key, count: favoriteTimeOfDay.count } : null,
+    topBetType: topBetType ? { type: topBetType.key, count: topBetType.count, legIds: topBetType.legIds } : null,
+    favoritePlayer: favoritePlayer ? { name: favoritePlayer.key, count: favoritePlayer.count, legIds: favoritePlayer.legIds } : null,
+    favoriteDay: favoriteDay ? { day: favoriteDay.key, count: favoriteDay.count, legIds: favoriteDay.legIds } : null,
+    favoriteTimeOfDay: favoriteTimeOfDay ? { label: favoriteTimeOfDay.key, count: favoriteTimeOfDay.count, legIds: favoriteTimeOfDay.legIds } : null,
     slateBreakdown,
-    favoriteTeam: favoriteTeamEntry ? { team: favoriteTeamEntry.key, count: favoriteTeamEntry.count } : null,
+    favoriteTeam: favoriteTeamEntry ? { team: favoriteTeamEntry.key, count: favoriteTeamEntry.count, legIds: favoriteTeamEntry.legIds } : null,
     overUnderPreference:
       overCount + underCount > 0
-        ? { pick: overCount >= underCount ? "over" : "under", overCount, underCount }
+        ? { pick: overCount >= underCount ? "over" : "under", overCount, underCount, overLegIds, underLegIds }
         : null,
   };
 }

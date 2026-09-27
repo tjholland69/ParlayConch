@@ -32,6 +32,9 @@ import { getDisplayName, shortId } from "@/lib/displayName";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { getBuildingVerb } from "@/lib/parlaySlang";
+import { getLineForBet } from "@/lib/gameOdds";
+import { PickTile } from "@/components/PickTile";
+import { upToCurrentWeek } from "@/lib/weekFilters";
 import type { Game, UserStat } from "@shared/schema";
 
 // AG Grid alone is ~1MB — only worth loading once someone actually asks
@@ -242,58 +245,6 @@ const LEAGUE_RECORD_ICONS: Record<string, ElementType> = {
  * labeled with who took it so the tile itself answers "who has this"), and
  * plain disabled (game started, or odds not posted).
  */
-function PickTile({
-  label,
-  subLabel,
-  hasOdds,
-  isPast,
-  isSelected,
-  takenBy,
-  capReached,
-  onClick,
-  testId,
-}: {
-  label: string;
-  subLabel?: string | null;
-  hasOdds: boolean;
-  isPast: boolean;
-  isSelected: boolean;
-  takenBy?: { web: string; mobile: string } | null;
-  capReached: boolean;
-  onClick: () => void;
-  testId: string;
-}) {
-  const isTaken = !!takenBy;
-  const disabled = isPast || !hasOdds || (!isSelected && (isTaken || capReached));
-  return (
-    <Button
-      size="sm"
-      variant={isSelected ? "default" : "outline"}
-      className={cn(
-        "h-14 min-h-14 py-1.5 flex flex-col items-center justify-center gap-0.5 text-xs leading-tight",
-        isTaken && !isSelected && "opacity-40"
-      )}
-      onClick={onClick}
-      disabled={disabled}
-      data-testid={testId}
-    >
-      <span>{label}</span>
-      {isTaken && !isSelected ? (
-        // Web (sm+ viewports) shows "F.Lastname"; narrower/mobile widths show
-        // just the first name — same data, two pre-formatted strings from
-        // the server (see shared/pickOwnerLabel.ts) so a full last name
-        // never has to round-trip to the client unabbreviated.
-        <span className="text-[10px] text-muted-foreground truncate max-w-full">
-          <span className="hidden sm:inline">Taken by {takenBy.web}</span>
-          <span className="sm:hidden">Taken by {takenBy.mobile}</span>
-        </span>
-      ) : (
-        subLabel && <span className="text-muted-foreground">{subLabel}</span>
-      )}
-    </Button>
-  );
-}
-
 function formatRecordDateRange(range: { start: string; end: string } | null | undefined): string | null {
   if (!range) return null;
   const fmt = (iso: string) => new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -316,7 +267,7 @@ export default function LeagueDetail() {
   const [selectedWeekId, setSelectedWeekId] = useState<number | "all">("all");
   const activeWeek = weeks?.find(w => w.isActive);
   const activeWeekId = activeWeek?.id;
-  const historicalWeeksDesc = (weeks ?? [])
+  const historicalWeeksDesc = upToCurrentWeek(weeks ?? [])
     .filter(w => !w.isActive)
     .sort((a, b) => (b.season - a.season) || (b.weekNumber - a.weekNumber));
 
@@ -419,23 +370,6 @@ export default function LeagueDetail() {
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [transferTargetId, setTransferTargetId] = useState<string>("");
 
-  const getLineForBet = (game: Game, betType: string, pick: string): string | undefined => {
-    if (betType === 'spread') {
-      const line = pick === 'home' ? game.spread : (game.spread ? (game.spread.startsWith('-') ? `+${game.spread.slice(1)}` : `-${game.spread.slice(1)}`) : null);
-      const odds = game.spreadOdds || '-110';
-      return line ? `${line} (${odds})` : undefined;
-    } else if (betType === 'moneyline') {
-      return pick === 'home' ? game.moneylineHome || undefined : game.moneylineAway || undefined;
-    } else if (betType === 'over') {
-      const odds = game.overOdds || '-110';
-      return game.overUnder ? `O${game.overUnder} (${odds})` : undefined;
-    } else if (betType === 'under') {
-      const odds = game.underOdds || '-110';
-      return game.overUnder ? `U${game.overUnder} (${odds})` : undefined;
-    }
-    return undefined;
-  };
-
   // The draft parlay (server-side, status: 'draft') is now the source of
   // truth for "what's selected" — no local selection state. myParlay is
   // truthy (and its legs populated) as soon as the first tile is tapped,
@@ -476,7 +410,7 @@ export default function LeagueDetail() {
 
   const minLegs = league.minLegsPerParlay || 3;
   const maxLegs = league.maxLegsPerParlay || 5;
-  const canSubmit = myLegs.length >= minLegs && myLegs.length <= maxLegs;
+  const canSubmit = myLegs.length >= minLegs && myLegs.length <= maxLegs && !lockStatus?.isLocked;
 
   return (
     <div className="max-w-screen-2xl mx-auto space-y-6 pb-12">
@@ -547,7 +481,7 @@ export default function LeagueDetail() {
                       Historical Data
                     </DropdownMenuSubTrigger>
                     <DropdownMenuSubContent>
-                      {league.isDemo && (
+                      {league.isDemo && user?.isSuperUser && (
                         <DropdownMenuItem asChild data-testid="button-demo-data-editor">
                           <Link href={`/leagues/${leagueId}/demo-data`}>
                             <Edit className="w-4 h-4 mr-2" />

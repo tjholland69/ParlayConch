@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRoute, useLocation } from "wouter";
+import { useAuth } from "@/hooks/use-auth";
 import {
   useLeagues,
   useLeagueMembersWithUsers,
@@ -400,6 +401,7 @@ export default function LeagueSettings() {
   const [, navigate] = useLocation();
   const leagueId = Number(params?.id);
 
+  const { user } = useAuth();
   const { data: leagues } = useLeagues();
   const league = leagues?.find((l) => l.id === leagueId);
 
@@ -972,6 +974,8 @@ export default function LeagueSettings() {
 
         {/* Advanced Tab */}
         <TabsContent value="advanced" className="space-y-4">
+          {user?.isSuperUser && (
+          <>
           <Card className="bg-card/50 border-white/5">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -1042,6 +1046,8 @@ export default function LeagueSettings() {
                 </div>
               </CardContent>
             </Card>
+          )}
+          </>
           )}
 
           <Card className="bg-card/50 border-white/5">

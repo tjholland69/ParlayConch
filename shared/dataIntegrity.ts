@@ -43,6 +43,7 @@ export function normalizeImportLegFields(
 }
 
 export type ParlayLegPatch = {
+  gameId?: number | null;
   betType?: string;
   pick?: string;
   line?: string | null;
@@ -68,6 +69,7 @@ const PARLAY_LEG_STRING_FIELDS = [
 export function normalizeParlayLegPatch(updates: ParlayLegPatch): ParlayLegPatch {
   const normalized: ParlayLegPatch = {};
 
+  if (updates.gameId !== undefined) normalized.gameId = updates.gameId;
   if (updates.betType !== undefined) normalized.betType = updates.betType;
   if (updates.pick !== undefined) normalized.pick = updates.pick;
 
@@ -111,6 +113,7 @@ export function normalizeAddParlayLegInput(
   input: AddParlayLegInput,
 ): Omit<InsertParlayLeg, "parlayId"> {
   return {
+    gameId: input.gameId ?? null,
     betType: input.betType,
     pick: input.pick,
     line: emptyToNull(input.line),

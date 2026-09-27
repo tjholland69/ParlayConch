@@ -91,6 +91,7 @@ export const ADD_PARLAY_LEG_INPUT_RULES: AddParlayLegInputRule[] = [
     description: "Empty line coerced to SQL null on insert",
     input: { betType: "moneyline", pick: "away", line: "" },
     expected: {
+      gameId: null,
       betType: "moneyline",
       pick: "away",
       line: null,
@@ -107,6 +108,7 @@ export const ADD_PARLAY_LEG_INPUT_RULES: AddParlayLegInputRule[] = [
     description: "Spread leg values preserved",
     input: { betType: "spread", pick: "home", line: "-3", odds: "-110" },
     expected: {
+      gameId: null,
       betType: "spread",
       pick: "home",
       line: "-3",
@@ -129,6 +131,7 @@ export const ADD_PARLAY_LEG_INPUT_RULES: AddParlayLegInputRule[] = [
       propType: "rec_yards",
     },
     expected: {
+      gameId: null,
       betType: "player_prop",
       pick: "over",
       line: "50.5",
