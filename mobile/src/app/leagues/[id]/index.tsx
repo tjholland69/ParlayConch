@@ -55,6 +55,7 @@ import { getBustedLeg } from "@/lib/parlayLoser";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 import { DisputeLegBadge } from "@/components/DisputeLegSheet";
+import { InfoButton } from "@/components/InfoTip";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 type MCIIconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
@@ -1372,11 +1373,17 @@ export default function LeagueDetailScreen() {
                       <View key={leg.id} style={styles.lookthroughRow}>
                         <View style={styles.lookthroughRowHeader}>
                           <Text style={styles.lookthroughParlay} numberOfLines={1}>
-                            {leg.parlay.week?.label ?? `Week ${leg.parlay.weekId}`} #{leg.parlay.id}
+                            {leg.parlay.week?.label ?? `Week ${leg.parlay.weekId}`}
                           </Text>
-                          <Text style={styles.lookthroughOwner} numberOfLines={1}>
-                            {leg.parlay.isOwnParlay ? "You" : memberDisplayName({ user: leg.parlay.owner })}
-                          </Text>
+                          <View style={styles.lookthroughOwnerRow}>
+                            <Text style={styles.lookthroughOwner} numberOfLines={1}>
+                              {leg.parlay.isOwnParlay ? "You" : memberDisplayName({ user: leg.parlay.owner })}
+                            </Text>
+                            <InfoButton
+                              title="Debug Info"
+                              description={`parlay_id: ${leg.parlay.id}\nparlay_leg_id: ${leg.id}\ngame_id: ${leg.gameId ?? "—"}\nuser_id: ${leg.userId ?? "—"}`}
+                            />
+                          </View>
                         </View>
                         <Text style={[styles.legText, { color: resultColor }]} numberOfLines={1} ellipsizeMode="tail">
                           {matchupLabel}
@@ -1581,6 +1588,7 @@ const styles = StyleSheet.create({
   },
   lookthroughRowHeader: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
   lookthroughParlay: { fontSize: 11, fontWeight: "600", color: "#64748b" },
+  lookthroughOwnerRow: { flexDirection: "row", alignItems: "center", gap: 2 },
   lookthroughOwner: { fontSize: 11, color: "#64748b" },
   lookthroughMeta: { fontSize: 12, color: "#94a3b8" },
   codeRow: {

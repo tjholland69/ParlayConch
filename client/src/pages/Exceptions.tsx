@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertOctagon, Image, Loader2, ShieldAlert } from "lucide-react";
+import { AlertOctagon, Image, Info, Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useDisputes, useDisputeScreenshotUrl, useResolveDispute, type DisputeWithContext } from "@/hooks/use-exceptions";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { EmptyState } from "@/components/SlidingCard";
 import { formatPickLabel } from "@/lib/formatPick";
 
@@ -30,12 +31,26 @@ function DisputeCard({ dispute }: { dispute: DisputeWithContext }) {
               {REASON_LABELS[dispute.reasonType] ?? dispute.reasonType}
             </Badge>
             <span className="text-sm font-medium">{formatPickLabel(dispute.leg)}</span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  title="Debug info"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Info className="w-3.5 h-3.5" />
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-auto text-xs font-mono space-y-1 p-3">
+                <div><span className="text-muted-foreground">parlay_id:</span> {dispute.parlay.id}</div>
+                <div><span className="text-muted-foreground">parlay_leg_id:</span> {dispute.parlayLegId}</div>
+                <div><span className="text-muted-foreground">game_id:</span> {dispute.leg.gameId ?? "—"}</div>
+                <div><span className="text-muted-foreground">user_id:</span> {dispute.leg.userId ?? "—"}</div>
+              </PopoverContent>
+            </Popover>
           </div>
           <p className="text-xs text-muted-foreground">
             {dispute.leagueName} · {dispute.weekLabel} · raised by {dispute.raisedByName}
-          </p>
-          <p className="text-xs text-muted-foreground font-mono">
-            parlay_id: {dispute.parlay.id} · parlay_leg_id: {dispute.parlayLegId}
           </p>
         </div>
         <Badge

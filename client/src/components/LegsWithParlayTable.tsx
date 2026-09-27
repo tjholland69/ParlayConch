@@ -54,7 +54,6 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
                   <span className="text-xs font-medium">
                     {leg.parlay.week?.label ?? `Week ${leg.parlay.weekId}`}
                   </span>
-                  <span className="text-[10px] text-muted-foreground/50">#{leg.parlay.id}</span>
                   {leg.parlay.status === "win" && (
                     <Badge variant="outline" className="text-[10px] px-1 py-0 border-green-500/40 text-green-400">
                       Win
