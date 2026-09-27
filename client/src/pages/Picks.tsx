@@ -67,6 +67,12 @@ export default function Picks() {
   }, [selectedYear, weeksForYear, selectedWeekId]);
 
   const { data: games, isLoading: isLoadingGames } = useGames(Number(selectedWeekId));
+  // Only games that haven't started yet — including for a past week, where
+  // this naturally means an empty list once every game there is done.
+  const visibleGames = useMemo(
+    () => (games ?? []).filter(g => !g.isFinished && (!g.gameTime || new Date(g.gameTime) >= new Date())),
+    [games],
+  );
   const { data: activeStatus } = useLeaguesActiveStatus();
   const { data: injuries } = useQuery<InjuryNewsItem[]>({
     queryKey: ["/api/news", "injuries", 60],
@@ -79,15 +85,15 @@ export default function Picks() {
   });
 
   const gameNotes = useMemo(() => {
-    if (!games?.length) return [];
-    return games.map(game => {
+    if (!visibleGames.length) return [];
+    return visibleGames.map(game => {
       const watchList = (injuries ?? [])
         .filter(inj => inj.tag && NOT_RULED_OUT_TAGS.has(inj.tag))
         .filter(inj => inj.team && (teamMatches(game.homeTeam, inj.team) || teamMatches(game.awayTeam, inj.team)))
         .slice(0, 2);
       return { game, watchList };
     });
-  }, [games, injuries]);
+  }, [visibleGames, injuries]);
 
   if (isLoadingWeeks || isLoadingLeagues) {
     return <PageLoader />;
@@ -273,20 +279,22 @@ export default function Picks() {
               <div key={i} className="h-24 rounded-2xl bg-white/5 animate-pulse" />
             ))}
           </div>
-        ) : games?.length === 0 ? (
+        ) : visibleGames.length === 0 ? (
           <div className="text-center py-12 bg-card/20 rounded-2xl border border-dashed border-white/10">
-            <p className="text-muted-foreground">No games scheduled for this week yet.</p>
+            <p className="text-muted-foreground">
+              {games?.length ? "No upcoming games left for this week." : "No games scheduled for this week yet."}
+            </p>
           </div>
         ) : (
           <>
-            {games?.some(g => !g.spread) && (
+            {visibleGames.some(g => !g.spread) && (
               <div className="flex items-start gap-2 text-xs text-muted-foreground bg-white/5 border border-white/10 rounded-xl px-4 py-3 mb-4">
                 <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/70" />
                 <span>Lines and game times will be posted closer to kickoff. Check back soon!</span>
               </div>
             )}
             <div className="grid gap-3 md:grid-cols-2">
-              {games?.map((game) => {
+              {visibleGames.map((game) => {
                 const hasOdds = !!(game.spread || game.overUnder || game.moneylineHome);
                 const hasTime = !!game.gameTime;
                 return (

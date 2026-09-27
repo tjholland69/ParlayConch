@@ -7,6 +7,8 @@ import { getSlate } from "@shared/slate";
 export type FlatParlayLegRow = {
   parlayId: number;
   legId: number;
+  gameId: number | null;
+  userId: string;
   season: number;
   weekLabel: string;
   member: string;
@@ -38,6 +40,8 @@ export function flattenParlayLegs(parlays: ParlayWithLegs[]): FlatParlayLegRow[]
       rows.push({
         parlayId: parlay.id,
         legId: leg.id,
+        gameId: leg.gameId ?? null,
+        userId: leg.userId,
         season: parlay.week?.season ?? 0,
         weekLabel: parlay.week?.label ?? "—",
         member,

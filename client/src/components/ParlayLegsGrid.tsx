@@ -14,7 +14,8 @@ import {
 import type { FlatParlayLegRow } from "@/lib/flattenParlayLegs";
 import { CheckboxSetFilter } from "@/components/grid/CheckboxSetFilter";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu";
-import { Pencil, CloudDownload, Trash2, Copy, ClipboardCopy } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Pencil, CloudDownload, Trash2, Copy, ClipboardCopy, Info } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
@@ -38,11 +39,45 @@ const parlayConchGridTheme = themeQuartz.withParams({
   fontFamily: "var(--font-body)",
 });
 
+/** Debug-id popover, same info (and same "i" trigger convention) as the
+ * Tiles view's per-leg popover in ParlayRollupCard.tsx — parlay_id doesn't
+ * get its own visible grid column, just this click-through. */
+function InfoCellRenderer({ data }: { data: FlatParlayLegRow }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          title="Debug info"
+          className="text-muted-foreground hover:text-foreground flex items-center justify-center w-full h-full"
+        >
+          <Info className="w-3.5 h-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto text-xs font-mono space-y-1 p-3">
+        <div><span className="text-muted-foreground">parlay_id:</span> {data.parlayId}</div>
+        <div><span className="text-muted-foreground">parlay_leg_id:</span> {data.legId}</div>
+        <div><span className="text-muted-foreground">game_id:</span> {data.gameId ?? "—"}</div>
+        <div><span className="text-muted-foreground">user_id:</span> {data.userId ?? "—"}</div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // Bounds ("within reason") for the dynamic content-based auto-sizing below —
 // each column can grow/shrink to fit its longest visible value, but never
 // past these limits, so one long matchup name can't blow out the whole grid.
 const columnDefs: ColDef<FlatParlayLegRow>[] = [
-  { field: "parlayId", headerName: "Parlay #", minWidth: 90, maxWidth: 140, filter: "agNumberColumnFilter" },
+  {
+    colId: "info",
+    headerName: "",
+    minWidth: 44,
+    maxWidth: 44,
+    sortable: false,
+    filter: false,
+    resizable: false,
+    cellRenderer: InfoCellRenderer,
+  },
   { field: "season", headerName: "Year", minWidth: 70, maxWidth: 100, filter: "agNumberColumnFilter" },
   { field: "weekLabel", headerName: "Week", minWidth: 90, maxWidth: 140, filter: CheckboxSetFilter },
   { field: "member", headerName: "Member", minWidth: 100, maxWidth: 220, filter: CheckboxSetFilter },

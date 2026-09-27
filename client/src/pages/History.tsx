@@ -304,6 +304,10 @@ export default function History() {
   // the underlying parlay data is always "everyone in scope", regardless of
   // the toggle; canShowOthers only controls the member-picker filter below.
   const canShowOthers = !ownPicksOnly;
+  // Either of these narrows the legs shown *inside* a parlay tile without
+  // hiding the tile itself (see structurallyFilteredParlays below) — worth a
+  // heads-up so it doesn't read as "this parlay only had one leg."
+  const legsAreFiltered = ownPicksOnly || (canShowOthers && selectedMemberIds.length > 0);
   const { data: members } = useLeagueMembersWithUsers(leagueId ?? 0);
   const memberOptions = useMemo(
     () => (members ?? []).map(m => ({ value: m.userId, label: getDisplayName(m.user, "Member") })),
@@ -603,6 +607,17 @@ export default function History() {
             {showAdvancedFilter ? "Hide advanced filter" : "Advanced Filter"}
           </button>
         </div>
+
+        {legsAreFiltered && (
+          <div className="flex items-start gap-2 text-xs text-muted-foreground bg-white/5 border border-white/10 rounded-xl px-3 py-2" data-testid="notice-legs-filtered">
+            <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-primary/70" />
+            <span>
+              {ownPicksOnly
+                ? "Showing only your own picks — a parlay tile below may have other members' legs hidden from view."
+                : "Showing only the selected members' picks — a parlay tile below may have other legs hidden from view."}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Stats Summary */}
