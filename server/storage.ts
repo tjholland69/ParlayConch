@@ -1640,7 +1640,12 @@ export class DatabaseStorage implements IStorage {
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
-      .where(and(inArray(parlayLegs.id, legIds), eq(parlayLegs.userId, userId)));
+      // Your own legs, plus any leg in a parlay you started (the dashboard's
+      // "Parlays Owned" lookthrough) — both already visible to you in-league.
+      .where(and(
+        inArray(parlayLegs.id, legIds),
+        or(eq(parlayLegs.userId, userId), eq(parlays.userId, userId)),
+      ));
 
     if (rows.length === 0) return [];
 

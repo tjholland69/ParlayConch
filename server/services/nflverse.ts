@@ -20,7 +20,7 @@ const BASE = "https://github.com/nflverse/nflverse-data/releases/download";
 
 // nflverse-data's /releases/download/schedules/schedules.csv no longer exists.
 // nfldata/games.csv is the maintained mirror with identical columns.
-function schedulesUrl() {
+export function schedulesUrl() {
   return "https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv";
 }
 
@@ -192,7 +192,7 @@ async function fetchPlayerStatsCsv(season: number): Promise<Record<string, strin
 
 // ─── Game score sync ─────────────────────────────────────────────────────────
 
-interface NflverseScheduleRow {
+export interface NflverseScheduleRow {
   game_id: string;
   season: string;
   week: string;
@@ -236,7 +236,7 @@ function getUtcOffsetMinutes(instant: Date, timeZone: string): number {
  * host not running in UTC. Resolving the offset via Intl.formatToParts
  * keeps this correct regardless of the server's TZ setting.
  */
-function zonedWallTimeToUtc(dateStr: string, timeStr: string, timeZone: string): Date {
+export function zonedWallTimeToUtc(dateStr: string, timeStr: string, timeZone: string): Date {
   const asIfUtc = new Date(`${dateStr}T${timeStr}:00Z`);
   const offsetMinutes = getUtcOffsetMinutes(asIfUtc, timeZone);
   return new Date(asIfUtc.getTime() - offsetMinutes * 60_000);
@@ -613,6 +613,23 @@ export async function detectAndImportNewSeason(): Promise<{
       .map((r) => parseInt(r.season))
       .filter((s) => !isNaN(s) && s > latestKnownSeason)
   )].sort((a, b) => a - b);
+
+  // This check only imports brand-new seasons. A season that already has
+  // some weeks but not all of them (2026 started with only Weeks 1-2) is never
+  // filled in here, since repairing it can move games; flag it instead.
+  if (latestKnownSeason) {
+    const scheduled = new Set(
+      rows.filter((r) => r.game_type === "REG" && parseInt(r.season) === latestKnownSeason).map((r) => parseInt(r.week)),
+    );
+    const have = new Set(existingWeeks.filter((w) => w.season === latestKnownSeason).map((w) => w.weekNumber));
+    const missing = [...scheduled].filter((n) => !have.has(n));
+    if (missing.length > 0) {
+      logger.warn(
+        `[season-rollover] Season ${latestKnownSeason} is missing ${missing.length} scheduled week(s). ` +
+        `Run: npm run repair:season-schedule -- --season ${latestKnownSeason}`,
+      );
+    }
+  }
 
   if (candidateSeasons.length === 0) {
     logger.info("[season-rollover] No newer season schedule published yet.");

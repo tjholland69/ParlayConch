@@ -17,6 +17,14 @@ export interface UserSummary {
   participationRate: number;
   /** Mean BAR across leagues (league-relative, then averaged). */
   bar: number;
+  /** parlay_leg ids behind each clickable summary number ("lookthrough"). */
+  lookthrough: {
+    /** Every leg (anyone's) in parlays the user started. */
+    ownedParlayLegIds: number[];
+    placedLegIds: number[];
+    winLegIds: number[];
+    lossLegIds: number[];
+  };
 }
 
 /** Unweighted average of the user's Power / Part / BAR across each league they belong to
@@ -79,33 +87,39 @@ export async function getUserSummary(userId: string, leagueId?: number): Promise
         : eq(parlays.userId, userId)
     );
 
-  const [row] = await db
-    .select({
-      legsPlaced: sql<number>`count(*)`,
-      legWins: sql<number>`count(*) filter (where ${parlayLegs.result} = 'win')`,
-      legLosses: sql<number>`count(*) filter (where ${parlayLegs.result} = 'loss')`,
-    })
+  // Every leg that's either the user's own or sits in a parlay they started —
+  // one pass yields both the counts and the lookthrough id lists.
+  const legRows = await db
+    .select({ id: parlayLegs.id, legUserId: parlayLegs.userId, parlayUserId: parlays.userId, result: parlayLegs.result })
     .from(parlayLegs)
     .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
-    .where(
-      leagueId
-        ? and(eq(parlayLegs.userId, userId), eq(parlays.leagueId, leagueId))
-        : eq(parlayLegs.userId, userId)
-    );
+    .where(and(
+      or(eq(parlayLegs.userId, userId), eq(parlays.userId, userId)),
+      ...(leagueId ? [eq(parlays.leagueId, leagueId)] : []),
+    ));
 
-  const legWins = Number(row?.legWins ?? 0);
-  const legLosses = Number(row?.legLosses ?? 0);
+  const mine = legRows.filter((r) => r.legUserId === userId);
+  const winLegIds = mine.filter((r) => r.result === "win").map((r) => r.id);
+  const lossLegIds = mine.filter((r) => r.result === "loss").map((r) => r.id);
+  const legWins = winLegIds.length;
+  const legLosses = lossLegIds.length;
   const totalDecided = legWins + legLosses;
   const powerMetrics = await getUserPowerMetrics(userId, leagueId);
 
   return {
     leagueCount: Number(leagueCount ?? 0),
     parlaysPlaced: Number(parlaysPlaced ?? 0),
-    legsPlaced: Number(row?.legsPlaced ?? 0),
+    legsPlaced: mine.length,
     legWins,
     legLosses,
     legWinRate: totalDecided > 0 ? (legWins / totalDecided) * 100 : 0,
     ...powerMetrics,
+    lookthrough: {
+      ownedParlayLegIds: legRows.filter((r) => r.parlayUserId === userId).map((r) => r.id),
+      placedLegIds: mine.map((r) => r.id),
+      winLegIds,
+      lossLegIds,
+    },
   };
 }
 

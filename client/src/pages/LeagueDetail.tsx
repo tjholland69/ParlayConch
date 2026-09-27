@@ -437,7 +437,9 @@ export default function LeagueDetail() {
   };
   const byKickoff = (a: Game, b: Game) =>
     (a.gameTime ? new Date(a.gameTime).getTime() : Infinity) - (b.gameTime ? new Date(b.gameTime).getTime() : Infinity);
-  const thisWeekGames = (games ?? []).filter(g => !isBeyondActiveWeek(g) && isOpenOrMine(g));
+  // Every game in the current week shows, in kickoff order; ones already
+  // underway or final render greyed out and unpickable (see renderGameCard).
+  const thisWeekGames = (games ?? []).filter(g => !isBeyondActiveWeek(g)).sort(byKickoff);
   const nextWeekGames = (() => {
     const seen = new Set<string>();
     return [...(games ?? []).filter(isBeyondActiveWeek), ...(nextWeekRowGames ?? [])]
@@ -454,7 +456,7 @@ export default function LeagueDetail() {
   const nextWeekLabel = nextWeek?.label ?? ((games ?? []).some(isBeyondActiveWeek) ? "Upcoming" : null);
 
   const renderGameCard = (game: Game) => {
-    const isPast = game.gameTime ? new Date(game.gameTime) < new Date() : false;
+    const isPast = !!game.isFinished || (game.gameTime ? new Date(game.gameTime) < new Date() : false);
     const capReached = legsForGame(game.id).length >= maxBetsPerGame;
 
     const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
@@ -557,10 +559,12 @@ export default function LeagueDetail() {
             View player props →
           </button>
 
-          {game.isFinished && (
+          {isPast && (
             <div className="mt-3 pt-3 border-t border-white/10 text-center text-sm">
-              <span className="font-mono">{game.awayScore} - {game.homeScore}</span>
-              <Badge variant="outline" className="ml-2">Final</Badge>
+              {game.awayScore != null && game.homeScore != null && (
+                <span className="font-mono">{game.awayScore} - {game.homeScore}</span>
+              )}
+              <Badge variant="outline" className="ml-2">{game.isFinished ? "Final" : "In progress"}</Badge>
             </div>
           )}
         </CardContent>
@@ -858,10 +862,9 @@ export default function LeagueDetail() {
                 </Card>
               )}
 
-              {/* Games Grid — this week's games still open to pick, plus any
-                  already-started/finished game the user has a leg on (so they
-                  can still see what they picked). Next week's games only
-                  appear once the user asks for them. */}
+              {/* Games Grid — all of this week's games; started/finished ones
+                  are greyed out. Next week's games only appear once the user
+                  asks for them. */}
               <div className="grid gap-4 md:grid-cols-2">
                 {thisWeekGames.map(renderGameCard)}
               </div>

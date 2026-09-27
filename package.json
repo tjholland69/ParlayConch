@@ -24,7 +24,8 @@
     "backfill:odds": "tsx --env-file=.env.local scripts/backfill-odds.ts",
     "backfill:decision-moments": "tsx --env-file=.env.local scripts/backfill-decision-moments.ts",
     "backfill:local-auth": "tsx --env-file=.env.local scripts/backfill-local-auth.ts",
-    "claim-demo-user": "tsx --env-file=.env.local scripts/claim-demo-user.ts"
+    "claim-demo-user": "tsx --env-file=.env.local scripts/claim-demo-user.ts",
+    "repair:season-schedule": "tsx --env-file-if-exists=.env.local scripts/repair-season-schedule.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",

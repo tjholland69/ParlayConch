@@ -12,6 +12,13 @@ export interface UserSummary {
   powerScore: number;
   participationRate: number;
   bar: number;
+  /** Leg ids behind the clickable summary cards. */
+  lookthrough?: {
+    ownedParlayLegIds: number[];
+    placedLegIds: number[];
+    winLegIds: number[];
+    lossLegIds: number[];
+  };
 }
 
 export interface UserPatterns {

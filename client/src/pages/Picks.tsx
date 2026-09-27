@@ -37,8 +37,11 @@ export default function Picks() {
   const { data: weeks, isLoading: isLoadingWeeks } = useWeeks();
   const { data: leagues, isLoading: isLoadingLeagues } = useLeagues();
 
-  const currentYear = new Date().getFullYear();
-  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  // Default to the active week's season, not the calendar year: January and
+  // February playoff weeks belong to the previous year's season.
+  const activeSeason = weeks?.find(w => w.isActive)?.season;
+  const [yearOverride, setSelectedYear] = useState<number | undefined>();
+  const selectedYear = yearOverride ?? activeSeason ?? new Date().getFullYear();
   const [selectedWeekId, setSelectedWeekId] = useState<string | undefined>();
 
   const pastOrCurrentWeeks = useMemo(() => upToCurrentWeek(weeks ?? []), [weeks]);
