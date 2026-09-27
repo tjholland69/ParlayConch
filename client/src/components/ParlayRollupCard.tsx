@@ -18,7 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
-import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { DisputeLegDialog } from "@/components/DisputeLegDialog";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { decidedTime } from "@/lib/decidedTime";
@@ -315,7 +315,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const addLeg = useAddParlayLeg(leagueId);
   const enrichLeg = useEnrichParlayLeg(leagueId);
   const cloneParlay = useCloneParlay(leagueId);
-  const { user } = useAuth();
+  const effectiveUserId = useEffectiveUserId();
   const { toast } = useToast();
 
   const handleLegOwnerChange = (leg: ParlayLeg & { game?: any }, newUserId: string) => {
@@ -819,7 +819,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                             </Popover>
                           </td>
                           <td className="px-2 py-2">
-                            {leg.userId === user?.id && !selectMode && !splitMode && !legSelectMode && (
+                            {leg.userId === effectiveUserId && !selectMode && !splitMode && !legSelectMode && (
                               <DisputeLegDialog legId={leg.id} />
                             )}
                           </td>

@@ -151,6 +151,17 @@ export default function BuildPickScreen() {
   const activeLegs = isEditingSubmitted ? selectedLegs : draftLegs;
   const legMutationPending = addDraftLeg.isPending || removeDraftLeg.isPending;
 
+  // Only games still open to pick, plus any already-started/finished game
+  // the user has an existing leg on (so they can still see what they picked).
+  const visibleGames = useMemo(
+    () =>
+      (games ?? []).filter((g) => {
+        const started = !!g.isFinished || (g.gameTime ? new Date(g.gameTime) < new Date() : false);
+        return !started || activeLegs.some((l) => l.gameId === g.id);
+      }),
+    [games, activeLegs],
+  );
+
   const canSubmit = isEditingSubmitted
     ? selectedLegs.length >= minLegs && selectedLegs.length <= maxLegs && !lockStatus?.isLocked
     : draftLegs.length >= minLegs && draftLegs.length <= maxLegs && !lockStatus?.isLocked;
@@ -451,7 +462,7 @@ export default function BuildPickScreen() {
       )}
 
       <FlatList
-        data={games ?? []}
+        data={visibleGames}
         keyExtractor={(g) => String(g.id)}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={

@@ -41,7 +41,7 @@ import {
 } from "@/hooks/use-parlays";
 import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
 import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
-import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveUserId, useEffectiveSettings } from "@/hooks/use-acting-as";
 import { useAppResume } from "@/hooks/use-app-resume";
 import { format } from "date-fns";
 import { SPORTSBOOK_PROVIDERS, pickDeepLinkGames, type SportsbookProvider, type DeepLinkGame } from "@shared/sportsbook-providers";
@@ -108,7 +108,7 @@ function ParlayCard({
   heroLabel?: string | null;
 }) {
   const router = useRouter();
-  const { user } = useAuth();
+  const effectiveUserId = useEffectiveUserId();
   const approveParlay = useApproveParlay(leagueId, weekId);
   const rejectParlay = useRejectParlay(leagueId, weekId);
   const markParlaySent = useMarkParlaySent(leagueId, weekId);
@@ -368,7 +368,7 @@ function ParlayCard({
                   {/* leg.line already carries its own sign (e.g. "+3.5" for
                       underdog spreads, from game.spread) — don't add another. */}
                   {leg.line != null && <Text style={styles.legLine}>{leg.line}</Text>}
-                  {leg.userId === user?.id && <DisputeLegBadge legId={leg.id} />}
+                  {leg.userId === effectiveUserId && <DisputeLegBadge legId={leg.id} />}
                 </Pressable>
                 {expanded && leg.result && (
                   <Animated.View
@@ -773,7 +773,8 @@ export default function LeagueDetailScreen() {
   const [betTypeFilter, setBetTypeFilter] = useState("all");
   const [resultFilter, setResultFilter] = useState("all");
   const activeWeek = useActiveWeek();
-  const { user } = useAuth();
+  const effectiveUserId = useEffectiveUserId();
+  const effectiveSettings = useEffectiveSettings();
 
   const { data: league, isLoading: leagueLoading } = useQuery({
     queryKey: ["/api/leagues", leagueId],
@@ -790,8 +791,8 @@ export default function LeagueDetailScreen() {
   });
 
   const { data: members, isLoading: membersLoading, refetch: refetchMembers } = useLeagueMembersWithUsers(leagueId);
-  const isAdmin = !!members?.some((m: any) => m.userId === user?.id && m.role === "admin");
-  const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as SportsbookProvider | undefined;
+  const isAdmin = !!members?.some((m: any) => m.userId === effectiveUserId && m.role === "admin");
+  const preferredSportsbook = (effectiveSettings as any)?.preferredSportsbook as SportsbookProvider | undefined;
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useLeagueStats(leagueId);
   const { data: leagueRecords, isLoading: recordsLoading } = useLeagueRecords(leagueId);
   const [lookthroughRecord, setLookthroughRecord] = useState<LeagueRecordEntry | null>(null);
@@ -832,13 +833,13 @@ export default function LeagueDetailScreen() {
 
   const memberOptions = [
     { key: "all", label: "All Members" },
-    ...(user?.id ? [{ key: "me", label: "Just Me" }] : []),
+    ...(effectiveUserId ? [{ key: "me", label: "Just Me" }] : []),
     ...(members ?? []).map((m: any) => ({ key: m.userId, label: memberDisplayName(m) })),
   ];
   // "me" is a stand-in for the caller's own userId — resolved here rather
   // than storing the real id in state, so the chip stays labeled "Just Me"
   // instead of showing the user's own name once selected.
-  const effectiveMemberFilter = memberFilter === "me" ? (user?.id ?? "me") : memberFilter;
+  const effectiveMemberFilter = memberFilter === "me" ? (effectiveUserId ?? "me") : memberFilter;
   const filtersActive = memberFilter !== "all" || betTypeFilter !== "all" || resultFilter !== "all";
   const filteredParlays = (parlays ?? []).filter((parlay: ParlayWithLegs) => {
     const legs = parlay.legs ?? [];
