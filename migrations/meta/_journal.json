@@ -155,6 +155,13 @@
       "when": 1787718242832,
       "tag": "0021_rich_karen_page",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790539993440,
+      "tag": "0022_league_pokes",
+      "breakpoints": true
     }
   ]
 }

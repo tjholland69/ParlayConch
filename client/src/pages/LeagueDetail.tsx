@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, type LeagueRecordEntry } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
 import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Trophy, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2, Award, Flame, Shield, User, Dices, TrendingUp, TrendingDown, Citrus } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { BetSlipPanel } from "@/components/BetSlipPanel";
@@ -24,6 +24,7 @@ import { ParlayRollupCard } from "@/components/ParlayRollupCard";
 import { AddPropLegDialog } from "@/components/AddPropLegDialog";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
+import { ParticipationLookthrough } from "@/components/ParticipationLookthrough";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
 import { PageLoader } from "@/components/PageLoader";
@@ -34,8 +35,10 @@ import { useAuth } from "@/hooks/use-auth";
 import { getBuildingVerb } from "@/lib/parlaySlang";
 import { getLineForBet } from "@/lib/gameOdds";
 import { PickTile } from "@/components/PickTile";
+import { MultiSelect } from "@/components/MultiSelect";
 import { upToCurrentWeek } from "@/lib/weekFilters";
-import type { Game, UserStat } from "@shared/schema";
+import { estimateWeekDateRange } from "@shared/nflWeek";
+import type { Game, UserStat, ParlayListSort } from "@shared/schema";
 
 // AG Grid alone is ~1MB — only worth loading once someone actually asks
 // for the raw leg grid, not on every league page visit.
@@ -275,7 +278,9 @@ export default function LeagueDetail() {
   // "All Weeks" / "All Years". Separate from the header week dropdown above.
   const [allYearFilter, setAllYearFilter] = useState<string>("all");
   const [allWeekFilter, setAllWeekFilter] = useState<string>("all");
-  const [allMemberFilter, setAllMemberFilter] = useState<string>("all");
+  // Empty = all members.
+  const [allMemberFilter, setAllMemberFilter] = useState<string[]>([]);
+  const [allSort, setAllSort] = useState<ParlayListSort>("ending_desc");
   const [allViewMode, setAllViewMode] = useState<"tiles" | "grid">("tiles");
   const [activeTab, setActiveTab] = useState("open");
   const allSeasons = [...new Set((weeks ?? []).map(w => w.season))].sort((a, b) => b - a);
@@ -292,7 +297,7 @@ export default function LeagueDetail() {
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useAllLeagueParlaysReadOnly(leagueId, activeTab === "all");
+  } = useAllLeagueParlaysReadOnly(leagueId, activeTab === "all", allSort);
   const allParlays = useMemo(
     () => flattenParlayPages(allParlaysPages),
     [allParlaysPages],
@@ -344,6 +349,9 @@ export default function LeagueDetail() {
 
   // Members tab state
   const { data: members, isLoading: loadingMembers } = useLeagueMembersWithUsers(leagueId);
+  const { data: pokes } = useLeaguePokes(leagueId);
+  const pokeMember = usePokeMember(leagueId);
+  const dismissPoke = useDismissPoke(leagueId);
 
   // Records tab state
   const { data: leagueRecords, isLoading: loadingRecords } = useLeagueRecords(leagueId);
@@ -397,6 +405,167 @@ export default function LeagueDetail() {
     if (legsForGame(game.id).length >= maxBetsPerGame) return;
     const line = getLineForBet(game, betType, pick);
     addDraftLeg.mutate({ leagueId, weekId: activeWeekId, leg: { gameId: game.id, betType, pick, line } });
+  };
+
+  // Open Parlays only shows the active week's slate by default. The odds sync
+  // has historically filed some of next week's games under the active week,
+  // so split by kickoff against the active week's window rather than trusting
+  // weekId alone; anything past it joins next week's games, shown on request.
+  const [showNextWeek, setShowNextWeek] = useState(false);
+  const nextWeek = activeWeek
+    ? weeks?.find(w => w.season === activeWeek.season && w.weekNumber === activeWeek.weekNumber + 1)
+    : undefined;
+  // Also fetch when the draft already holds a next-week leg, so its chip can
+  // still name the teams while the section is hidden.
+  const hasNextWeekLeg = !!games && myLegs.some(l => l.gameId != null && !games.some(g => g.id === l.gameId));
+  const { data: nextWeekRowGames, isLoading: loadingNextWeekGames } = useGames(
+    showNextWeek || hasNextWeekLeg ? nextWeek?.id ?? 0 : 0,
+  );
+  const activeWeekRange = activeWeek ? estimateWeekDateRange(activeWeek.season, activeWeek.weekNumber) : null;
+  const inActiveWeekRange = (game: Game) =>
+    !!activeWeekRange && !!game.gameTime &&
+    new Date(game.gameTime) >= activeWeekRange.start && new Date(game.gameTime) < activeWeekRange.end;
+  // The window is a calendar estimate. If none of the active week's games
+  // fall inside it (e.g. seeded or hand-entered weeks), it doesn't describe
+  // this data, so don't split at all rather than hiding the whole slate.
+  const splitByWindow = (games ?? []).some(inActiveWeekRange);
+  const isBeyondActiveWeek = (game: Game) =>
+    splitByWindow && !!game.gameTime && new Date(game.gameTime) >= activeWeekRange!.end;
+  const isOpenOrMine = (game: Game) => {
+    const isPast = !!game.isFinished || (game.gameTime ? new Date(game.gameTime) < new Date() : false);
+    return !isPast || legsForGame(game.id).length > 0;
+  };
+  const byKickoff = (a: Game, b: Game) =>
+    (a.gameTime ? new Date(a.gameTime).getTime() : Infinity) - (b.gameTime ? new Date(b.gameTime).getTime() : Infinity);
+  const thisWeekGames = (games ?? []).filter(g => !isBeyondActiveWeek(g) && isOpenOrMine(g));
+  const nextWeekGames = (() => {
+    const seen = new Set<string>();
+    return [...(games ?? []).filter(isBeyondActiveWeek), ...(nextWeekRowGames ?? [])]
+      .filter(g => {
+        const key = `${g.awayTeam}|${g.homeTeam}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return isOpenOrMine(g);
+      })
+      .sort(byKickoff);
+  })();
+  // Leaked games already in the active week count as "next week" even when
+  // there's no next-week row yet (e.g. the season's last week).
+  const nextWeekLabel = nextWeek?.label ?? ((games ?? []).some(isBeyondActiveWeek) ? "Upcoming" : null);
+
+  const renderGameCard = (game: Game) => {
+    const isPast = game.gameTime ? new Date(game.gameTime) < new Date() : false;
+    const capReached = legsForGame(game.id).length >= maxBetsPerGame;
+
+    const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
+    const homeSpread = game.spread || null;
+
+    return (
+      <Card
+        key={game.id}
+        className={cn(
+          "bg-card/50 border-white/5 transition-all",
+          isPast && "opacity-50"
+        )}
+        data-testid={`card-game-${game.id}`}
+      >
+        <CardContent className="p-4">
+          <div className="flex items-center justify-between mb-1 text-xs text-muted-foreground">
+            <span>{game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}</span>
+            {game.venue && <span className="truncate max-w-[120px]">{game.venue}</span>}
+          </div>
+          <div className="flex items-center justify-between mb-3 text-sm font-medium">
+            <span className="truncate">{game.awayTeam} <span className="text-xs text-muted-foreground">{game.awayRecord}</span></span>
+            <span className="text-xs text-muted-foreground px-1">@</span>
+            <span className="truncate text-right">{game.homeTeam} <span className="text-xs text-muted-foreground">{game.homeRecord}</span></span>
+          </div>
+
+          {/* 3×2 pick tiles: row 1 = away spread/ML/over, row 2 = home spread/ML/under */}
+          <div className="grid grid-cols-3 gap-2">
+            <PickTile
+              label={awaySpread || '-'}
+              subLabel={game.spreadOdds}
+              hasOdds={!!game.spread}
+              isPast={isPast}
+              isSelected={isMySelection(game.id, 'spread', 'away')}
+              takenBy={takenByOther(game.id, 'spread', 'away')?.takenBy}
+              capReached={capReached}
+              onClick={() => toggleLeg(game, 'spread', 'away')}
+              testId={`button-spread-away-${game.id}`}
+            />
+            <PickTile
+              label={game.moneylineAway || '-'}
+              hasOdds={!!game.moneylineAway}
+              isPast={isPast}
+              isSelected={isMySelection(game.id, 'moneyline', 'away')}
+              takenBy={takenByOther(game.id, 'moneyline', 'away')?.takenBy}
+              capReached={capReached}
+              onClick={() => toggleLeg(game, 'moneyline', 'away')}
+              testId={`button-ml-away-${game.id}`}
+            />
+            <PickTile
+              label={`O ${game.overUnder || '-'}`}
+              subLabel={game.overOdds}
+              hasOdds={!!game.overUnder}
+              isPast={isPast}
+              isSelected={isMySelection(game.id, 'over', 'over')}
+              takenBy={takenByOther(game.id, 'over', 'over')?.takenBy}
+              capReached={capReached}
+              onClick={() => toggleLeg(game, 'over', 'over')}
+              testId={`button-over-${game.id}`}
+            />
+            <PickTile
+              label={homeSpread || '-'}
+              subLabel={game.spreadOdds}
+              hasOdds={!!game.spread}
+              isPast={isPast}
+              isSelected={isMySelection(game.id, 'spread', 'home')}
+              takenBy={takenByOther(game.id, 'spread', 'home')?.takenBy}
+              capReached={capReached}
+              onClick={() => toggleLeg(game, 'spread', 'home')}
+              testId={`button-spread-home-${game.id}`}
+            />
+            <PickTile
+              label={game.moneylineHome || '-'}
+              hasOdds={!!game.moneylineHome}
+              isPast={isPast}
+              isSelected={isMySelection(game.id, 'moneyline', 'home')}
+              takenBy={takenByOther(game.id, 'moneyline', 'home')?.takenBy}
+              capReached={capReached}
+              onClick={() => toggleLeg(game, 'moneyline', 'home')}
+              testId={`button-ml-home-${game.id}`}
+            />
+            <PickTile
+              label={`U ${game.overUnder || '-'}`}
+              subLabel={game.underOdds}
+              hasOdds={!!game.overUnder}
+              isPast={isPast}
+              isSelected={isMySelection(game.id, 'under', 'under')}
+              takenBy={takenByOther(game.id, 'under', 'under')?.takenBy}
+              capReached={capReached}
+              onClick={() => toggleLeg(game, 'under', 'under')}
+              testId={`button-under-${game.id}`}
+            />
+          </div>
+
+          <button
+            type="button"
+            className="mt-3 text-xs text-primary hover:underline"
+            onClick={() => setPropDialogGame(game)}
+            data-testid={`button-view-props-${game.id}`}
+          >
+            View player props →
+          </button>
+
+          {game.isFinished && (
+            <div className="mt-3 pt-3 border-t border-white/10 text-center text-sm">
+              <span className="font-mono">{game.awayScore} - {game.homeScore}</span>
+              <Badge variant="outline" className="ml-2">Final</Badge>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
   };
 
   const submitParlay = () => {
@@ -541,7 +710,12 @@ export default function LeagueDetail() {
           <TabsTrigger value="all" data-testid="tab-all">All Parlays</TabsTrigger>
           <TabsTrigger value="data" data-testid="tab-data">League Data</TabsTrigger>
           <TabsTrigger value="records" data-testid="tab-records">Records</TabsTrigger>
-          <TabsTrigger value="members" data-testid="tab-members">Members</TabsTrigger>
+          <TabsTrigger value="members" data-testid="tab-members" className="relative">
+            Members
+            {(pokes?.received.length ?? 0) > 0 && (
+              <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-amber-400" aria-label="Someone poked you" />
+            )}
+          </TabsTrigger>
         </TabsList>
 
         {/* Open Parlays Tab — always scoped to the active week, ignores the header week dropdown */}
@@ -561,7 +735,7 @@ export default function LeagueDetail() {
           {/* Lock header row — visible to Parlay Maestro */}
           {league.isAdmin && (
             <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-card/40 border border-white/5">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
                 <Users className="w-4 h-4" />
                 <span data-testid="text-submission-count">
                   {lockStatus?.submittedCount ?? 0} / {lockStatus?.totalMembers ?? league.memberCount} submitted
@@ -574,6 +748,11 @@ export default function LeagueDetail() {
                     <AlertTriangle className="w-3 h-3 mr-1" />Locked with missing bets
                   </Badge>
                 )}
+                <span className="basis-full text-xs">
+                  {lockStatus?.isLocked
+                    ? "Submissions are closed. Anyone without a submitted parlay is Void this week."
+                    : "Locking closes the week: no new picks or submissions, and anyone who hasn't submitted is marked Void."}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 {lockStatus?.isLocked ? (
@@ -618,20 +797,22 @@ export default function LeagueDetail() {
             </div>
           )}
 
-          {lockStatus?.isLocked ? (
-            <Card className="bg-card/50 border-white/5">
-              <CardContent className="flex flex-col items-center gap-3 py-12 text-center">
-                <Lock className="w-10 h-10 text-muted-foreground" />
-                <p className="text-lg font-semibold">Parlay Locked</p>
-                <p className="text-sm text-muted-foreground max-w-xs">
-                  The Parlay Maestro has locked this week's parlay. No new submissions or edits are allowed.
+          {lockStatus?.isLocked && (
+            <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-red-500/5 border border-red-500/20" data-testid="banner-parlay-locked">
+              <Lock className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-semibold">This week's parlay is locked</p>
+                <p className="text-muted-foreground">
+                  {myParlay && myParlay.status !== "draft"
+                    ? "Your submission is locked in. "
+                    : "You didn't submit before the lock, so you're marked Void this week. "}
+                  No new picks or submissions until it's unlocked.
                 </p>
-                {myParlay && (
-                  <Badge variant="secondary" className="mt-2">Your submission is locked in</Badge>
-                )}
-              </CardContent>
-            </Card>
-          ) : !myParlay || myParlay.status === "draft" ? (
+              </div>
+            </div>
+          )}
+
+          {!lockStatus?.isLocked && (!myParlay || myParlay.status === "draft") ? (
             <>
               {/* Selection Summary */}
               {myLegs.length > 0 && (
@@ -656,7 +837,7 @@ export default function LeagueDetail() {
                     )}
                     <div className="flex flex-wrap gap-2">
                       {myLegs.map((leg) => {
-                        const game = games?.find(g => g.id === leg.gameId);
+                        const game = games?.find(g => g.id === leg.gameId) ?? nextWeekRowGames?.find(g => g.id === leg.gameId);
                         const pickLabel =
                           leg.betType === 'player_prop' ? `${leg.playerName ?? 'Player'} ${leg.pick}` :
                           leg.betType === 'over' ? `O ${game?.overUnder}` :
@@ -677,128 +858,44 @@ export default function LeagueDetail() {
                 </Card>
               )}
 
-              {/* Games Grid — only games still open to pick, plus any already-
-                  started/finished game the user has an existing leg on (so
-                  they can still see what they picked). */}
+              {/* Games Grid — this week's games still open to pick, plus any
+                  already-started/finished game the user has a leg on (so they
+                  can still see what they picked). Next week's games only
+                  appear once the user asks for them. */}
               <div className="grid gap-4 md:grid-cols-2">
-                {games?.filter((game) => {
-                  const isPast = !!game.isFinished || (game.gameTime ? new Date(game.gameTime) < new Date() : false);
-                  return !isPast || legsForGame(game.id).length > 0;
-                }).map((game) => {
-                  const isPast = game.gameTime ? new Date(game.gameTime) < new Date() : false;
-                  const capReached = legsForGame(game.id).length >= maxBetsPerGame;
-
-                  const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
-                  const homeSpread = game.spread || null;
-
-                  return (
-                    <Card
-                      key={game.id}
-                      className={cn(
-                        "bg-card/50 border-white/5 transition-all",
-                        isPast && "opacity-50"
-                      )}
-                      data-testid={`card-game-${game.id}`}
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex items-center justify-between mb-1 text-xs text-muted-foreground">
-                          <span>{game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}</span>
-                          {game.venue && <span className="truncate max-w-[120px]">{game.venue}</span>}
-                        </div>
-                        <div className="flex items-center justify-between mb-3 text-sm font-medium">
-                          <span className="truncate">{game.awayTeam} <span className="text-xs text-muted-foreground">{game.awayRecord}</span></span>
-                          <span className="text-xs text-muted-foreground px-1">@</span>
-                          <span className="truncate text-right">{game.homeTeam} <span className="text-xs text-muted-foreground">{game.homeRecord}</span></span>
-                        </div>
-
-                        {/* 3×2 pick tiles: row 1 = away spread/ML/over, row 2 = home spread/ML/under */}
-                        <div className="grid grid-cols-3 gap-2">
-                          <PickTile
-                            label={awaySpread || '-'}
-                            subLabel={game.spreadOdds}
-                            hasOdds={!!game.spread}
-                            isPast={isPast}
-                            isSelected={isMySelection(game.id, 'spread', 'away')}
-                            takenBy={takenByOther(game.id, 'spread', 'away')?.takenBy}
-                            capReached={capReached}
-                            onClick={() => toggleLeg(game, 'spread', 'away')}
-                            testId={`button-spread-away-${game.id}`}
-                          />
-                          <PickTile
-                            label={game.moneylineAway || '-'}
-                            hasOdds={!!game.moneylineAway}
-                            isPast={isPast}
-                            isSelected={isMySelection(game.id, 'moneyline', 'away')}
-                            takenBy={takenByOther(game.id, 'moneyline', 'away')?.takenBy}
-                            capReached={capReached}
-                            onClick={() => toggleLeg(game, 'moneyline', 'away')}
-                            testId={`button-ml-away-${game.id}`}
-                          />
-                          <PickTile
-                            label={`O ${game.overUnder || '-'}`}
-                            subLabel={game.overOdds}
-                            hasOdds={!!game.overUnder}
-                            isPast={isPast}
-                            isSelected={isMySelection(game.id, 'over', 'over')}
-                            takenBy={takenByOther(game.id, 'over', 'over')?.takenBy}
-                            capReached={capReached}
-                            onClick={() => toggleLeg(game, 'over', 'over')}
-                            testId={`button-over-${game.id}`}
-                          />
-                          <PickTile
-                            label={homeSpread || '-'}
-                            subLabel={game.spreadOdds}
-                            hasOdds={!!game.spread}
-                            isPast={isPast}
-                            isSelected={isMySelection(game.id, 'spread', 'home')}
-                            takenBy={takenByOther(game.id, 'spread', 'home')?.takenBy}
-                            capReached={capReached}
-                            onClick={() => toggleLeg(game, 'spread', 'home')}
-                            testId={`button-spread-home-${game.id}`}
-                          />
-                          <PickTile
-                            label={game.moneylineHome || '-'}
-                            hasOdds={!!game.moneylineHome}
-                            isPast={isPast}
-                            isSelected={isMySelection(game.id, 'moneyline', 'home')}
-                            takenBy={takenByOther(game.id, 'moneyline', 'home')?.takenBy}
-                            capReached={capReached}
-                            onClick={() => toggleLeg(game, 'moneyline', 'home')}
-                            testId={`button-ml-home-${game.id}`}
-                          />
-                          <PickTile
-                            label={`U ${game.overUnder || '-'}`}
-                            subLabel={game.underOdds}
-                            hasOdds={!!game.overUnder}
-                            isPast={isPast}
-                            isSelected={isMySelection(game.id, 'under', 'under')}
-                            takenBy={takenByOther(game.id, 'under', 'under')?.takenBy}
-                            capReached={capReached}
-                            onClick={() => toggleLeg(game, 'under', 'under')}
-                            testId={`button-under-${game.id}`}
-                          />
-                        </div>
-
-                        <button
-                          type="button"
-                          className="mt-3 text-xs text-primary hover:underline"
-                          onClick={() => setPropDialogGame(game)}
-                          data-testid={`button-view-props-${game.id}`}
-                        >
-                          View player props →
-                        </button>
-
-                        {game.isFinished && (
-                          <div className="mt-3 pt-3 border-t border-white/10 text-center text-sm">
-                            <span className="font-mono">{game.awayScore} - {game.homeScore}</span>
-                            <Badge variant="outline" className="ml-2">Final</Badge>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  );
-                })}
+                {thisWeekGames.map(renderGameCard)}
               </div>
+
+              {nextWeekLabel && (
+                showNextWeek ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
+                      <p className="text-sm font-semibold">
+                        Next week <span className="text-muted-foreground font-normal">· {nextWeekLabel}</span>
+                      </p>
+                      <Button size="sm" variant="ghost" onClick={() => setShowNextWeek(false)} data-testid="button-hide-next-week">
+                        Hide
+                      </Button>
+                    </div>
+                    {nextWeekGames.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-6 bg-card/20 rounded-xl border border-dashed border-white/10">
+                        {loadingNextWeekGames ? "Loading…" : "Next week's lines aren't posted yet."}
+                      </p>
+                    ) : (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {nextWeekGames.map(renderGameCard)}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex justify-center">
+                    <Button variant="outline" size="sm" onClick={() => setShowNextWeek(true)} data-testid="button-load-next-week">
+                      <Plus className="w-4 h-4 mr-1" />
+                      Load next week's games ({nextWeekLabel})
+                    </Button>
+                  </div>
+                )
+              )}
 
               {propDialogGame && activeWeekId && (
                 <AddPropLegDialog
@@ -897,7 +994,7 @@ export default function LeagueDetail() {
               }
 
               {/* Suggested bets — popular picks this week + your own history */}
-              {((popularPicks?.length ?? 0) > 0 || (myParlayHistory?.length ?? 0) > 0) && (
+              {!lockStatus?.isLocked && ((popularPicks?.length ?? 0) > 0 || (myParlayHistory?.length ?? 0) > 0) && (
                 <Card className="bg-card/30 border-white/5">
                   <CardHeader>
                     <CardTitle className="text-base">Need inspiration?</CardTitle>
@@ -1027,18 +1124,29 @@ export default function LeagueDetail() {
               </Select>
             </div>
             <div className="flex items-center gap-2">
-              <Label className="text-sm shrink-0 text-muted-foreground">Member:</Label>
-              <Select value={allMemberFilter} onValueChange={setAllMemberFilter}>
-                <SelectTrigger className="w-44 h-9 text-sm" data-testid="select-all-member">
+              <Label className="text-sm shrink-0 text-muted-foreground">Members:</Label>
+              <MultiSelect
+                options={(members ?? []).map(m => ({
+                  value: m.userId,
+                  label: getDisplayName(m.user, shortId(m.userId, 8)),
+                }))}
+                selected={allMemberFilter}
+                onChange={setAllMemberFilter}
+                placeholder="All Members"
+                className="w-44 h-9 text-sm"
+                testId="select-all-member"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Label className="text-sm shrink-0 text-muted-foreground">Sort:</Label>
+              <Select value={allSort} onValueChange={(v) => setAllSort(v as ParlayListSort)}>
+                <SelectTrigger className="w-48 h-9 text-sm" data-testid="select-all-sort">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Members</SelectItem>
-                  {members?.map(m => (
-                    <SelectItem key={m.userId} value={m.userId}>
-                      {getDisplayName(m.user, shortId(m.userId, 8))}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="ending_desc">Most recent ending</SelectItem>
+                  <SelectItem value="ending_asc">Oldest ending</SelectItem>
+                  <SelectItem value="created_desc">Most recently submitted</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1065,10 +1173,11 @@ export default function LeagueDetail() {
             if (allWeekFilter !== "all") {
               list = list.filter(p => p.weekId === Number(allWeekFilter));
             }
-            if (allMemberFilter !== "all") {
+            if (allMemberFilter.length > 0) {
+              const picked = new Set(allMemberFilter);
               list = list
-                .filter(p => p.legs.some(l => l.userId === allMemberFilter))
-                .map(p => ({ ...p, legs: p.legs.filter(l => l.userId === allMemberFilter) }));
+                .filter(p => p.legs.some(l => l.userId != null && picked.has(l.userId)))
+                .map(p => ({ ...p, legs: p.legs.filter(l => l.userId != null && picked.has(l.userId)) }));
             }
             if (loadingAllParlays) {
               return (
@@ -1343,6 +1452,11 @@ export default function LeagueDetail() {
                 <Users className="w-5 h-5 text-primary" />
                 League Members
                 <LeagueRolesDialog />
+                {(pokes?.received.length ?? 0) > 0 && (
+                  <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-xs font-normal" data-testid="badge-pokes-received">
+                    👉 {pokes!.received.length} poke{pokes!.received.length !== 1 ? "s" : ""}
+                  </Badge>
+                )}
               </CardTitle>
               {league.isAdmin && (
                 <Button
@@ -1387,7 +1501,52 @@ export default function LeagueDetail() {
                             <p className="text-xs text-muted-foreground">{m.user.email}</p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap justify-end">
+                          {m.userId !== user?.id && (() => {
+                            const name = getDisplayName(m.user, "them");
+                            const pokedMe = pokes?.received.find(p => p.fromUserId === m.userId);
+                            const iPoked = pokes?.sent.some(p => p.toUserId === m.userId);
+                            const pokingThis = pokeMember.isPending && pokeMember.variables?.toUserId === m.userId;
+                            if (pokedMe) {
+                              return (
+                                <span className="flex items-center gap-1 rounded-full bg-amber-500/10 border border-amber-500/30 pl-2.5 pr-1 py-0.5 text-xs text-amber-300" data-testid={`poke-received-${m.userId}`}>
+                                  👉 Poked you {formatDistanceToNow(new Date(pokedMe.createdAt), { addSuffix: true })}
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-6 px-2 text-xs text-amber-200 hover:text-amber-100"
+                                    disabled={pokingThis}
+                                    onClick={() => pokeMember.mutate({ toUserId: m.userId, name, isPokeBack: true })}
+                                    data-testid={`button-poke-back-${m.userId}`}
+                                  >
+                                    Poke back
+                                  </Button>
+                                  <button
+                                    type="button"
+                                    className="rounded-full p-0.5 text-amber-300/70 hover:text-amber-100"
+                                    onClick={() => dismissPoke.mutate(m.userId)}
+                                    aria-label={`Dismiss ${name}'s poke`}
+                                    data-testid={`button-dismiss-poke-${m.userId}`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </span>
+                              );
+                            }
+                            return (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                disabled={iPoked || pokingThis}
+                                title={iPoked ? `Waiting for ${name} to poke back` : `Poke ${name}`}
+                                onClick={() => pokeMember.mutate({ toUserId: m.userId, name, isPokeBack: false })}
+                                data-testid={`button-poke-${m.userId}`}
+                              >
+                                👉 {iPoked ? "Poked" : "Poke"}
+                              </Button>
+                            );
+                          })()}
                           {m.user.isDemo && (
                             <Badge className="text-[10px] px-1 py-0 h-4 bg-yellow-500/20 text-yellow-400 border-yellow-500/30">DEMO</Badge>
                           )}
@@ -1454,17 +1613,16 @@ export default function LeagueDetail() {
           {isParticipationLookthrough ? (
             loadingMissedWeeks ? (
               <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>
-            ) : !missedWeeksData?.weeks || missedWeeksData.weeks.length === 0 ? (
-              <p className="text-sm text-muted-foreground italic py-4">No missed weeks — full participation!</p>
             ) : (
-              <ul className="divide-y divide-white/5">
-                {missedWeeksData.weeks.map((w) => (
-                  <li key={w.weekId} className="flex items-center justify-between py-2 text-sm">
-                    <span>{w.label}</span>
-                    <span className="text-muted-foreground">{w.season}</span>
-                  </li>
-                ))}
-              </ul>
+              <ParticipationLookthrough
+                holderUserId={lookthroughRecord?.holderUserId ?? null}
+                holderName={getDisplayName(
+                  members?.find(m => m.userId === lookthroughRecord?.holderUserId)?.user,
+                  "This member",
+                )}
+                summary={missedWeeksData}
+                leagueStats={stats}
+              />
             )
           ) : loadingLookthrough ? (
             <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>

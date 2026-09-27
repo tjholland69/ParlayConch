@@ -55,7 +55,10 @@ function LoadingSkeletons() {
   );
 }
 
-function useNewsFeed(feed: "headlines" | "injuries" | "scores", limit = 16) {
+/** Default number of items each news column shows on first load. */
+const DEFAULT_NEWS_COUNT = 10;
+
+function useNewsFeed(feed: "headlines" | "injuries" | "scores", limit = DEFAULT_NEWS_COUNT) {
   return useQuery<NewsItem[]>({
     queryKey: ["/api/news", feed, limit],
     queryFn: async () => {
@@ -163,7 +166,7 @@ const INJURY_PAGE_SIZE_OPTIONS = [
 ];
 
 function InjuriesPanel() {
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(DEFAULT_NEWS_COUNT);
   const { data: items, isLoading, isError } = useNewsFeed("injuries", pageSize);
   const [position, setPosition] = useState("all");
   const [team, setTeam] = useState("all");
@@ -261,7 +264,7 @@ function ScoresPanel() {
         isError={isError}
         tagColors={SCORE_TAG_COLORS}
         emptyMessage={items?.length ? "No games match those filters." : "No data available right now."}
-        limit={14}
+        limit={DEFAULT_NEWS_COUNT}
       />
     </div>
   );
@@ -269,7 +272,7 @@ function ScoresPanel() {
 
 function HeadlinesPanel() {
   const { data: items, isLoading, isError } = useNewsFeed("headlines");
-  return <NewsItemsView items={items} isLoading={isLoading} isError={isError} tagColors={{}} limit={14} />;
+  return <NewsItemsView items={items} isLoading={isLoading} isError={isError} tagColors={{}} limit={DEFAULT_NEWS_COUNT} />;
 }
 
 function ColumnHeading({ icon: Icon, label }: { icon: typeof Newspaper; label: string }) {

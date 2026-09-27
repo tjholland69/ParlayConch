@@ -20,7 +20,7 @@
  *   npm run backfill:odds -- --apply (writes to the DB)
  */
 import { db } from "../server/db";
-import { parlayLegs, games, parlays, weeks } from "../shared/schema";
+import { parlayLegs, games, parlays, weeks } from "../shared/db-schema";
 import { and, eq, inArray, ne, or, isNull } from "drizzle-orm";
 import { getHistoricalGameLines } from "../server/services/historicalOddsCache";
 import type { Game } from "@shared/schema";

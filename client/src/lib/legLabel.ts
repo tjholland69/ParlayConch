@@ -23,11 +23,11 @@ export function legLabel(leg: LegLike): string {
   return "Unknown Matchup";
 }
 
-/** Richer matchup/prop display (History). */
+/** Matchup/prop column in the lookthrough table. Props show only the player —
+ * the prop type is already spelled out in the Pick column (formatPickLabel). */
 export function legMatchup(leg: LegLike): string {
   if (leg.betType === "player_prop") {
-    const propLabel = propTypeDisplay(leg.propType);
-    return `${leg.playerName || "Player"}${propLabel ? ` — ${propLabel}` : ""}`;
+    return leg.playerName || "Player";
   }
   return `${leg.game?.awayTeam ?? "?"} @ ${leg.game?.homeTeam ?? "?"}`;
 }

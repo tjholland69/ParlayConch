@@ -127,6 +127,11 @@ export const PLAYER_PROP_TYPES = [
 
 export type PlayerPropType = typeof PLAYER_PROP_TYPES[number]["value"];
 
+/** Orderings for a league's All Parlays list. "Ending" is when a parlay's
+ * last leg was (or will be) decided; see storage.getAllLeagueParlays. */
+export const PARLAY_LIST_SORTS = ["ending_desc", "ending_asc", "created_desc"] as const;
+export type ParlayListSort = typeof PARLAY_LIST_SORTS[number];
+
 // ─── Custom Indexes ────────────────────────────────────────────────────────
 // A named, saved definition of a comparison line ("index") that can be overlaid
 // on performance graphs. Private to its owner by default; can be shared with

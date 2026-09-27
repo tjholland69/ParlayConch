@@ -6,7 +6,7 @@
  */
 
 import { db } from "../server/db";
-import { teams, type InsertTeam } from "../shared/schema";
+import { teams, type InsertTeam } from "../shared/db-schema";
 
 // Owner / head coach current as of the author's knowledge cutoff (Jan 2026).
 // Coaching staffs and ownership groups change yearly — re-verify before relying

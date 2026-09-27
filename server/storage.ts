@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { logger } from "./logger";
 import {
-  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks,
+  weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks, leaguePokes,
   players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes, teams,
 } from "@shared/db-schema";
 import {
@@ -13,7 +13,7 @@ import {
   type Week, type Game, type Bet, type InsertBet, type League, type LeagueMember,
   type Parlay, type ParlayLeg, type InsertLeague, type InsertParlay, type InsertParlayLeg,
   type GameWithBet, type BetHistoryItem, type UserStat, type LeagueWithMembers, type ParlayWithLegs,
-  type ParlayLegWithParlayContext,
+  type ParlayLegWithParlayContext, type ParlayListSort,
   type ImportBatch, type InsertImportBatch, type ImportParlayLeg,
   type LieutenantPermissions, type LeagueMemberWithUser,
   type Notification, type LeagueNotificationSettings,
@@ -90,6 +90,21 @@ function generateInviteCode(): string {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+/** Weak Link lookthrough: the weeks a member was eligible for but skipped,
+ * plus the counts behind their participation rate. */
+export type MissedWeeksSummary = {
+  weeks: { weekId: number; season: number; weekNumber: number; label: string }[];
+  eligibleCount: number;
+  submittedCount: number;
+  memberSince: string | null;
+};
+
+/** Outstanding (not yet seen) pokes involving one member of one league. */
+export type LeaguePokesForUser = {
+  received: { fromUserId: string; createdAt: string }[];
+  sent: { toUserId: string; createdAt: string }[];
+};
+
 export interface IStorage {
   // Weeks
   getWeeks(): Promise<Week[]>;
@@ -109,7 +124,7 @@ export interface IStorage {
   // Stats
   getStats(): Promise<UserStat[]>;
   getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]>;
-  getMissedWeeksForMember(leagueId: number, userId: string): Promise<{ weekId: number; season: number; weekNumber: number; label: string }[]>;
+  getMissedWeeksForMember(leagueId: number, userId: string): Promise<MissedWeeksSummary>;
 
   // Leagues
   createLeague(userId: string, league: InsertLeague): Promise<League>;
@@ -150,7 +165,7 @@ export interface IStorage {
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(
     leagueId: number,
-    opts?: { limit?: number; offset?: number; all?: boolean; weekIds?: number[] },
+    opts?: { limit?: number; offset?: number; all?: boolean; weekIds?: number[]; sort?: ParlayListSort },
   ): Promise<{ items: ParlayWithLegs[]; total: number; limit: number; offset: number; hasMore: boolean }>;
   approveParlay(parlayId: number, adminId: string): Promise<Parlay>;
   rejectParlay(parlayId: number, adminId: string): Promise<Parlay>;
@@ -247,6 +262,11 @@ export interface IStorage {
   getWeekLockStatus(leagueId: number, weekId: number): Promise<WeekLockStatus>;
   lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock>;
   unlockWeekParlay(leagueId: number, weekId: number): Promise<void>;
+
+  // Pokes (league Members tab easter egg)
+  getLeaguePokes(leagueId: number, userId: string): Promise<LeaguePokesForUser>;
+  pokeMember(leagueId: number, fromUserId: string, toUserId: string): Promise<"poked" | "already_poked">;
+  dismissPokes(leagueId: number, userId: string, fromUserId: string): Promise<void>;
 
   // Enrichment
   findGameByTeams(weekId: number, homeTeam: string, awayTeam: string): Promise<Game | null>;
@@ -545,10 +565,10 @@ export class DatabaseStorage implements IStorage {
    * [startDate, endDate ?? now] window) for one user instead of every
    * member, so the two stay consistent by construction.
    */
-  async getMissedWeeksForMember(leagueId: number, userId: string): Promise<{ weekId: number; season: number; weekNumber: number; label: string }[]> {
+  async getMissedWeeksForMember(leagueId: number, userId: string): Promise<MissedWeeksSummary> {
     const [membership] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
-    if (!membership) return [];
+    if (!membership) return { weeks: [], eligibleCount: 0, submittedCount: 0, memberSince: null };
 
     const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
     const memberIds = members.map(m => m.userId);
@@ -579,16 +599,23 @@ export class DatabaseStorage implements IStorage {
     const windowStart = membership.startDate ? new Date(membership.startDate).getTime() : -Infinity;
     const windowEnd = membership.endDate ? new Date(membership.endDate).getTime() : Date.now();
 
-    const missedWeekIds = [...weekAnchor.entries()]
-      .filter(([weekId, t]) => t >= windowStart && t <= windowEnd && !submittedWeeks.has(weekId))
+    const eligibleWeekIds = [...weekAnchor.entries()]
+      .filter(([, t]) => t >= windowStart && t <= windowEnd)
       .map(([weekId]) => weekId);
+    const missedWeekIds = eligibleWeekIds.filter(weekId => !submittedWeeks.has(weekId));
+    const summary = {
+      eligibleCount: eligibleWeekIds.length,
+      submittedCount: eligibleWeekIds.length - missedWeekIds.length,
+      memberSince: membership.startDate ? new Date(membership.startDate).toISOString() : null,
+    };
 
-    if (missedWeekIds.length === 0) return [];
+    if (missedWeekIds.length === 0) return { weeks: [], ...summary };
 
     const weekRows = await db.select().from(weeks).where(inArray(weeks.id, missedWeekIds));
-    return weekRows
+    const missed = weekRows
       .map(w => ({ weekId: w.id, season: w.season, weekNumber: w.weekNumber, label: w.label }))
       .sort((a, b) => a.season - b.season || a.weekNumber - b.weekNumber);
+    return { weeks: missed, ...summary };
   }
 
   async getLeagueDataStats(leagueId: number): Promise<LeagueDataStats> {
@@ -1675,7 +1702,7 @@ export class DatabaseStorage implements IStorage {
 
   async getAllLeagueParlays(
     leagueId: number,
-    opts: { limit?: number; offset?: number; all?: boolean; weekIds?: number[] } = {},
+    opts: { limit?: number; offset?: number; all?: boolean; weekIds?: number[]; sort?: ParlayListSort } = {},
   ): Promise<{ items: ParlayWithLegs[]; total: number; limit: number; offset: number; hasMore: boolean }> {
     const DEFAULT_LIMIT = 50;
     const MAX_LIMIT = 100;
@@ -1701,11 +1728,27 @@ export class DatabaseStorage implements IStorage {
     // leftJoin (not innerJoin) — a parlay must never disappear from the results just
     // because its userId doesn't resolve to a row in `users` (e.g. legacy/import
     // data with a stale owner reference). Missing `user` signals that to callers.
+    // "Ending" = when the parlay's last leg was decided (or its last game
+    // kicks off, if still open), falling back to submission time for a parlay
+    // with no dated legs. Ordering here, not client-side, so paging stays
+    // correct — imported history carries its import time as createdAt, which
+    // made createdAt order put old weeks on top.
+    const endingAt = sql`coalesce((
+      select max(coalesce(pl.decided_at, g.finished_at, g.game_time))
+      from parlay_legs pl left join games g on g.id = pl.game_id
+      where pl.parlay_id = ${parlays.id}
+    ), ${parlays.createdAt})`;
+    const orderBy = opts.sort === "ending_desc"
+      ? [desc(endingAt), desc(parlays.id)]
+      : opts.sort === "ending_asc"
+        ? [asc(endingAt), asc(parlays.id)]
+        : [desc(parlays.createdAt)];
+
     let query = db.select({ parlay: parlays, user: users })
       .from(parlays)
       .leftJoin(users, eq(parlays.userId, users.id))
       .where(scopeCondition)
-      .orderBy(desc(parlays.createdAt))
+      .orderBy(...orderBy)
       .$dynamic();
 
     if (!unbounded) {
@@ -2380,6 +2423,64 @@ export class DatabaseStorage implements IStorage {
     await db.delete(leagueWeekLocks)
       .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
     emitLeague(leagueId, weekId, "lock_updated");
+  }
+
+  // ─── Pokes ─────────────────────────────────────────────────────────────────
+
+  async getLeaguePokes(leagueId: number, userId: string): Promise<LeaguePokesForUser> {
+    const rows = await db.select().from(leaguePokes)
+      .where(and(
+        eq(leaguePokes.leagueId, leagueId),
+        isNull(leaguePokes.seenAt),
+        or(eq(leaguePokes.toUserId, userId), eq(leaguePokes.fromUserId, userId)),
+      ))
+      .orderBy(desc(leaguePokes.createdAt));
+    return {
+      received: rows
+        .filter(r => r.toUserId === userId)
+        .map(r => ({ fromUserId: r.fromUserId, createdAt: r.createdAt.toISOString() })),
+      sent: rows
+        .filter(r => r.fromUserId === userId)
+        .map(r => ({ toUserId: r.toUserId, createdAt: r.createdAt.toISOString() })),
+    };
+  }
+
+  /** One outstanding poke per direction: a repeat poke before the other
+   * member responds is a no-op. Poking someone who poked you counts as
+   * poking back and clears their poke. */
+  async pokeMember(leagueId: number, fromUserId: string, toUserId: string): Promise<"poked" | "already_poked"> {
+    return db.transaction(async (tx) => {
+      const [pending] = await tx.select({ id: leaguePokes.id }).from(leaguePokes)
+        .where(and(
+          eq(leaguePokes.leagueId, leagueId),
+          eq(leaguePokes.fromUserId, fromUserId),
+          eq(leaguePokes.toUserId, toUserId),
+          isNull(leaguePokes.seenAt),
+        ));
+      if (pending) return "already_poked" as const;
+
+      await tx.update(leaguePokes)
+        .set({ seenAt: new Date() })
+        .where(and(
+          eq(leaguePokes.leagueId, leagueId),
+          eq(leaguePokes.fromUserId, toUserId),
+          eq(leaguePokes.toUserId, fromUserId),
+          isNull(leaguePokes.seenAt),
+        ));
+      await tx.insert(leaguePokes).values({ leagueId, fromUserId, toUserId });
+      return "poked" as const;
+    });
+  }
+
+  async dismissPokes(leagueId: number, userId: string, fromUserId: string): Promise<void> {
+    await db.update(leaguePokes)
+      .set({ seenAt: new Date() })
+      .where(and(
+        eq(leaguePokes.leagueId, leagueId),
+        eq(leaguePokes.fromUserId, fromUserId),
+        eq(leaguePokes.toUserId, userId),
+        isNull(leaguePokes.seenAt),
+      ));
   }
 
   // ─── Enrichment ────────────────────────────────────────────────────────────

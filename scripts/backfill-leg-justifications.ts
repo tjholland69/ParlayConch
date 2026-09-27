@@ -10,7 +10,7 @@
  *   npm run backfill:leg-justifications -- --apply (writes to the DB)
  */
 import { db } from "../server/db";
-import { parlayLegs, games, parlays, weeks } from "../shared/schema";
+import { parlayLegs, games, parlays, weeks } from "../shared/db-schema";
 import { and, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { storage } from "../server/storage";
 import { buildResultDetail } from "../shared/legJustification";

@@ -6,8 +6,11 @@ import { useDashboardPerformance, type DashboardDateRange } from "@/hooks/use-da
 import {
   useCustomIndexes,
   useCustomIndexPerformances,
+  useLeagueMembers,
   describeCustomIndexFilters,
 } from "@/hooks/use-custom-indexes";
+import { describeCustomIndexInWords } from "@/lib/indexDescription";
+import { getDisplayName } from "@/lib/displayName";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -60,7 +63,7 @@ function CompareAgainstFilter({
   const { data: indexes } = useCustomIndexes();
   const { data: leagues } = useLeagues();
   const options = [
-    { id: DEFAULT_INDEX_ID, label: "Default Index", detail: "Your full history, every league, every bet type." },
+    { id: DEFAULT_INDEX_ID, label: "Default Index", detail: "Everyone else in your leagues, every bet type." },
     ...(indexes ?? []).map((idx) => ({
       id: String(idx.id),
       label: idx.displayName,
@@ -234,6 +237,8 @@ function PerformanceChartSlide({
   const activeCustom = (indexes ?? []).filter((idx) => activeIndexIds.includes(String(idx.id)));
   const defaultActive = activeIndexIds.includes(DEFAULT_INDEX_ID);
   const { byId: overlayPoints } = useCustomIndexPerformances(activeCustom.map((idx) => idx.id));
+  const { data: leagues } = useLeagues();
+  const { members } = useLeagueMembers((leagues ?? []).map((l) => l.id));
 
   if (isLoading) {
     return (
@@ -286,14 +291,29 @@ function PerformanceChartSlide({
       indexWeekWinRate: number | null;
     }[];
   };
-  const scopes: Scope[] = [];
+  const scopes: (Scope & { description: string })[] = [];
+  const selectedLeagueName = leagueId ? leagues?.find((l) => l.id === leagueId)?.name : undefined;
   if (defaultActive) {
-    scopes.push({ id: DEFAULT_INDEX_ID, name: "Index", points: data.points });
+    scopes.push({
+      id: DEFAULT_INDEX_ID,
+      name: "Index",
+      points: data.points,
+      description: `All bet types, against everyone else ${selectedLeagueName ? `in ${selectedLeagueName}` : "across all your leagues"}`,
+    });
   }
+  const memberName = (userId: string) => {
+    const m = members.find((x) => x.userId === userId);
+    return m ? getDisplayName(m.user) : undefined;
+  };
   for (const idx of activeCustom) {
     const points = overlayPoints[idx.id];
     if (points) {
-      scopes.push({ id: String(idx.id), name: idx.displayName, points });
+      scopes.push({
+        id: String(idx.id),
+        name: idx.displayName,
+        points,
+        description: describeCustomIndexInWords(idx.filters, leagues ?? [], memberName),
+      });
     }
   }
 
@@ -354,7 +374,26 @@ function PerformanceChartSlide({
       {series.length === 0 ? (
         <EmptyState icon={BarChart3} message="Pick at least one index to compare against." />
       ) : (
-        <PerformanceLineChart points={points} series={series} />
+        <>
+          <PerformanceLineChart points={points} series={series} />
+          <div className="mt-4 space-y-1 text-xs text-muted-foreground" data-testid="text-index-disclaimer">
+            {scopes.map((scope, slot) => (
+              <p key={scope.id} className="flex items-start gap-2">
+                <span
+                  className="mt-1.5 w-3 h-0 shrink-0 border-t-2 border-dashed"
+                  style={{ borderColor: lighten(seriesColor(slot)) }}
+                />
+                <span>
+                  <span className="font-medium text-foreground">{scope.name}:</span> {scope.description}.
+                </span>
+              </p>
+            ))}
+            <p className="pt-1">
+              Lines show cumulative win rate on decided legs. Your line uses the same filters as the
+              index it's paired with.
+            </p>
+          </div>
+        </>
       )}
     </div>
   );

@@ -15,7 +15,7 @@
  */
 
 import { db } from "../server/db";
-import { users } from "../shared/schema";
+import { users } from "../shared/db-schema";
 import { sql } from "drizzle-orm";
 
 const DEMO_COUNT = 12;

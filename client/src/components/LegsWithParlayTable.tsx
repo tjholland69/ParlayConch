@@ -2,7 +2,7 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatPickLabel } from "@/lib/formatPick";
+import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
 import { getDisplayName } from "@/lib/displayName";
 import { legMatchup } from "@/lib/legLabel";
 import { getSlate } from "@shared/slate";
@@ -56,7 +56,7 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
                   </span>
                   {leg.parlay.status === "win" && (
                     <Badge variant="outline" className="text-[10px] px-1 py-0 border-green-500/40 text-green-400">
-                      Win
+                      Parlay Win
                     </Badge>
                   )}
                 </div>
@@ -82,7 +82,7 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
               <td className="px-3 py-2 text-muted-foreground text-xs">{formatPickLabel(leg)}</td>
               <td className="px-3 py-2 text-muted-foreground text-xs">{leg.line || "—"}</td>
               <td className="px-3 py-2 text-muted-foreground text-xs">
-                {leg.odds || "—"}
+                {withPlusSign(leg.odds) ?? "—"}
                 {leg.oddsSource && <span className="block text-[10px] text-muted-foreground/60">{leg.oddsSource}</span>}
               </td>
               <td className="px-3 py-2 text-muted-foreground text-xs whitespace-nowrap">
