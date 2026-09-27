@@ -139,6 +139,43 @@ export async function sendMemberAddedEmail(opts: {
 }
 
 /**
+ * Sent when an existing (demo/seed) account is handed off to a real person —
+ * see scripts/claim-demo-user.ts. Distinct from sendSetPasswordEmail's
+ * Replit-migration copy: this one explains they're inheriting an existing
+ * account's history, not just regaining access to their own.
+ */
+export async function sendClaimAccountEmail(opts: {
+  toEmail: string;
+  toName: string | null;
+  leagueName: string | null;
+  setPasswordUrl: string;
+}): Promise<void> {
+  const { client, fromEmail } = await getUncachableResendClient();
+
+  const greeting = opts.toName ? `Hi ${opts.toName},` : "Hey there,";
+  const leagueLine = opts.leagueName
+    ? `Your Parlay.Conch account is ready, with your existing picks history already loaded from <strong>${opts.leagueName}</strong>.`
+    : "Your Parlay.Conch account is ready, with your existing picks history already loaded.";
+
+  const html = baseHtml(`
+    <h1>Your Parlay.Conch account is ready</h1>
+    <p>${greeting}</p>
+    <p>${leagueLine} Set a password to claim it as your own.</p>
+    <a class="cta" href="${opts.setPasswordUrl}">Set Your Password →</a>
+    <hr class="divider" />
+    <p style="font-size:13px;">Or copy this link into your browser:<br/><span style="color:#71717a;">${opts.setPasswordUrl}</span></p>
+    <p style="font-size:13px;">This link expires in 14 days.</p>
+  `);
+
+  await sendChecked(client, {
+    from: `Parlay.Conch <${fromEmail}>`,
+    to: opts.toEmail,
+    subject: "Your Parlay.Conch account is ready — set your password",
+    html,
+  });
+}
+
+/**
  * Sent during the Replit-auth -> email/password migration: asks an existing
  * Replit-only user to set a password so they can keep signing in once
  * Replit login is removed.

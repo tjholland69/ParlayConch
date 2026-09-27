@@ -1,7 +1,7 @@
 import { useState, useMemo, Suspense, lazy } from "react";
 import { useRoute, Link } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLeagues, useAllLeagueParlays, useWeeks, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs, useMissingParlayMembers, useBackfillMissingParlays, useUpdateParlayLeg, useDeleteParlayLeg, useEnrichParlayLeg } from "@/hooks/use-bets";
+import { useLeagues, useAllLeagueParlays, useWeeks, useGames, useLeagueMembersWithUsers, useAddHistoricalParlay, useBulkUpdateParlayLegs, useMissingParlayMembers, useBackfillMissingParlays, useUpdateParlayLeg, useDeleteParlayLeg, useEnrichParlayLeg } from "@/hooks/use-bets";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,15 +14,20 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogD
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine, UserX, LayoutGrid, Table2 } from "lucide-react";
-import { PLAYER_PROP_TYPES, type ParlayWithLegs, type ParlayLeg, type LeagueMemberWithUser } from "@shared/schema";
+import { PLAYER_PROP_TYPES, type ParlayWithLegs, type ParlayLeg, type LeagueMemberWithUser, type Game } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ParlayRollupCard, LegSheet, legToForm, blankLeg, BET_TYPES, RESULTS, type LegFormState } from "@/components/ParlayRollupCard";
+import { PickTile } from "@/components/PickTile";
+import { getLineForBet } from "@/lib/gameOdds";
+import { upToCurrentWeek } from "@/lib/weekFilters";
+import { format } from "date-fns";
 import { PageLoader } from "@/components/PageLoader";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
 import { getDisplayName, shortId, sortByFirstName } from "@/lib/displayName";
+import { useAuth } from "@/hooks/use-auth";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import type { ParlayLegRowActions } from "@/components/ParlayLegsGrid";
 
@@ -270,7 +275,7 @@ type AddHistoricalBetSheetProps = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   leagueId: number;
-  weeks: Array<{ id: number; season: number; weekNumber: number; label: string }>;
+  weeks: Array<{ id: number; season: number; weekNumber: number; label: string; isActive: boolean | null }>;
   members: Array<{ userId: string; user?: { firstName?: string | null; email?: string | null; settings?: unknown } | null }>;
 };
 
@@ -283,8 +288,17 @@ function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }:
   const [legSheetKey, setLegSheetKey] = useState(0);
   const [legSheetOpen, setLegSheetOpen] = useState(false);
 
-  const seasons = [...new Set(weeks.map(w => w.season))].sort((a, b) => b - a);
-  const visibleWeeks = yearStr ? weeks.filter(w => w.season === Number(yearStr)) : weeks;
+  // Unlike the live weekly-picks board, historical weeks are frequently
+  // already locked/inactive by the time someone backfills them — this grid
+  // must show a past week's games regardless, so no isPast/lock gating here.
+  const { data: weekGames } = useGames(weekId ? Number(weekId) : 0);
+
+  // Historical entry only ever backfills a past/current week — a week
+  // created ahead of time (SeasonAdmin's sync-games pre-creates future
+  // weeks) shouldn't be pickable here.
+  const pastOrCurrentWeeks = upToCurrentWeek(weeks);
+  const seasons = [...new Set(pastOrCurrentWeeks.map(w => w.season))].sort((a, b) => b - a);
+  const visibleWeeks = yearStr ? pastOrCurrentWeeks.filter(w => w.season === Number(yearStr)) : pastOrCurrentWeeks;
 
   const reset = () => {
     setUserId(""); setYearStr(""); setWeekId(""); setLegs([]); setLegSheetOpen(false);
@@ -293,6 +307,20 @@ function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }:
   const openAddLeg = () => {
     setLegSheetKey(k => k + 1);
     setLegSheetOpen(true);
+  };
+
+  const isPicked = (gameId: number, betType: string, pick: string) =>
+    legs.some(l => l.gameId === gameId && l.betType === betType && l.pick === pick);
+
+  // Backfilling a past week's already-decided games — picking a market tile
+  // just records gameId/betType/pick/line (mirroring the live board's own
+  // toggleLeg), which is what makes the leg auto-enrichable afterward.
+  const togglePick = (game: Game, betType: string, pick: string) => {
+    setLegs(prev => {
+      const idx = prev.findIndex(l => l.gameId === game.id && l.betType === betType && l.pick === pick);
+      if (idx >= 0) return prev.filter((_, i) => i !== idx);
+      return [...prev, { ...blankLeg(), gameId: game.id, betType, pick, line: getLineForBet(game, betType, pick) ?? "" }];
+    });
   };
 
   const handleSave = () => {
@@ -351,6 +379,96 @@ function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }:
               </div>
             </div>
 
+            {/* This week's games — unhidden as soon as a week is picked, so
+                a standard-market leg can be added by tapping a tile instead
+                of typing odds by hand. A tile records gameId, which is what
+                lets the enrich pipeline auto-fill results/odds afterward. */}
+            {weekId && (
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Pick from the board</Label>
+                {!weekGames ? (
+                  <p className="text-xs text-muted-foreground">Loading games…</p>
+                ) : weekGames.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No games found for this week.</p>
+                ) : (
+                  <div className="space-y-2 max-h-72 overflow-y-auto rounded-lg border border-white/10 p-2">
+                    {weekGames.map(game => {
+                      const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
+                      const homeSpread = game.spread || null;
+                      return (
+                        <div key={game.id} className="rounded-md bg-card/40 p-2">
+                          <div className="flex items-center justify-between mb-1.5 text-xs text-muted-foreground">
+                            <span className="truncate">{game.awayTeam} @ {game.homeTeam}</span>
+                            <span className="shrink-0">{game.gameTime ? format(new Date(game.gameTime), "MMM d") : "TBD"}</span>
+                          </div>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <PickTile
+                              label={awaySpread || '-'}
+                              subLabel={game.spreadOdds}
+                              hasOdds={!!game.spread}
+                              isPast={false}
+                              isSelected={isPicked(game.id, 'spread', 'away')}
+                              capReached={false}
+                              onClick={() => togglePick(game, 'spread', 'away')}
+                              testId={`button-historical-spread-away-${game.id}`}
+                            />
+                            <PickTile
+                              label={game.moneylineAway || '-'}
+                              hasOdds={!!game.moneylineAway}
+                              isPast={false}
+                              isSelected={isPicked(game.id, 'moneyline', 'away')}
+                              capReached={false}
+                              onClick={() => togglePick(game, 'moneyline', 'away')}
+                              testId={`button-historical-ml-away-${game.id}`}
+                            />
+                            <PickTile
+                              label={`O ${game.overUnder || '-'}`}
+                              subLabel={game.overOdds}
+                              hasOdds={!!game.overUnder}
+                              isPast={false}
+                              isSelected={isPicked(game.id, 'over', 'over')}
+                              capReached={false}
+                              onClick={() => togglePick(game, 'over', 'over')}
+                              testId={`button-historical-over-${game.id}`}
+                            />
+                            <PickTile
+                              label={homeSpread || '-'}
+                              subLabel={game.spreadOdds}
+                              hasOdds={!!game.spread}
+                              isPast={false}
+                              isSelected={isPicked(game.id, 'spread', 'home')}
+                              capReached={false}
+                              onClick={() => togglePick(game, 'spread', 'home')}
+                              testId={`button-historical-spread-home-${game.id}`}
+                            />
+                            <PickTile
+                              label={game.moneylineHome || '-'}
+                              hasOdds={!!game.moneylineHome}
+                              isPast={false}
+                              isSelected={isPicked(game.id, 'moneyline', 'home')}
+                              capReached={false}
+                              onClick={() => togglePick(game, 'moneyline', 'home')}
+                              testId={`button-historical-ml-home-${game.id}`}
+                            />
+                            <PickTile
+                              label={`U ${game.overUnder || '-'}`}
+                              subLabel={game.underOdds}
+                              hasOdds={!!game.overUnder}
+                              isPast={false}
+                              isSelected={isPicked(game.id, 'under', 'under')}
+                              capReached={false}
+                              onClick={() => togglePick(game, 'under', 'under')}
+                              testId={`button-historical-under-${game.id}`}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Legs list */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -401,7 +519,7 @@ function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }:
                 onClick={openAddLeg}
               >
                 <Plus className="w-3.5 h-3.5" />
-                Add Leg
+                Add Player Prop / Manual Leg
               </Button>
             </div>
           </div>
@@ -445,6 +563,7 @@ export default function DemoDataEditor() {
   const leagueId = Number(params?.id);
 
   const queryClient = useQueryClient();
+  const { user } = useAuth();
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
 
@@ -514,10 +633,10 @@ export default function DemoDataEditor() {
     return <PageLoader className="h-48" sizeClassName="w-8 h-8" />;
   }
 
-  if (!league.isAdmin || !league.isDemo) {
+  if (!user?.isSuperUser || !league.isDemo) {
     return (
       <div className="max-w-xl mx-auto py-16 text-center space-y-4">
-        <p className="text-muted-foreground">The Data Editor is only available to admins of demo leagues.</p>
+        <p className="text-muted-foreground">The Data Editor is only available to super users, on demo leagues.</p>
         <Link href={`/leagues/${leagueId}`}>
           <Button variant="outline"><ArrowLeft className="w-4 h-4 mr-2" />Back to League</Button>
         </Link>

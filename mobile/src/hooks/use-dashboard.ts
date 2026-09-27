@@ -21,13 +21,13 @@ export interface UserPatterns {
   losses: number;
   pushes: number;
   winRate: number;
-  topBetType: { type: string; count: number } | null;
-  favoritePlayer: { name: string; count: number } | null;
-  favoriteDay: { day: string; count: number } | null;
-  favoriteTimeOfDay: { label: string; count: number } | null;
-  favoriteTeam: { team: string; count: number } | null;
-  overUnderPreference: { pick: "over" | "under"; overCount: number; underCount: number } | null;
-  slateBreakdown: { slate: string; count: number }[];
+  topBetType: { type: string; count: number; legIds: number[] } | null;
+  favoritePlayer: { name: string; count: number; legIds: number[] } | null;
+  favoriteDay: { day: string; count: number; legIds: number[] } | null;
+  favoriteTimeOfDay: { label: string; count: number; legIds: number[] } | null;
+  favoriteTeam: { team: string; count: number; legIds: number[] } | null;
+  overUnderPreference: { pick: "over" | "under"; overCount: number; underCount: number; overLegIds: number[]; underLegIds: number[] } | null;
+  slateBreakdown: { slate: string; count: number; legIds: number[] }[];
 }
 
 export interface WinRateTimeSeriesPoint {

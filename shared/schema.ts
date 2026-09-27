@@ -41,8 +41,9 @@ export type LieutenantPermissions = {
   approveMemberInvites: boolean;
   // Data / admin
   importHistory: boolean;
-  markLeagueDemo: boolean;
-  // NOTE: suspendMembers and setLieutenant are NEVER grantable to lieutenants — admin-only always
+  // NOTE: suspendMembers and setLieutenant are NEVER grantable to lieutenants — admin-only always.
+  // Demo/QA flagging is NEVER grantable to lieutenants either — it's super-user-only, not even a
+  // regular league admin's capability.
 };
 
 export const DEFAULT_LIEUTENANT_PERMISSIONS: LieutenantPermissions = {
@@ -53,7 +54,6 @@ export const DEFAULT_LIEUTENANT_PERMISSIONS: LieutenantPermissions = {
   unselectUserPick: false,
   approveMemberInvites: false,
   importHistory: false,
-  markLeagueDemo: false,
 };
 
 export type UserNotificationPreferences = {
@@ -321,6 +321,7 @@ export type ActiveWeekStatus = {
   currentUserSubmitted: boolean;
   hasPendingParlay: boolean;
   hasApprovedParlay: boolean;
+  currentUserHasUnsubmittedDraft: boolean;
 };
 
 export type LeagueDataStats = {

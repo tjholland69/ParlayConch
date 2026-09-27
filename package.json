@@ -13,15 +13,18 @@
     "check": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
+    "env:sync": "./scripts/sync-env.sh",
     "db:push": "drizzle-kit push",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx script/migrate.ts",
     "db:seed": "tsx --env-file=.env.local scripts/seed-dev.ts",
+    "db:seed:prod-replica": "tsx --env-file=.env.local scripts/pull-production-snapshot.ts",
     "db:seed-teams": "tsx --env-file=.env.local scripts/seed-teams.ts",
     "backfill:leg-justifications": "tsx --env-file=.env.local scripts/backfill-leg-justifications.ts",
     "backfill:odds": "tsx --env-file=.env.local scripts/backfill-odds.ts",
     "backfill:decision-moments": "tsx --env-file=.env.local scripts/backfill-decision-moments.ts",
-    "backfill:local-auth": "tsx --env-file=.env.local scripts/backfill-local-auth.ts"
+    "backfill:local-auth": "tsx --env-file=.env.local scripts/backfill-local-auth.ts",
+    "claim-demo-user": "tsx --env-file=.env.local scripts/claim-demo-user.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",

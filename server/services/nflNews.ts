@@ -28,6 +28,9 @@ export interface NewsItem {
   // where the Bills are playing, home or away).
   conferences?: string[];
   divisions?: string[];
+  // Scores only — ESPN's own live/upcoming/final classification, used to
+  // sort live games to the top regardless of kickoff time.
+  state?: "pre" | "in" | "post";
 }
 
 const NFL_TEAM_DIVISIONS: Record<string, { conference: "AFC" | "NFC"; division: string }> = {
@@ -168,7 +171,7 @@ interface ESPNEvent {
   shortName: string;
   date: string;
   week?: { number: number };
-  status: { type: { description: string; completed: boolean } };
+  status: { type: { description: string; completed: boolean; state: "pre" | "in" | "post" } };
   competitions: {
     competitors: ESPNCompetitor[];
     notes?: { headline?: string }[];
@@ -239,8 +242,20 @@ export async function fetchNFLScores(): Promise<NewsItem[]> {
       tag: completed ? "Final" : statusDesc || "Upcoming",
       conferences,
       divisions,
+      state: event.status?.type?.state,
     });
   }
+
+  // Live first, then upcoming/scheduled, then final — the games someone
+  // would check the dashboard mid-Sunday actually cares about, front and
+  // center. Within a group, earliest kickoff first.
+  const STATE_ORDER: Record<string, number> = { in: 0, pre: 1, post: 2 };
+  items.sort((a, b) => {
+    const oa = STATE_ORDER[a.state ?? ""] ?? 1;
+    const ob = STATE_ORDER[b.state ?? ""] ?? 1;
+    if (oa !== ob) return oa - ob;
+    return new Date(a.publishedAt).getTime() - new Date(b.publishedAt).getTime();
+  });
 
   return items;
 }

@@ -2,8 +2,6 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ExternalLink, Newspaper, ActivitySquare, Trophy } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
@@ -274,6 +272,15 @@ function HeadlinesPanel() {
   return <NewsItemsView items={items} isLoading={isLoading} isError={isError} tagColors={{}} limit={14} />;
 }
 
+function ColumnHeading({ icon: Icon, label }: { icon: typeof Newspaper; label: string }) {
+  return (
+    <h3 className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+      <Icon className="w-3.5 h-3.5" />
+      {label}
+    </h3>
+  );
+}
+
 export function NewsFeed() {
   return (
     <Card>
@@ -284,34 +291,20 @@ export function NewsFeed() {
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-0">
-        <Tabs defaultValue="injuries">
-          <TabsList className="w-full mb-4">
-            <TabsTrigger value="injuries" className="flex-1 gap-1.5 text-xs">
-              <ActivitySquare className="w-3.5 h-3.5" />
-              Injuries
-            </TabsTrigger>
-            <TabsTrigger value="scores" className="flex-1 gap-1.5 text-xs">
-              <Trophy className="w-3.5 h-3.5" />
-              Scores
-            </TabsTrigger>
-            <TabsTrigger value="headlines" className="flex-1 gap-1.5 text-xs">
-              <Newspaper className="w-3.5 h-3.5" />
-              Headlines
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="injuries">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div>
+            <ColumnHeading icon={ActivitySquare} label="Injuries" />
             <InjuriesPanel />
-          </TabsContent>
-
-          <TabsContent value="scores">
+          </div>
+          <div className="lg:border-l lg:border-r lg:border-white/10 lg:px-6">
+            <ColumnHeading icon={Trophy} label="Scores" />
             <ScoresPanel />
-          </TabsContent>
-
-          <TabsContent value="headlines">
+          </div>
+          <div>
+            <ColumnHeading icon={Newspaper} label="Headlines" />
             <HeadlinesPanel />
-          </TabsContent>
-        </Tabs>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

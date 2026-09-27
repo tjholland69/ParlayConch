@@ -1,6 +1,8 @@
 import { db } from "../db";
 import { games, weeks } from "@shared/db-schema";
 import { eq } from "drizzle-orm";
+import { fetchWithRetry } from "../lib/fetchWithRetry";
+import { logger } from "../logger";
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const BASE_URL = "https://api.the-odds-api.com/v4";
@@ -151,12 +153,7 @@ export async function fetchHistoricalGames(asOf: Date): Promise<OddsGame[]> {
     `?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,h2h,totals&oddsFormat=american` +
     `&date=${asOf.toISOString()}`;
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Historical odds API error: ${response.status} - ${text}`);
-  }
-
+  const response = await fetchWithRetry(url, { label: "odds-api-historical" });
   const body = await response.json();
   return body.data as OddsGame[];
 }
@@ -167,13 +164,8 @@ export async function fetchUpcomingGames(): Promise<OddsGame[]> {
   }
 
   const url = `${BASE_URL}/sports/${SPORT}/odds?apiKey=${ODDS_API_KEY}&regions=us&markets=spreads,h2h,totals&oddsFormat=american`;
-  
-  const response = await fetch(url);
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Odds API error: ${response.status} - ${text}`);
-  }
 
+  const response = await fetchWithRetry(url, { label: "odds-api-upcoming" });
   return response.json();
 }
 
@@ -295,6 +287,31 @@ export async function getApiUsage(): Promise<{ remaining: number; used: number }
   return { remaining, used };
 }
 
+// Below this many requests remaining in the monthly quota, scheduled syncs
+// skip themselves rather than risk exhausting it — a manual admin-triggered
+// sync is still allowed through (an admin who explicitly clicks "Sync Games"
+// gets to decide that's worth spending the last few requests on).
+const QUOTA_SAFETY_THRESHOLD = 50;
+
+/**
+ * Checks remaining Odds API quota before a scheduled (non-manual) sync fires.
+ * Fails open (allows the sync) if the usage check itself fails — a stale
+ * board is a worse outcome than a false negative here blocking all syncs.
+ */
+export async function hasQuotaHeadroom(): Promise<boolean> {
+  try {
+    const { remaining } = await getApiUsage();
+    if (remaining < QUOTA_SAFETY_THRESHOLD) {
+      logger.warn(`[odds-api] Only ${remaining} requests remaining this month — skipping scheduled sync.`);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.warn({ err }, "[odds-api] Quota check failed — allowing sync to proceed.");
+    return true;
+  }
+}
+
 interface ScoreGame {
   id: string;
   sport_key: string;
@@ -320,13 +337,7 @@ export async function syncGameScores(
   }
 
   const url = `${BASE_URL}/sports/${SPORT}/scores?apiKey=${ODDS_API_KEY}&daysFrom=${daysFrom}`;
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Scores API error: ${response.status} - ${text}`);
-  }
-
+  const response = await fetchWithRetry(url, { label: "odds-api-scores" });
   const scoreGames: ScoreGame[] = await response.json();
 
   let updated = 0;

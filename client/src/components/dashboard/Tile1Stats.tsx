@@ -1,7 +1,11 @@
+import { useState } from "react";
 import { Trophy, Users, ListChecks, TrendingUp, Dices, User, CalendarDays, Clock, Loader2, Zap, Activity, BarChart3, Info, Shield, ArrowUpDown } from "lucide-react";
 import { SlidingCard, EmptyState } from "@/components/SlidingCard";
 import { useDashboardSummary, useDashboardPatterns } from "@/hooks/use-dashboard";
+import { useMyParlayLegsByIds } from "@/hooks/use-bets";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { cn } from "@/lib/utils";
 
 function StatCard({
@@ -111,9 +115,27 @@ function SummarySlide() {
   );
 }
 
-function StatRow({ icon: Icon, label, value }: { icon: React.ElementType; label: string; value: string }) {
+function StatRow({
+  icon: Icon,
+  label,
+  value,
+  onClick,
+}: {
+  icon: React.ElementType;
+  label: string;
+  value: string;
+  /** Present when this stat has underlying legs to drill into ("lookthrough"). */
+  onClick?: () => void;
+}) {
   return (
-    <div className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/10">
+    <div
+      className={cn(
+        "flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/10",
+        onClick && "cursor-pointer hover:bg-white/10 transition-colors"
+      )}
+      onClick={onClick}
+      role={onClick ? "button" : undefined}
+    >
       <div className="flex items-center gap-3 text-muted-foreground text-sm">
         <Icon className="w-4 h-4" />
         {label}
@@ -133,6 +155,8 @@ const BET_TYPE_LABELS: Record<string, string> = {
 
 function AnalyticsSlide() {
   const { data, isLoading, error } = useDashboardPatterns();
+  const [lookthrough, setLookthrough] = useState<{ title: string; legIds: number[] } | null>(null);
+  const { data: lookthroughLegs, isLoading: loadingLookthrough } = useMyParlayLegsByIds(lookthrough?.legIds ?? []);
 
   if (isLoading) {
     return (
@@ -171,23 +195,43 @@ function AnalyticsSlide() {
             icon={Dices}
             label="Most Common Bet Type"
             value={`${BET_TYPE_LABELS[data.topBetType.type] ?? data.topBetType.type} (${data.topBetType.count})`}
+            onClick={() => setLookthrough({ title: "Most Common Bet Type", legIds: data.topBetType!.legIds })}
           />
         )}
         {data.favoriteTeam && (
-          <StatRow icon={Shield} label="Favorite Team (Spread/ML)" value={`${data.favoriteTeam.team} (${data.favoriteTeam.count})`} />
+          <StatRow
+            icon={Shield}
+            label="Favorite Team (Spread/ML)"
+            value={`${data.favoriteTeam.team} (${data.favoriteTeam.count})`}
+            onClick={() => setLookthrough({ title: "Favorite Team (Spread/ML)", legIds: data.favoriteTeam!.legIds })}
+          />
         )}
         {data.overUnderPreference && (
           <StatRow
             icon={ArrowUpDown}
             label="Over/Under Lean"
             value={`${data.overUnderPreference.pick === "over" ? "Over" : "Under"} (${data.overUnderPreference.overCount}-${data.overUnderPreference.underCount})`}
+            onClick={() => setLookthrough({
+              title: "Over/Under Lean",
+              legIds: [...data.overUnderPreference!.overLegIds, ...data.overUnderPreference!.underLegIds],
+            })}
           />
         )}
         {data.favoritePlayer && (
-          <StatRow icon={User} label="Favorite Prop Player" value={`${data.favoritePlayer.name} (${data.favoritePlayer.count})`} />
+          <StatRow
+            icon={User}
+            label="Favorite Prop Player"
+            value={`${data.favoritePlayer.name} (${data.favoritePlayer.count})`}
+            onClick={() => setLookthrough({ title: "Favorite Prop Player", legIds: data.favoritePlayer!.legIds })}
+          />
         )}
         {data.favoriteDay && (
-          <StatRow icon={CalendarDays} label="Most Active Day" value={`${data.favoriteDay.day} (${data.favoriteDay.count})`} />
+          <StatRow
+            icon={CalendarDays}
+            label="Most Active Day"
+            value={`${data.favoriteDay.day} (${data.favoriteDay.count})`}
+            onClick={() => setLookthrough({ title: "Most Active Day", legIds: data.favoriteDay!.legIds })}
+          />
         )}
         {data.slateBreakdown.some(s => s.count > 0) && (
           <div className="p-4 rounded-xl bg-white/5 border border-white/10">
@@ -197,7 +241,15 @@ function AnalyticsSlide() {
             </div>
             <div className="space-y-2">
               {data.slateBreakdown.map(s => (
-                <div key={s.slate} className="flex items-center justify-between text-sm">
+                <div
+                  key={s.slate}
+                  className={cn(
+                    "flex items-center justify-between text-sm rounded-md -mx-2 px-2 py-1",
+                    s.count > 0 && "cursor-pointer hover:bg-white/10 transition-colors"
+                  )}
+                  onClick={s.count > 0 ? () => setLookthrough({ title: `${s.slate} Slate`, legIds: s.legIds }) : undefined}
+                  role={s.count > 0 ? "button" : undefined}
+                >
                   <span className="text-muted-foreground">{s.slate}</span>
                   <span className="font-mono font-bold">{s.count}</span>
                 </div>
@@ -206,6 +258,19 @@ function AnalyticsSlide() {
           </div>
         )}
       </div>
+
+      <Dialog open={lookthrough !== null} onOpenChange={(open) => !open && setLookthrough(null)}>
+        <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{lookthrough?.title}</DialogTitle>
+          </DialogHeader>
+          {loadingLookthrough ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>
+          ) : (
+            <LegsWithParlayTable legs={lookthroughLegs ?? []} />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

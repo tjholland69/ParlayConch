@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, ShieldAlert, CalendarPlus, RefreshCw, CheckCircle2, Search } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useWeeks } from "@/hooks/use-bets";
@@ -50,12 +50,26 @@ export default function SeasonAdmin() {
       return res.json();
     },
     onSuccess: (data) => {
+      if (data.queued) {
+        toast({ title: "Games sync queued", description: "Running in the background." });
+        return;
+      }
       const skipped = data.skippedOutOfRange
         ? ` (${data.skippedOutOfRange} skipped — outside this week's date range)`
         : "";
       toast({ title: "Games synced", description: `${data.added} added, ${data.updated} updated${skipped}` });
     },
     onError: (err: Error) => toast({ title: "Sync failed", description: err.message, variant: "destructive" }),
+  });
+
+  const { data: oddsUsage } = useQuery({
+    queryKey: ["/api/odds/usage"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/odds/usage");
+      return res.json() as Promise<{ remaining: number; used: number }>;
+    },
+    enabled: !!user?.isSuperUser,
+    staleTime: 60_000,
   });
 
   const checkNewSeason = useMutation({
@@ -120,6 +134,21 @@ export default function SeasonAdmin() {
           Stand up a new week: create it, pull games/lines from OddsAPI, then activate.
         </p>
       </div>
+
+      {oddsUsage && (
+        <Card className="border-white/5">
+          <CardHeader className="pb-2 font-semibold text-sm">Odds API usage this month</CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              <span className="text-foreground font-medium">{oddsUsage.remaining.toLocaleString()}</span> requests remaining
+              &nbsp;·&nbsp; {oddsUsage.used.toLocaleString()} used
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              The recurring odds sync (every 3 hours) skips itself automatically once this drops below 50.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-white/5">
         <CardHeader className="pb-2 font-semibold text-sm">Rolling schedule</CardHeader>

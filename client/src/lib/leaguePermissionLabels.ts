@@ -12,6 +12,4 @@ export const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: strin
   { key: "unselectUserPick", label: "Remove a Member's Pick", description: "Can clear an individual pick from another member's parlay (secondary approvals will apply)", group: "Parlay Management" },
   // Member management
   { key: "approveMemberInvites", label: "Approve Member Invites", description: "Can approve pending invite requests submitted by regular members", group: "Member Management" },
-  // Data & admin
-  { key: "markLeagueDemo", label: "Mark League as Demo", description: "Can toggle the league's demo/QA flag", group: "Data & Admin" },
 ];

@@ -9,6 +9,7 @@ import { Link } from "wouter";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { getBuildingVerb } from "@/lib/parlaySlang";
+import { upToCurrentWeek } from "@/lib/weekFilters";
 import { PageLoader } from "@/components/PageLoader";
 
 interface InjuryNewsItem {
@@ -40,14 +41,16 @@ export default function Picks() {
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [selectedWeekId, setSelectedWeekId] = useState<string | undefined>();
 
+  const pastOrCurrentWeeks = useMemo(() => upToCurrentWeek(weeks ?? []), [weeks]);
+
   const years = useMemo(
-    () => [...new Set(weeks?.map(w => w.season) ?? [])].sort((a, b) => b - a),
-    [weeks]
+    () => [...new Set(pastOrCurrentWeeks.map(w => w.season))].sort((a, b) => b - a),
+    [pastOrCurrentWeeks]
   );
 
   const weeksForYear = useMemo(
-    () => weeks?.filter(w => w.season === selectedYear) ?? [],
-    [weeks, selectedYear]
+    () => pastOrCurrentWeeks.filter(w => w.season === selectedYear),
+    [pastOrCurrentWeeks, selectedYear]
   );
 
   useEffect(() => {
@@ -161,6 +164,7 @@ export default function Picks() {
         {leagues.map((league) => {
           const status = activeStatus?.[league.id];
           const hasOpenParlay = !!(status && status.submittedCount > 0 && !status.isLocked);
+          const hasUnsubmittedDraft = !!status?.currentUserHasUnsubmittedDraft && !status?.currentUserSubmitted && !status?.isLocked;
           // Rule 1: open but not (fully) approved yet -> brewing, pulse yellow.
           // Rule 2: open and approved -> green, settled in.
           // Rule 3: no parlay this week -> leave base styling untouched.
@@ -228,6 +232,14 @@ export default function Picks() {
                           {status!.submittedCount}/{league.memberCount} members in
                         </p>
                       </>
+                    ) : hasUnsubmittedDraft ? (
+                      <>
+                        <p className="text-xs text-orange-400 font-medium flex items-center gap-1.5 mt-0.5">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
+                          Unsubmitted picks — tap to finish
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{league.memberCount} members</p>
+                      </>
                     ) : (
                       <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
                     )}
@@ -238,10 +250,11 @@ export default function Picks() {
                     className={cn(
                       "shrink-0",
                       isBrewing && "text-yellow-400 hover:text-yellow-300",
-                      isApproved && "text-green-400 hover:text-green-300"
+                      isApproved && "text-green-400 hover:text-green-300",
+                      hasUnsubmittedDraft && !isBrewing && !isApproved && "text-orange-400 hover:text-orange-300"
                     )}
                   >
-                    {isBrewing ? "Join Parlay" : isApproved ? "View Parlay" : "Make Picks"}
+                    {isBrewing ? "Join Parlay" : isApproved ? "View Parlay" : hasUnsubmittedDraft ? "Finish Picks" : "Make Picks"}
                     <ArrowRight className="w-3 h-3 ml-1" />
                   </Button>
                 </CardContent>

@@ -16,34 +16,9 @@
 import { storage } from "../storage";
 import { logger } from "../logger";
 import { abbrevToShort, findGameInDb } from "./nflverse";
+import { fetchJsonWithRetry } from "../lib/fetchWithRetry";
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl";
-
-async function fetchJsonWithRetry(url: string, retries = 2): Promise<any> {
-  let lastErr: unknown;
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch(url, { headers: { "User-Agent": "parlayconch-app/1.0" } });
-      if (!res.ok) {
-        // 4xx won't succeed on retry (bad event id / not published); only
-        // retry on 5xx / transient failures.
-        if (res.status < 500) {
-          throw new Error(`ESPN fetch failed: ${res.status} ${res.statusText} — ${url}`);
-        }
-        throw new Error(`ESPN fetch failed (retryable): ${res.status} ${res.statusText} — ${url}`);
-      }
-      return await res.json();
-    } catch (err) {
-      lastErr = err;
-      if (attempt < retries) {
-        const delayMs = 500 * 2 ** attempt;
-        logger.warn(`[espn] fetch attempt ${attempt + 1} failed, retrying in ${delayMs}ms: ${url}`);
-        await new Promise((r) => setTimeout(r, delayMs));
-      }
-    }
-  }
-  throw lastErr;
-}
 
 interface EspnScoreboardEvent {
   id: string;
@@ -56,7 +31,7 @@ interface EspnScoreboardEvent {
 /** List this week's events (id + teams + completed flag) from ESPN's scoreboard. */
 async function fetchEspnWeekEvents(season: number, week: number): Promise<EspnScoreboardEvent[]> {
   const url = `${ESPN_BASE}/scoreboard?seasontype=2&week=${week}&dates=${season}`;
-  const data = await fetchJsonWithRetry(url);
+  const data = await fetchJsonWithRetry(url, { headers: { "User-Agent": "parlayconch-app/1.0" }, label: "espn" });
   return data.events ?? [];
 }
 
@@ -72,7 +47,7 @@ interface EspnAthleteStat {
 /** Pull the "defensive" boxscore category for both teams of one event. */
 async function fetchEspnDefensiveStats(eventId: string): Promise<EspnAthleteStat[]> {
   const url = `${ESPN_BASE}/summary?event=${eventId}`;
-  const data = await fetchJsonWithRetry(url);
+  const data = await fetchJsonWithRetry(url, { headers: { "User-Agent": "parlayconch-app/1.0" }, label: "espn" });
   const teams: any[] = data?.boxscore?.players ?? [];
 
   const out: EspnAthleteStat[] = [];

@@ -5,12 +5,16 @@ export const HTTP_TEST_USER = "http-test-user";
 
 const mockStorage = vi.hoisted(() => ({
   isLeagueAdmin: vi.fn(),
+  isSuperUser: vi.fn(),
   getParlay: vi.fn(),
   updateParlay: vi.fn(),
   updateUserSettings: vi.fn(),
   updateLeagueSettings: vi.fn(),
   getLeague: vi.fn(),
   addParlayLeg: vi.fn(),
+  deleteParlay: vi.fn(),
+  setUserDemoFlag: vi.fn(),
+  setLeagueDemoFlag: vi.fn(),
 }));
 
 vi.mock("../../server/storage", () => ({ storage: mockStorage }));
@@ -165,7 +169,24 @@ describe("HTTP route validation and auth", () => {
     test("returns 403 when league is not demo", async () => {
       mockStorage.getParlay.mockResolvedValue({ id: 3, leagueId: 7, weekId: 1, userId: HTTP_TEST_USER });
       mockStorage.getLeague.mockResolvedValue({ id: 7, isDemo: false });
+      mockStorage.isSuperUser.mockResolvedValue(true);
+
+      const res = await request(testApp)
+        .post("/api/parlays/3/legs")
+        .send({ betType: "spread", pick: "home", line: "-3" });
+
+      expect(res.status).toBe(403);
+      expect(mockStorage.addParlayLeg).not.toHaveBeenCalled();
+    });
+
+    // Regression test: requireDemoAdmin used to check isLeagueAdmin, letting
+    // any regular league admin (not just a super user) use the demo data
+    // editor tooling on a demo league. Demo-data actions are super-user-only.
+    test("returns 403 when caller is a league admin but not a super user", async () => {
+      mockStorage.getParlay.mockResolvedValue({ id: 3, leagueId: 7, weekId: 1, userId: HTTP_TEST_USER });
+      mockStorage.getLeague.mockResolvedValue({ id: 7, isDemo: true });
       mockStorage.isLeagueAdmin.mockResolvedValue(true);
+      mockStorage.isSuperUser.mockResolvedValue(false);
 
       const res = await request(testApp)
         .post("/api/parlays/3/legs")
@@ -178,7 +199,7 @@ describe("HTTP route validation and auth", () => {
     test("returns 400 for invalid body", async () => {
       mockStorage.getParlay.mockResolvedValue({ id: 3, leagueId: 7, weekId: 1, userId: HTTP_TEST_USER });
       mockStorage.getLeague.mockResolvedValue({ id: 7, isDemo: true });
-      mockStorage.isLeagueAdmin.mockResolvedValue(true);
+      mockStorage.isSuperUser.mockResolvedValue(true);
 
       const res = await request(testApp)
         .post("/api/parlays/3/legs")
@@ -191,7 +212,7 @@ describe("HTTP route validation and auth", () => {
     test("returns 200 and normalizes empty line to null", async () => {
       mockStorage.getParlay.mockResolvedValue({ id: 3, leagueId: 7, weekId: 1, userId: HTTP_TEST_USER });
       mockStorage.getLeague.mockResolvedValue({ id: 7, isDemo: true });
-      mockStorage.isLeagueAdmin.mockResolvedValue(true);
+      mockStorage.isSuperUser.mockResolvedValue(true);
       mockStorage.addParlayLeg.mockResolvedValue({ id: 99, betType: "spread", pick: "home", line: null });
 
       const res = await request(testApp)
@@ -200,6 +221,7 @@ describe("HTTP route validation and auth", () => {
 
       expect(res.status).toBe(200);
       expect(mockStorage.addParlayLeg).toHaveBeenCalledWith(3, {
+        gameId: null,
         betType: "spread",
         pick: "home",
         line: null,
@@ -211,6 +233,91 @@ describe("HTTP route validation and auth", () => {
         gameSegment: null,
         userId: HTTP_TEST_USER,
       });
+    });
+  });
+
+  describe("PATCH /api/users/me/demo", () => {
+    // Regression test: this route previously had no authorization check at
+    // all — any authenticated user could flag their own account as demo.
+    test("returns 403 for a non-super-user", async () => {
+      mockStorage.isSuperUser.mockResolvedValue(false);
+
+      const res = await request(testApp)
+        .patch("/api/users/me/demo")
+        .send({ isDemo: true });
+
+      expect(res.status).toBe(403);
+      expect(mockStorage.setUserDemoFlag).not.toHaveBeenCalled();
+    });
+
+    test("returns 200 for a super user", async () => {
+      mockStorage.isSuperUser.mockResolvedValue(true);
+      mockStorage.setUserDemoFlag.mockResolvedValue(undefined);
+
+      const res = await request(testApp)
+        .patch("/api/users/me/demo")
+        .send({ isDemo: true });
+
+      expect(res.status).toBe(200);
+      expect(mockStorage.setUserDemoFlag).toHaveBeenCalledWith(HTTP_TEST_USER, true);
+    });
+  });
+
+  describe("PATCH /api/leagues/:id/demo", () => {
+    // Regression test: this route used to authorize on isLeagueAdmin, letting
+    // any regular league admin ("Parlay Maestro") flag/unflag a whole league
+    // as demo — not just a super user.
+    test("returns 403 for a league admin who is not a super user", async () => {
+      mockStorage.isSuperUser.mockResolvedValue(false);
+
+      const res = await request(testApp)
+        .patch("/api/leagues/7/demo")
+        .send({ isDemo: true });
+
+      expect(res.status).toBe(403);
+      expect(mockStorage.setLeagueDemoFlag).not.toHaveBeenCalled();
+    });
+
+    test("returns 200 for a super user", async () => {
+      mockStorage.isSuperUser.mockResolvedValue(true);
+      mockStorage.setLeagueDemoFlag.mockResolvedValue(undefined);
+
+      const res = await request(testApp)
+        .patch("/api/leagues/7/demo")
+        .send({ isDemo: true });
+
+      expect(res.status).toBe(200);
+      expect(mockStorage.setLeagueDemoFlag).toHaveBeenCalledWith(7, true);
+    });
+  });
+
+  describe("DELETE /api/parlays/:id", () => {
+    // Regression test: this route used to reuse requireDemoAdmin (meant for
+    // the demo-only Data Editor tools) and 403'd any admin deleting a parlay
+    // in a real, non-demo league — the delete button never worked outside
+    // demo leagues. It must now only require league-admin, regardless of
+    // the league's isDemo flag.
+    test("returns 200 for a league admin in a real (non-demo) league", async () => {
+      mockStorage.getParlay.mockResolvedValue({ id: 5, leagueId: 12, weekId: 1, userId: "other" });
+      mockStorage.getLeague.mockResolvedValue({ id: 12, isDemo: false });
+      mockStorage.isLeagueAdmin.mockResolvedValue(true);
+      mockStorage.deleteParlay.mockResolvedValue(undefined);
+
+      const res = await request(testApp).delete("/api/parlays/5");
+
+      expect(res.status).toBe(200);
+      expect(mockStorage.deleteParlay).toHaveBeenCalledWith(5);
+    });
+
+    test("returns 403 when caller is not a league admin", async () => {
+      mockStorage.getParlay.mockResolvedValue({ id: 5, leagueId: 12, weekId: 1, userId: "other" });
+      mockStorage.getLeague.mockResolvedValue({ id: 12, isDemo: false });
+      mockStorage.isLeagueAdmin.mockResolvedValue(false);
+
+      const res = await request(testApp).delete("/api/parlays/5");
+
+      expect(res.status).toBe(403);
+      expect(mockStorage.deleteParlay).not.toHaveBeenCalled();
     });
   });
 });

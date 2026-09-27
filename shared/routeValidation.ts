@@ -47,6 +47,7 @@ export const updateParlayInputSchema = z
 
 export const updateParlayLegInputSchema = z
   .object({
+    gameId: z.number().nullable().optional(),
     betType: z.string().min(1).optional(),
     pick: z.string().min(1).optional(),
     line: z.string().nullable().optional(),
@@ -103,6 +104,7 @@ export const updateLeagueNotificationSettingsSchema = z
 
 export const addParlayLegInputSchema = z
   .object({
+    gameId: z.number().nullable().optional(),
     betType: z.string().min(1),
     pick: z.string().min(1),
     line: z.string().nullable().optional(),
