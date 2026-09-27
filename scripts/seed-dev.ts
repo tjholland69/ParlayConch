@@ -24,7 +24,7 @@ import { db } from "../server/db";
 import {
   users, weeks, games, leagues, leagueMembers,
   parlays, parlayLegs, notifications,
-} from "../shared/schema";
+} from "../shared/db-schema";
 import { eq } from "drizzle-orm";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

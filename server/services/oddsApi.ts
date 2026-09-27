@@ -3,6 +3,7 @@ import { games, weeks } from "@shared/db-schema";
 import { eq } from "drizzle-orm";
 import { fetchWithRetry } from "../lib/fetchWithRetry";
 import { logger } from "../logger";
+import { estimateWeekDateRange } from "@shared/nflWeek";
 
 const ODDS_API_KEY = process.env.ODDS_API_KEY;
 const BASE_URL = "https://api.the-odds-api.com/v4";
@@ -169,31 +170,11 @@ export async function fetchUpcomingGames(): Promise<OddsGame[]> {
   return response.json();
 }
 
-/**
- * Approximate the NFL calendar window for a season/week. OddsAPI's "upcoming"
- * feed (fetchUpcomingGames) isn't season/week aware — it just returns
- * whatever's currently on the board league-wide — so this is used purely as
- * a sanity filter in syncGamesFromOddsApi to keep a sync targeted at one week
- * from pulling in another week's (or another season's) games. Not exact
- * schedule data: generously padded to comfortably cover early Thursday
- * openers through Monday-night closers, including the rare Saturday/
- * international game, without needing a real schedule source.
- */
-export function estimateWeekDateRange(season: number, weekNumber: number): { start: Date; end: Date } {
-  // NFL Week 1 conventionally opens the Thursday after Labor Day (the first
-  // Monday in September).
-  const laborDay = new Date(Date.UTC(season, 8, 1)); // Sept 1, UTC
-  while (laborDay.getUTCDay() !== 1) laborDay.setUTCDate(laborDay.getUTCDate() + 1);
-  const week1Thursday = new Date(laborDay);
-  week1Thursday.setUTCDate(laborDay.getUTCDate() + 3); // Monday -> Thursday
-
-  const start = new Date(week1Thursday);
-  start.setUTCDate(week1Thursday.getUTCDate() + (weekNumber - 1) * 7 - 3); // 3 days padding before kickoff
-  const end = new Date(start);
-  end.setUTCDate(start.getUTCDate() + 7 + 6); // 7-day slate + 6 days padding after
-
-  return { start, end };
-}
+// OddsAPI's "upcoming" feed (fetchUpcomingGames) isn't season/week aware —
+// it returns whatever's on the board league-wide — so syncGamesFromOddsApi
+// uses this window as a sanity filter to keep a sync targeted at one week
+// from pulling in another week's (or season's) games.
+export { estimateWeekDateRange };
 
 /** `start` is estimateWeekDateRange's 3-day-before-kickoff padding start (a
  * Monday) — +6 days lands on that week's Sunday, snapshotted just before the

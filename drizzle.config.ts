@@ -22,7 +22,9 @@ const ssl =
 
 export default defineConfig({
   out: "./migrations",
-  schema: "./shared/schema.ts",
+  // Tables live in db-schema.ts; schema.ts is client-safe types only and
+  // holds no tables, so pointing here would diff against an empty schema.
+  schema: "./shared/db-schema.ts",
   dialect: "postgresql",
   dbCredentials: {
     url: process.env.DATABASE_URL!,

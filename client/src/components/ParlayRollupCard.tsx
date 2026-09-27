@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, Scissors, Info, Copy, Check, Clock } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { formatPickLabel } from "@/lib/formatPick";
+import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -771,7 +771,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                           <td className="px-3 py-2 text-muted-foreground">{formatPickLabel(leg)}</td>
                           <td className="px-3 py-2 text-muted-foreground">{leg.line || "—"}</td>
                           <td className="px-3 py-2 text-muted-foreground">
-                            {leg.odds || "—"}
+                            {withPlusSign(leg.odds) ?? "—"}
                             {leg.oddsSource && <span className="block text-[10px] text-muted-foreground/60">{leg.oddsSource}</span>}
                           </td>
                           <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">

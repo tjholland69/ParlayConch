@@ -30,7 +30,7 @@ import { getWeeklyAnalyticsReport } from "./services/storyStudio/analyticsEngine
 import { discoverStories } from "./services/storyStudio/storyDiscovery";
 import { generateSection } from "./services/storyStudio/editorialGeneration";
 import { insertStoryReportSchema, updateStoryReportSchema } from "@shared/db-schema";
-import { STORY_SECTION_KINDS, type StorySectionKind } from "@shared/schema";
+import { STORY_SECTION_KINDS, type StorySectionKind, PARLAY_LIST_SORTS } from "@shared/schema";
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { auditLog, recordAuditEvent } from "./services/audit";
 import { uploadDisputeScreenshot, getDisputeScreenshotUrl, deleteDisputeScreenshot } from "./disputeStorage";
@@ -604,8 +604,44 @@ export async function registerRoutes(
     const superUser = await storage.isSuperUser(requestorId);
     const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === requestorId);
     if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
-    const weeks = await storage.getMissedWeeksForMember(leagueId, req.params.userId);
-    res.json({ weeks });
+    res.json(await storage.getMissedWeeksForMember(leagueId, req.params.userId));
+  });
+
+  // ===== POKES (Members tab easter egg) =====
+  // Pokes live between two active members of the same league.
+  app.get("/api/leagues/:id/pokes", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const isMember = (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    res.json(await storage.getLeaguePokes(leagueId, userId));
+  });
+
+  app.post("/api/leagues/:id/pokes", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const toUserId = typeof req.body?.toUserId === "string" ? req.body.toUserId : "";
+    if (!toUserId) return res.status(400).json({ message: "toUserId is required" });
+    if (toUserId === userId) return res.status(400).json({ message: "You can't poke yourself" });
+    const memberIds = new Set((await storage.getLeagueMembers(leagueId)).map(m => m.userId));
+    if (!memberIds.has(userId)) return res.status(403).json({ message: "Not a member of this league" });
+    if (!memberIds.has(toUserId)) return res.status(404).json({ message: "That member isn't in this league" });
+    const result = await storage.pokeMember(leagueId, userId, toUserId);
+    if (result === "already_poked") {
+      return res.status(409).json({ message: "Already poked. Wait for them to poke back." });
+    }
+    res.status(201).json({ status: result });
+  });
+
+  app.post("/api/leagues/:id/pokes/dismiss", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const fromUserId = typeof req.body?.fromUserId === "string" ? req.body.fromUserId : "";
+    if (!fromUserId) return res.status(400).json({ message: "fromUserId is required" });
+    const isMember = (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
+    await storage.dismissPokes(leagueId, userId, fromUserId);
+    res.status(204).end();
   });
 
   // Member-facing read-only view of all parlays across all weeks (no demo/admin gating)
@@ -620,7 +656,8 @@ export async function registerRoutes(
     const weekIds = typeof req.query.weekIds === "string" && req.query.weekIds
       ? req.query.weekIds.split(",").map(Number).filter((n) => Number.isFinite(n))
       : undefined;
-    const page = await storage.getAllLeagueParlays(leagueId, { limit, offset, weekIds });
+    const sort = PARLAY_LIST_SORTS.find((s) => s === req.query.sort);
+    const page = await storage.getAllLeagueParlays(leagueId, { limit, offset, weekIds, sort });
     res.json(page);
   });
 

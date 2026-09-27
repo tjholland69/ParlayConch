@@ -21,7 +21,7 @@
  */
 import crypto from "crypto";
 import { db } from "../server/db";
-import { users, userPasswords, passwordResetTokens } from "../shared/schema";
+import { users, userPasswords, passwordResetTokens } from "../shared/db-schema";
 import { eq, isNull, and, gt, notExists } from "drizzle-orm";
 import { hashResetToken } from "../server/auth/localAuth";
 import { sendSetPasswordEmail } from "../server/services/email";

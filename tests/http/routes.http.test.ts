@@ -15,6 +15,8 @@ const mockStorage = vi.hoisted(() => ({
   deleteParlay: vi.fn(),
   setUserDemoFlag: vi.fn(),
   setLeagueDemoFlag: vi.fn(),
+  getLeagueMembers: vi.fn(),
+  pokeMember: vi.fn(),
 }));
 
 vi.mock("../../server/storage", () => ({ storage: mockStorage }));
@@ -318,6 +320,54 @@ describe("HTTP route validation and auth", () => {
 
       expect(res.status).toBe(403);
       expect(mockStorage.deleteParlay).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("POST /api/leagues/:id/pokes", () => {
+    const members = [{ userId: HTTP_TEST_USER }, { userId: "friend" }];
+
+    test("rejects poking yourself", async () => {
+      const res = await request(testApp).post("/api/leagues/7/pokes").send({ toUserId: HTTP_TEST_USER });
+
+      expect(res.status).toBe(400);
+      expect(mockStorage.pokeMember).not.toHaveBeenCalled();
+    });
+
+    test("returns 403 when caller isn't in the league", async () => {
+      mockStorage.getLeagueMembers.mockResolvedValue([{ userId: "friend" }, { userId: "other" }]);
+
+      const res = await request(testApp).post("/api/leagues/7/pokes").send({ toUserId: "friend" });
+
+      expect(res.status).toBe(403);
+      expect(mockStorage.pokeMember).not.toHaveBeenCalled();
+    });
+
+    test("returns 404 when the target isn't in the league", async () => {
+      mockStorage.getLeagueMembers.mockResolvedValue(members);
+
+      const res = await request(testApp).post("/api/leagues/7/pokes").send({ toUserId: "stranger" });
+
+      expect(res.status).toBe(404);
+      expect(mockStorage.pokeMember).not.toHaveBeenCalled();
+    });
+
+    test("returns 409 on a repeat poke", async () => {
+      mockStorage.getLeagueMembers.mockResolvedValue(members);
+      mockStorage.pokeMember.mockResolvedValue("already_poked");
+
+      const res = await request(testApp).post("/api/leagues/7/pokes").send({ toUserId: "friend" });
+
+      expect(res.status).toBe(409);
+    });
+
+    test("returns 201 and pokes the member", async () => {
+      mockStorage.getLeagueMembers.mockResolvedValue(members);
+      mockStorage.pokeMember.mockResolvedValue("poked");
+
+      const res = await request(testApp).post("/api/leagues/7/pokes").send({ toUserId: "friend" });
+
+      expect(res.status).toBe(201);
+      expect(mockStorage.pokeMember).toHaveBeenCalledWith(7, HTTP_TEST_USER, "friend");
     });
   });
 });

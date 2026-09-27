@@ -287,6 +287,25 @@ export const leagueWeekLocks = pgTable("league_week_locks", {
   hadMissingBets: boolean("had_missing_bets").notNull().default(false),
 });
 
+// League member pokes — an easter egg on the league Members tab. One row per
+// poke; seenAt is set when the recipient pokes back or dismisses it.
+export const leaguePokes = pgTable("league_pokes", {
+  id: serial("id").primaryKey(),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  fromUserId: varchar("from_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  toUserId: varchar("to_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  seenAt: timestamp("seen_at"),
+}, (table) => [
+  index("league_pokes_league_to_idx").on(table.leagueId, table.toUserId),
+]);
+
 // In-app notifications
 export const notifications = pgTable("notifications", {
   id: serial("id").primaryKey(),
@@ -532,6 +551,7 @@ export type CustomIndex = typeof customIndexes.$inferSelect;
 export type CustomIndexShare = typeof customIndexShares.$inferSelect;
 
 export type LeagueWeekLock = typeof leagueWeekLocks.$inferSelect;
+export type LeaguePoke = typeof leaguePokes.$inferSelect;
 export type InsertLeagueWeekLock = z.infer<typeof insertLeagueWeekLockSchema>;
 
 export type InsertBet = z.infer<typeof insertBetSchema>;

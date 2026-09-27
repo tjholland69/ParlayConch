@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, type InfiniteData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, TakenPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, TakenPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team, ParlayListSort } from "@shared/schema";
 
 export type PaginatedParlays = {
   items: ParlayWithLegs[];
@@ -222,6 +222,12 @@ export type LeagueRecordEntry = {
 };
 
 export type MissedWeek = { weekId: number; season: number; weekNumber: number; label: string };
+export type MissedWeeksSummary = {
+  weeks: MissedWeek[];
+  eligibleCount: number;
+  submittedCount: number;
+  memberSince: string | null;
+};
 
 export function useLeagueRecords(leagueId: number) {
   return useQuery<LeagueRecordEntry[]>({
@@ -262,7 +268,7 @@ export function useMyParlayLegsByIds(legIds: number[]) {
 }
 
 export function useMissedWeeks(leagueId: number, userId: string | null) {
-  return useQuery<{ weeks: MissedWeek[] }>({
+  return useQuery<MissedWeeksSummary>({
     queryKey: ["/api/leagues", leagueId, "members", userId, "missed-weeks"],
     queryFn: async () => {
       const res = await fetch(`/api/leagues/${leagueId}/members/${userId}/missed-weeks`, { credentials: "include" });
@@ -749,6 +755,63 @@ export function useLeaveLeague(leagueId: number) {
   });
 }
 
+export type LeaguePokes = {
+  received: { fromUserId: string; createdAt: string }[];
+  sent: { toUserId: string; createdAt: string }[];
+};
+
+/** Outstanding pokes to/from the current user in this league (Members tab). */
+export function useLeaguePokes(leagueId: number, enabled = true) {
+  return useQuery<LeaguePokes>({
+    queryKey: ["/api/leagues", leagueId, "pokes"],
+    queryFn: async () => {
+      const res = await fetch(`/api/leagues/${leagueId}/pokes`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch pokes");
+      return res.json();
+    },
+    enabled: !!leagueId && enabled,
+    refetchInterval: 60_000,
+  });
+}
+
+export function usePokeMember(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async ({ toUserId }: { toUserId: string; name: string; isPokeBack: boolean }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/pokes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toUserId }),
+        credentials: "include",
+      });
+      if (!res.ok) { const d = await res.json(); throw new Error(d.message); }
+      return res.json();
+    },
+    onSuccess: (_data, { name, isPokeBack }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "pokes"] });
+      toast({ title: isPokeBack ? `👉 Poked ${name} back` : `👉 You poked ${name}` });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't poke", description: e.message, variant: "destructive" }),
+  });
+}
+
+export function useDismissPoke(leagueId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (fromUserId: string) => {
+      const res = await fetch(`/api/leagues/${leagueId}/pokes/dismiss`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fromUserId }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to dismiss poke");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "pokes"] }),
+  });
+}
+
 export function useTransferAndLeave(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -1101,13 +1164,13 @@ export function useAllLeagueParlays(
 // Member-facing read-only view of all parlays (no demo/admin gating), used by the
 // League Detail "All Parlays" tab. Distinct query key from useAllLeagueParlays so
 // admin-editor mutations don't invalidate/collide with this cache.
-export function useAllLeagueParlaysReadOnly(leagueId: number, enabled = true) {
+export function useAllLeagueParlaysReadOnly(leagueId: number, enabled = true, sort?: ParlayListSort) {
   return useInfiniteQuery<PaginatedParlays>({
-    queryKey: ["/api/leagues", leagueId, "parlays", { limit: PARLAY_PAGE_LIMIT }],
+    queryKey: ["/api/leagues", leagueId, "parlays", { limit: PARLAY_PAGE_LIMIT, sort }],
     queryFn: async ({ pageParam }) => {
       const offset = typeof pageParam === "number" ? pageParam : 0;
       return fetchPaginatedParlays(
-        `/api/leagues/${leagueId}/parlays?limit=${PARLAY_PAGE_LIMIT}&offset=${offset}`,
+        `/api/leagues/${leagueId}/parlays?limit=${PARLAY_PAGE_LIMIT}&offset=${offset}${sort ? `&sort=${sort}` : ""}`,
       );
     },
     initialPageParam: 0,

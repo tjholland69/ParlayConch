@@ -1,7 +1,8 @@
 /**
  * formatPickLabel — human-readable pick description for a parlay leg.
  *
- * Game bets  : team name instead of "Home"/"Away"; spread includes the line.
+ * Game bets  : team name instead of "Home"/"Away"; spread includes the line,
+ *              "+"-prefixed when positive ("BUF +3.5").
  * Over/Under : "Over 47.5" / "Under 47.5"
  * Player props:
  *   - stat props  : "Rushing Over 87.5 Yds", "Passing Under 2.5 TDs"
@@ -47,6 +48,16 @@ const PROP_META: Record<string, PropMeta> = {
   tackles:          { kind: "stat",                      unit: "Tackles" },
 };
 
+/** "+3.5" / "+150" for a positive numeric line or American odds; anything
+ * else (negatives, "PK", already-signed, non-numeric) passes through as-is. */
+export function withPlusSign(value: string | number | null | undefined): string | null {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 && !s.startsWith("+") ? `+${s}` : s;
+}
+
 function withSegment(label: string, gameSegment?: string | null): string {
   if (!gameSegment) return label;
   const trimmed = gameSegment.trim();
@@ -90,12 +101,12 @@ export function formatPickLabel(leg: LegLike): string {
 
   if (pick === "home") {
     const team = game?.homeTeam;
-    const base = betType === "spread" && line ? (team ? `${team} ${line}` : `Home ${line}`) : team ?? "Home";
+    const base = betType === "spread" && line ? `${team ?? "Home"} ${withPlusSign(line)}` : team ?? "Home";
     return withSegment(base, gameSegment);
   }
   if (pick === "away") {
     const team = game?.awayTeam;
-    const base = betType === "spread" && line ? (team ? `${team} ${line}` : `Away ${line}`) : team ?? "Away";
+    const base = betType === "spread" && line ? `${team ?? "Away"} ${withPlusSign(line)}` : team ?? "Away";
     return withSegment(base, gameSegment);
   }
 

@@ -22,7 +22,7 @@
  */
 import crypto from "crypto";
 import { db } from "../server/db";
-import { users, passwordResetTokens } from "../shared/schema";
+import { users, passwordResetTokens } from "../shared/db-schema";
 import { eq } from "drizzle-orm";
 import { hashResetToken } from "../server/auth/localAuth";
 import { sendClaimAccountEmail } from "../server/services/email";

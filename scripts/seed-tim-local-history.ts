@@ -11,7 +11,7 @@
  *   npx tsx --env-file=.env.local scripts/seed-tim-local-history.ts <userId>
  */
 import { db } from "../server/db";
-import { leagues, leagueMembers, weeks, games, parlays, parlayLegs } from "../shared/schema";
+import { leagues, leagueMembers, weeks, games, parlays, parlayLegs } from "../shared/db-schema";
 import { and, eq } from "drizzle-orm";
 
 const userId = process.argv[2];

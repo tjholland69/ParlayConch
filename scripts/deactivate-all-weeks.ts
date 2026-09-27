@@ -17,7 +17,7 @@
  */
 
 import { db } from "../server/db";
-import { weeks } from "../shared/schema";
+import { weeks } from "../shared/db-schema";
 import { eq } from "drizzle-orm";
 
 async function main() {
