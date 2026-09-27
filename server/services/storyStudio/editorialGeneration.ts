@@ -8,11 +8,11 @@ import { buildSectionPrompt, PROMPT_VERSION, type SectionPromptContext } from ".
 
 let _openai: OpenAI | null = null;
 function getOpenAI(): OpenAI | null {
-  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return null;
+  if (!process.env.OPENAI_API_KEY) return null;
   if (!_openai) {
     _openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL,
     });
   }
   return _openai;
@@ -27,7 +27,7 @@ export async function generateSection(kind: StorySectionKind, ctx: SectionPrompt
   const client = getOpenAI();
   if (!client) {
     return {
-      content: "AI generation is not available in this environment. Set AI_INTEGRATIONS_OPENAI_API_KEY to enable Story Studio drafting.",
+      content: "AI generation is not available in this environment. Set OPENAI_API_KEY to enable Story Studio drafting.",
       promptVersion: PROMPT_VERSION,
     };
   }

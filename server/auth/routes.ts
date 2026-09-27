@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { authStorage } from "./storage";
-import { logger } from "../../logger";
+import { logger } from "../logger";
 import { isAuthenticated } from "./localAuth";
 
 // Register auth-specific routes

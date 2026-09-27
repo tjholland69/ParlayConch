@@ -85,7 +85,7 @@ export default function SetPassword() {
             <>
               <h2 className="text-2xl font-bold mb-2 text-center">Set your password</h2>
               <p className="text-sm text-muted-foreground text-center mb-6">
-                We're retiring "Sign in with Replit." Set a password to keep your account.
+                Set a password to keep using your account.
               </p>
 
               <form onSubmit={handleSubmit} className="space-y-4">

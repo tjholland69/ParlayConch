@@ -4,7 +4,7 @@ import type { Express } from "express";
 import { logger } from "./logger";
 import { WebSocketServer, WebSocket } from "ws";
 import IORedis from "ioredis";
-import { isAuthenticated } from "./replit_integrations/auth";
+import { isAuthenticated } from "./auth";
 import { createBullMqConnection, isRedisConfigured, redisKeyPrefix } from "./redis-clients";
 
 type ClientMeta = {

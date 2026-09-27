@@ -28,7 +28,7 @@ export const users = pgTable("users", {
 });
 
 // Stores hashed passwords for email+password auth.
-// Separate table so Replit-auth-only users don't get a password row.
+// Separate table so accounts from the retired single sign-on can exist without a password row.
 export const userPasswords = pgTable("user_passwords", {
   userId: varchar("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
   passwordHash: varchar("password_hash").notNull(),
@@ -36,8 +36,8 @@ export const userPasswords = pgTable("user_passwords", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-// One-time tokens for the Replit-auth -> local-auth migration ("set your
-// password") flow and for future password resets. Stores a hash of the
+// One-time tokens for the "set your password" flow (accounts from the retired
+// single sign-on) and for future password resets. Stores a hash of the
 // token, never the raw value.
 export const passwordResetTokens = pgTable(
   "password_reset_tokens",

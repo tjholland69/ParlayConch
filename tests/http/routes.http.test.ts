@@ -19,7 +19,7 @@ const mockStorage = vi.hoisted(() => ({
 
 vi.mock("../../server/storage", () => ({ storage: mockStorage }));
 
-vi.mock("../../server/replit_integrations/auth", () => ({
+vi.mock("../../server/auth", () => ({
   setupAuth: vi.fn().mockResolvedValue(undefined),
   registerAuthRoutes: vi.fn(),
   registerLocalAuthRoutes: vi.fn(),
