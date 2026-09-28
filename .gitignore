@@ -8,3 +8,6 @@ vite.config.ts.*
 .env.*.local
 # Claude Code agent worktrees (local only)
 .claude/worktrees/
+
+# IntelliJ project files (per-machine; dataSources.xml names the database host)
+.idea/
