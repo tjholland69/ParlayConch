@@ -34,6 +34,14 @@ import {
 } from "@shared/powerScore";
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 import { impliedPointsMoved, MAX_POINTS_MOVE } from "@shared/buyPoints";
+import type { MultiBetLegInput } from "@shared/multiBetValidation";
+
+/** Thrown by createMultiBetParlay when the owner already has a parlay that week. */
+export class ParlayAlreadyExistsError extends Error {
+  constructor() {
+    super("This owner already has a parlay for that week. Edit it instead, or pick a different owner.");
+  }
+}
 
 function emitLeague(leagueId: number, weekId: number | undefined, kind: string) {
   void publishLeagueEvent(leagueId, kind, weekId).catch((e) =>
@@ -190,6 +198,7 @@ export interface IStorage {
   mergeParlays(leagueId: number, targetParlayId: number, sourceParlayIds: number[]): Promise<void>;
   splitParlayLegs(leagueId: number, parlayId: number, legIds: number[]): Promise<Parlay>;
   createHistoricalParlay(userId: string, leagueId: number, weekId: number, legs: Array<{ gameId?: number | null; betType: string; pick: string; line?: string | null; odds?: string | null; result?: string | null; playerName?: string | null; propType?: string | null; gameSegment?: string | null; notes?: string | null }>): Promise<Parlay>;
+  createMultiBetParlay(ownerId: string, leagueId: number, weekId: number, legs: MultiBetLegInput[]): Promise<{ parlay: Parlay; legIds: number[] }>;
   cloneParlay(sourceParlayId: number, targetWeekId: number): Promise<Parlay>;
   getMissingParlayMembers(leagueId: number, weekId: number): Promise<LeagueMemberWithUser[]>;
   backfillMissingParlays(leagueId: number, weekId: number): Promise<Parlay[]>;
@@ -2770,6 +2779,41 @@ export class DatabaseStorage implements IStorage {
     const [created] = await db.insert(players)
       .values({ ...data, updatedAt: new Date() })
       .returning();
+    return created;
+  }
+
+  /**
+   * One parlay with a leg per league member, entered in one go from the Data
+   * Editor's multi-bet form. Unlike createHistoricalParlay this never replaces
+   * an existing parlay: wiping someone's legs from a bulk-entry form would be
+   * a nasty surprise, so the caller is told to edit the existing one instead.
+   */
+  async createMultiBetParlay(ownerId: string, leagueId: number, weekId: number, legs: MultiBetLegInput[]): Promise<{ parlay: Parlay; legIds: number[] }> {
+    const created = await db.transaction(async (tx) => {
+      const existing = await tx
+        .select({ id: parlays.id })
+        .from(parlays)
+        .where(and(eq(parlays.userId, ownerId), eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
+      if (existing.length > 0) throw new ParlayAlreadyExistsError();
+
+      const [parlay] = await tx.insert(parlays).values({
+        userId: ownerId, leagueId, weekId, status: "approved", source: "imported",
+      }).returning();
+      const inserted = await tx.insert(parlayLegs).values(legs.map(leg => ({
+        parlayId: parlay.id,
+        userId: leg.userId,
+        gameId: leg.gameId ?? null,
+        betType: leg.betType,
+        pick: leg.pick,
+        line: leg.line || null,
+        odds: leg.odds || null,
+        result: leg.result || null,
+        playerName: leg.playerName || null,
+        propType: leg.propType || null,
+      }))).returning({ id: parlayLegs.id });
+      return { parlay, legIds: inserted.map(l => l.id) };
+    });
+    emitLeague(leagueId, weekId, "parlays_updated");
     return created;
   }
 

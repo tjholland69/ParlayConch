@@ -36,10 +36,14 @@ function calculateLegResult(betType: string, pick: string, game: Game, line?: st
     if (pick === "away") return scoreDiff < 0 ? "win" : scoreDiff > 0 ? "loss" : "push";
   }
   if (betType === "spread") {
-    const spread = parseFloat(line ?? game.spread ?? "0");
-    const adj = scoreDiff + spread;
-    if (pick === "home") return adj > 0 ? "win" : adj < 0 ? "loss" : "push";
-    if (pick === "away") return adj < 0 ? "win" : adj > 0 ? "loss" : "push";
+    // A leg's own line is from the picked team's side ("BUF +3.5" is stored as
+    // +3.5 on an away pick), while game.spread is always the home team's.
+    // Put both on the picked team's side before grading.
+    const fallback = pickSideSpread(pick, game.spread) ?? "0";
+    const spread = parseFloat(line ?? fallback);
+    const margin = pick === "away" ? -scoreDiff : scoreDiff;
+    const adj = margin + spread;
+    if (pick === "home" || pick === "away") return adj > 0 ? "win" : adj < 0 ? "loss" : "push";
   }
   if (betType === "over" || betType === "under") {
     const total = homeScore + awayScore;
@@ -51,8 +55,16 @@ function calculateLegResult(betType: string, pick: string, game: Game, line?: st
   return null;
 }
 
+/** game.spread is the home team's spread; an away pick takes the other side of it. */
+function pickSideSpread(pick: string, homeSpread: string | null | undefined): string | null {
+  if (!homeSpread) return null;
+  if (pick !== "away") return homeSpread;
+  const n = parseFloat(homeSpread);
+  return Number.isNaN(n) ? homeSpread : String(-n);
+}
+
 function deriveApproximateLine(betType: string, pick: string, game: Game): string | null {
-  if (betType === "spread") return game.spread ?? null;
+  if (betType === "spread") return pickSideSpread(pick, game.spread);
   if (betType === "moneyline") return pick === "home" ? (game.moneylineHome ?? null) : (game.moneylineAway ?? null);
   if (betType === "over" || betType === "under") return game.overUnder ?? null;
   return null;
@@ -159,7 +171,12 @@ async function saveLog(legId: number, log: EnrichLog): Promise<EnrichLog> {
   return log;
 }
 
-export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
+/**
+ * `skipScoreSync` grades against the scores already in the DB instead of
+ * pulling the week again. For a caller enriching several legs from one week
+ * back to back, where the first leg's pull already covered the rest.
+ */
+export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boolean } = {}): Promise<EnrichLog> {
   const log: EnrichLog = { at: new Date().toISOString(), changes: [], warnings: [], errors: [] };
 
   try {
@@ -256,34 +273,38 @@ export async function enrichSingleLeg(legId: number): Promise<EnrichLog> {
         return saveLog(legId, log);
       }
 
-      log.changes.push(`Fetching nflverse scores for Season ${season} Week ${weekNumber}…`);
-      try {
-        const scoreResult = await syncGameScoresFromNflverse(season, [weekNumber]);
-        if (scoreResult.updated > 0) {
-          log.changes.push(`nflverse: ${scoreResult.updated} game(s) updated with new scores`);
-        } else if (scoreResult.alreadyFinal > 0) {
-          log.changes.push(`Scores already final in DB (${scoreResult.alreadyFinal} game(s))`);
-        } else {
-          log.warnings.push(`No matching games found in nflverse (noMatch=${scoreResult.noMatch}) — verify season/week or that the game was in our DB`);
+      if (opts.skipScoreSync) {
+        log.changes.push(`Scores for Season ${season} Week ${weekNumber} already refreshed in this run`);
+      } else {
+        log.changes.push(`Fetching nflverse scores for Season ${season} Week ${weekNumber}…`);
+        try {
+          const scoreResult = await syncGameScoresFromNflverse(season, [weekNumber]);
+          if (scoreResult.updated > 0) {
+            log.changes.push(`nflverse: ${scoreResult.updated} game(s) updated with new scores`);
+          } else if (scoreResult.alreadyFinal > 0) {
+            log.changes.push(`Scores already final in DB (${scoreResult.alreadyFinal} game(s))`);
+          } else {
+            log.warnings.push(`No matching games found in nflverse (noMatch=${scoreResult.noMatch}) — verify season/week or that the game was in our DB`);
+          }
+        } catch (err: any) {
+          log.errors.push(`nflverse score fetch failed: ${err.message}`);
+          return saveLog(legId, log);
         }
-      } catch (err: any) {
-        log.errors.push(`nflverse score fetch failed: ${err.message}`);
-        return saveLog(legId, log);
-      }
 
-      // The score sync above stamps games.finishedAt at the moment THIS sync
-      // runs, not the game's actual final whistle — fine for a single leg
-      // finishing in isolation, but every game in a batch/slate ends up with
-      // ~the same timestamp otherwise (breaks Hero/Loser ordering and sorting
-      // by "when did this settle"). Re-derive the precise finish time from
-      // play-by-play right away rather than waiting on the scheduled job.
-      try {
-        const finishResult = await syncGameFinishTimesFromPlayByPlay(season, [weekNumber]);
-        if (finishResult.updated > 0) {
-          log.changes.push(`Play-by-play: precise finish time set for ${finishResult.updated} game(s)`);
+        // The score sync above stamps games.finishedAt at the moment THIS sync
+        // runs, not the game's actual final whistle — fine for a single leg
+        // finishing in isolation, but every game in a batch/slate ends up with
+        // ~the same timestamp otherwise (breaks Hero/Loser ordering and sorting
+        // by "when did this settle"). Re-derive the precise finish time from
+        // play-by-play right away rather than waiting on the scheduled job.
+        try {
+          const finishResult = await syncGameFinishTimesFromPlayByPlay(season, [weekNumber]);
+          if (finishResult.updated > 0) {
+            log.changes.push(`Play-by-play: precise finish time set for ${finishResult.updated} game(s)`);
+          }
+        } catch (err: any) {
+          log.warnings.push(`Play-by-play finish-time sync failed (non-fatal): ${err.message}`);
         }
-      } catch (err: any) {
-        log.warnings.push(`Play-by-play finish-time sync failed (non-fatal): ${err.message}`);
       }
 
       const [freshGame] = await db.select().from(games).where(eq(games.id, leg.gameId));

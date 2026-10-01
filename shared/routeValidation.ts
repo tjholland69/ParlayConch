@@ -117,6 +117,28 @@ export const addParlayLegInputSchema = z
   })
   .strict();
 
+const multiBetLegInputSchema = z
+  .object({
+    userId: z.string().min(1),
+    gameId: z.number().int().nullable().optional(),
+    betType: z.string().min(1),
+    pick: z.string().min(1),
+    line: z.string().nullable().optional(),
+    odds: z.string().nullable().optional(),
+    result: z.enum(["win", "loss", "push"]).nullable().optional(),
+    playerName: z.string().nullable().optional(),
+    propType: z.string().nullable().optional(),
+  })
+  .strict();
+
+export const createMultiBetParlayInputSchema = z
+  .object({
+    userId: z.string().min(1),
+    weekId: z.number().int().positive(),
+    legs: z.array(multiBetLegInputSchema).min(1).max(50),
+  })
+  .strict();
+
 export type CreateParlayInput = z.infer<typeof createParlayInputSchema>;
 export type UpdateParlayInput = z.infer<typeof updateParlayInputSchema>;
 export type UpdateParlayLegInput = z.infer<typeof updateParlayLegInputSchema>;
@@ -126,3 +148,4 @@ export type UpdateLeagueNotificationSettingsInput = z.infer<
   typeof updateLeagueNotificationSettingsSchema
 >;
 export type AddParlayLegInput = z.infer<typeof addParlayLegInputSchema>;
+export type CreateMultiBetParlayInput = z.infer<typeof createMultiBetParlayInputSchema>;
