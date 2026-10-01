@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
+import { useLeagues, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
 import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -407,20 +407,24 @@ export default function LeagueDetail() {
     addDraftLeg.mutate({ leagueId, weekId: activeWeekId, leg: { gameId: game.id, betType, pick, line } });
   };
 
-  // Open Parlays only shows the active week's slate by default. The odds sync
-  // has historically filed some of next week's games under the active week,
-  // so split by kickoff against the active week's window rather than trusting
-  // weekId alone; anything past it joins next week's games, shown on request.
-  const [showNextWeek, setShowNextWeek] = useState(false);
-  const nextWeek = activeWeek
-    ? weeks?.find(w => w.season === activeWeek.season && w.weekNumber === activeWeek.weekNumber + 1)
-    : undefined;
-  // Also fetch when the draft already holds a next-week leg, so its chip can
-  // still name the teams while the section is hidden.
-  const hasNextWeekLeg = !!games && myLegs.some(l => l.gameId != null && !games.some(g => g.id === l.gameId));
-  const { data: nextWeekRowGames, isLoading: loadingNextWeekGames } = useGames(
-    showNextWeek || hasNextWeekLeg ? nextWeek?.id ?? 0 : 0,
+  // Open Parlays only shows the active week's slate by default. Later weeks
+  // of the same season load one at a time, on request. The odds sync has
+  // historically filed some of next week's games under the active week, so
+  // split by kickoff against the active week's window rather than trusting
+  // weekId alone; anything past it joins the first later week.
+  const [laterWeeksShown, setLaterWeeksShown] = useState(0);
+  const laterWeeks = activeWeek
+    ? (weeks ?? [])
+        .filter(w => w.season === activeWeek.season && w.weekNumber > activeWeek.weekNumber)
+        .sort((a, b) => a.weekNumber - b.weekNumber)
+    : [];
+  // Also fetch next week when the draft already holds a later-week leg, so
+  // its chip can still name the teams while the section is hidden.
+  const hasLaterWeekLeg = !!games && myLegs.some(l => l.gameId != null && !games.some(g => g.id === l.gameId));
+  const laterWeekQueries = useGamesForWeeks(
+    laterWeeks.slice(0, Math.max(laterWeeksShown, hasLaterWeekLeg ? 1 : 0)).map(w => w.id),
   );
+  const laterWeekRowGames = laterWeekQueries.flatMap(q => q.data ?? []);
   const activeWeekRange = activeWeek ? estimateWeekDateRange(activeWeek.season, activeWeek.weekNumber) : null;
   const inActiveWeekRange = (game: Game) =>
     !!activeWeekRange && !!game.gameTime &&
@@ -440,9 +444,15 @@ export default function LeagueDetail() {
   // Every game in the current week shows, in kickoff order; ones already
   // underway or final render greyed out and unpickable (see renderGameCard).
   const thisWeekGames = (games ?? []).filter(g => !isBeyondActiveWeek(g)).sort(byKickoff);
-  const nextWeekGames = (() => {
+  const leakedGames = (games ?? []).filter(isBeyondActiveWeek);
+  // Leaked games count as a later week even when there's no later week row
+  // yet (e.g. the season's last week).
+  const laterWeekCount = laterWeeks.length || (leakedGames.length > 0 ? 1 : 0);
+  const laterWeekLabel = (index: number) => laterWeeks[index]?.label ?? "Upcoming";
+  const laterWeekSections = Array.from({ length: Math.min(laterWeeksShown, laterWeekCount) }, (_, index) => {
+    const query = laterWeekQueries[index];
     const seen = new Set<string>();
-    return [...(games ?? []).filter(isBeyondActiveWeek), ...(nextWeekRowGames ?? [])]
+    const sectionGames = [...(index === 0 ? leakedGames : []), ...(query?.data ?? [])]
       .filter(g => {
         const key = `${g.awayTeam}|${g.homeTeam}`;
         if (seen.has(key)) return false;
@@ -450,10 +460,8 @@ export default function LeagueDetail() {
         return isOpenOrMine(g);
       })
       .sort(byKickoff);
-  })();
-  // Leaked games already in the active week count as "next week" even when
-  // there's no next-week row yet (e.g. the season's last week).
-  const nextWeekLabel = nextWeek?.label ?? ((games ?? []).some(isBeyondActiveWeek) ? "Upcoming" : null);
+    return { label: laterWeekLabel(index), games: sectionGames, isLoading: !!query?.isLoading };
+  });
 
   const renderGameCard = (game: Game) => {
     const isPast = !!game.isFinished || (game.gameTime ? new Date(game.gameTime) < new Date() : false);
@@ -841,7 +849,7 @@ export default function LeagueDetail() {
                     )}
                     <div className="flex flex-wrap gap-2">
                       {myLegs.map((leg) => {
-                        const game = games?.find(g => g.id === leg.gameId) ?? nextWeekRowGames?.find(g => g.id === leg.gameId);
+                        const game = games?.find(g => g.id === leg.gameId) ?? laterWeekRowGames.find(g => g.id === leg.gameId);
                         const pickLabel =
                           leg.betType === 'player_prop' ? `${leg.playerName ?? 'Player'} ${leg.pick}` :
                           leg.betType === 'over' ? `O ${game?.overUnder}` :
@@ -865,39 +873,42 @@ export default function LeagueDetail() {
               {/* Games Grid — all of this week's games; started/finished ones
                   are greyed out. Next week's games only appear once the user
                   asks for them. */}
+              <p className="text-sm font-semibold" data-testid="text-current-week-label">
+                {activeWeek?.label} <span className="text-muted-foreground font-normal">· current week</span>
+              </p>
               <div className="grid gap-4 md:grid-cols-2">
                 {thisWeekGames.map(renderGameCard)}
               </div>
 
-              {nextWeekLabel && (
-                showNextWeek ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/5">
-                      <p className="text-sm font-semibold">
-                        Next week <span className="text-muted-foreground font-normal">· {nextWeekLabel}</span>
-                      </p>
-                      <Button size="sm" variant="ghost" onClick={() => setShowNextWeek(false)} data-testid="button-hide-next-week">
-                        Hide
-                      </Button>
+              {laterWeekSections.map(section => (
+                <div key={section.label} className="space-y-3" data-testid={`section-later-week-${section.label}`}>
+                  <p className="text-sm font-semibold pt-2 border-t border-white/5">{section.label}</p>
+                  {section.games.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-6 bg-card/20 rounded-xl border border-dashed border-white/10">
+                      {section.isLoading ? "Loading…" : `${section.label} lines aren't posted yet.`}
+                    </p>
+                  ) : (
+                    <div className="grid gap-4 md:grid-cols-2">
+                      {section.games.map(renderGameCard)}
                     </div>
-                    {nextWeekGames.length === 0 ? (
-                      <p className="text-sm text-muted-foreground text-center py-6 bg-card/20 rounded-xl border border-dashed border-white/10">
-                        {loadingNextWeekGames ? "Loading…" : "Next week's lines aren't posted yet."}
-                      </p>
-                    ) : (
-                      <div className="grid gap-4 md:grid-cols-2">
-                        {nextWeekGames.map(renderGameCard)}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="flex justify-center">
-                    <Button variant="outline" size="sm" onClick={() => setShowNextWeek(true)} data-testid="button-load-next-week">
+                  )}
+                </div>
+              ))}
+
+              {laterWeekCount > 0 && (
+                <div className="flex justify-center gap-2">
+                  {laterWeeksShown < laterWeekCount && (
+                    <Button variant="outline" size="sm" onClick={() => setLaterWeeksShown(n => n + 1)} data-testid="button-load-next-week">
                       <Plus className="w-4 h-4 mr-1" />
-                      Load next week's games ({nextWeekLabel})
+                      Load {laterWeekLabel(laterWeeksShown)} games
                     </Button>
-                  </div>
-                )
+                  )}
+                  {laterWeeksShown > 0 && (
+                    <Button variant="ghost" size="sm" onClick={() => setLaterWeeksShown(0)} data-testid="button-hide-next-week">
+                      Show current week only
+                    </Button>
+                  )}
+                </div>
               )}
 
               {propDialogGame && activeWeekId && (

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, type InfiniteData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
+import type { MultiBetLegInput } from "@shared/multiBetValidation";
 import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, TakenPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team, ParlayListSort } from "@shared/schema";
 
 export type PaginatedParlays = {
@@ -63,6 +64,21 @@ export function useGames(weekId: number) {
       return res.json();
     },
     enabled: !!weekId,
+  });
+}
+
+/** useGames for several weeks at once, sharing its cache. Results come back
+ * in the same order as `weekIds`. */
+export function useGamesForWeeks(weekIds: number[]) {
+  return useQueries({
+    queries: weekIds.map((weekId) => ({
+      queryKey: [api.games.listByWeek.path, weekId],
+      queryFn: async (): Promise<GameWithBet[]> => {
+        const res = await fetch(buildUrl(api.games.listByWeek.path, { id: weekId }), { credentials: "include" });
+        if (!res.ok) throw new Error("Failed to fetch games");
+        return res.json();
+      },
+    })),
   });
 }
 
@@ -1406,6 +1422,72 @@ export function useAddHistoricalParlay(leagueId: number) {
       toast({ title: "Parlay Added" });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+  });
+}
+
+export type MultiBetSaveError = Error & {
+  formErrors?: string[];
+  rowErrors?: Record<number, string[]>;
+};
+
+/** Saves a whole multi-bet parlay; the server grades the new legs before it
+ * replies, so every parlay and game query is refetched on success. */
+export function useAddMultiBetParlay(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (body: { userId: string; weekId: number; legs: MultiBetLegInput[] }) => {
+      const res = await fetch(`/api/leagues/${leagueId}/parlays/multi-bet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw Object.assign(new Error(e.message ?? "Could not save the parlay"), {
+          formErrors: e.formErrors,
+          rowErrors: e.rowErrors,
+        }) as MultiBetSaveError;
+      }
+      return res.json() as Promise<{ parlay: { id: number }; refresh: { graded: number; pending: number; errors: number } }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId] });
+      queryClient.invalidateQueries({ queryKey: [api.games.listByWeek.path] });
+      const { graded, pending } = data.refresh;
+      toast({
+        title: "Parlay Added",
+        description: pending === 0
+          ? `Results refreshed. All ${graded} bets graded.`
+          : `Results refreshed. ${graded} graded, ${pending} still waiting on a final score or stats.`,
+      });
+    },
+    onError: (e: MultiBetSaveError) => toast({ title: "Parlay not saved", description: e.message, variant: "destructive" }),
+  });
+}
+
+/** Imports every player with stats in `weekId` from nflverse, for when the
+ * multi-bet form's player search comes up empty. */
+export function useSyncWeekPlayers(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (weekId: number) => {
+      const res = await fetch(`/api/leagues/${leagueId}/weeks/${weekId}/sync-players`, { method: "POST", credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json() as Promise<{ players: number; stats: number }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/players"] });
+      toast({
+        title: "Player lookup finished",
+        description: data.players > 0
+          ? `${data.players} players checked for that week. Search again.`
+          : "No player data is published for that week yet. You can still type the name in.",
+      });
+    },
+    onError: (e: Error) => toast({ title: "Player lookup failed", description: e.message, variant: "destructive" }),
   });
 }
 

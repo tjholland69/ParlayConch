@@ -21,7 +21,7 @@ import { getBustedLeg } from "@/lib/parlayLoser";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { DisputeLegDialog } from "@/components/DisputeLegDialog";
 import { getHeroLeg } from "@/lib/parlayHero";
-import { decidedTime } from "@/lib/decidedTime";
+import { compareLegsByDecided } from "@/lib/decidedTime";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 import { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 import { legLabel } from "@/lib/legLabel";
@@ -384,11 +384,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   // pending decision have no resolvable timestamp and fall back to their
   // scheduled kickoff so they order sensibly relative to already-decided
   // legs instead of all landing arbitrarily at the end.
-  const sortedLegs = [...parlay.legs].sort((a, b) => {
-    const aTime = decidedTime(a) ?? (a.game?.gameTime ? new Date(a.game.gameTime).getTime() : Infinity);
-    const bTime = decidedTime(b) ?? (b.game?.gameTime ? new Date(b.game.gameTime).getTime() : Infinity);
-    return aTime - bTime || a.id - b.id;
-  });
+  const sortedLegs = [...parlay.legs].sort(compareLegsByDecided);
 
   return (
     <>

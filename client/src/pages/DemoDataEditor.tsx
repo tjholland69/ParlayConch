@@ -13,7 +13,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine, UserX, LayoutGrid, Table2 } from "lucide-react";
+import { ArrowLeft, FlaskConical, Trash2, Plus, Loader2, GitMerge, RefreshCw, FilePlus, ArrowUpDown, ListChecks, PencilLine, UserX, LayoutGrid, Table2, Layers } from "lucide-react";
 import { PLAYER_PROP_TYPES, type ParlayWithLegs, type ParlayLeg, type LeagueMemberWithUser, type Game } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { apiRequest } from "@/lib/queryClient";
@@ -30,6 +30,9 @@ import { getDisplayName, shortId, sortByFirstName } from "@/lib/displayName";
 import { useAuth } from "@/hooks/use-auth";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import type { ParlayLegRowActions } from "@/components/ParlayLegsGrid";
+import { AddMultiBetParlayDialog } from "@/components/AddMultiBetParlayDialog";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
+import { compareLegsByDecided, parlayDecidedTime } from "@/lib/decidedTime";
 
 // AG Grid alone is ~1MB — only worth loading once someone actually asks
 // for the raw leg grid, not on every Data Editor page visit.
@@ -564,6 +567,7 @@ export default function DemoDataEditor() {
 
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const effectiveUserId = useEffectiveUserId();
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
 
@@ -580,6 +584,7 @@ export default function DemoDataEditor() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [mergeOpen, setMergeOpen] = useState(false);
   const [addHistoricalOpen, setAddHistoricalOpen] = useState(false);
+  const [multiBetOpen, setMultiBetOpen] = useState(false);
   const [collapseSignal, setCollapseSignal] = useState(0);
   const [expandSignal, setExpandSignal] = useState(0);
   const [sortBy, setSortBy] = useState("week-desc");
@@ -669,12 +674,21 @@ export default function DemoDataEditor() {
     return true;
   });
 
+  // Parlay level: week first, then when the parlay was decided. A parlay with
+  // no dated legs sorts as the oldest in its week. Leg level (inside each
+  // card, and row order in Table view) is compareLegsByDecided.
+  const byWeekThenDecided = (a: ParlayWithLegs, b: ParlayWithLegs) =>
+    (a.week?.season ?? 0) - (b.week?.season ?? 0)
+    || (a.week?.weekNumber ?? 0) - (b.week?.weekNumber ?? 0)
+    || (parlayDecidedTime(a) ?? 0) - (parlayDecidedTime(b) ?? 0)
+    || a.id - b.id;
+
   const sorted = [...filtered].sort((a, b) => {
     switch (sortBy) {
       case "week-desc":
-        return (b.week?.season ?? 0) - (a.week?.season ?? 0) || (b.week?.weekNumber ?? 0) - (a.week?.weekNumber ?? 0) || b.id - a.id;
+        return byWeekThenDecided(b, a);
       case "week-asc":
-        return (a.week?.season ?? 0) - (b.week?.season ?? 0) || (a.week?.weekNumber ?? 0) - (b.week?.weekNumber ?? 0) || a.id - b.id;
+        return byWeekThenDecided(a, b);
       case "member-asc": {
         const nameA = getDisplayName(a.user, "").toLowerCase();
         const nameB = getDisplayName(b.user, "").toLowerCase();
@@ -731,6 +745,10 @@ export default function DemoDataEditor() {
           </div>
           <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs">DEMO ONLY</Badge>
         </div>
+        <Button className="ml-auto gap-1.5" onClick={() => setMultiBetOpen(true)} data-testid="button-add-multi-bet">
+          <Layers className="w-4 h-4" />
+          Add Parlay (Multi-Bet)
+        </Button>
       </div>
 
       {/* Filters + Select toggle */}
@@ -795,12 +813,12 @@ export default function DemoDataEditor() {
         <div className="flex items-center gap-2">
           <ArrowUpDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
           <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-48 h-9 text-sm">
+            <SelectTrigger className="w-64 h-9 text-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="week-desc">Week (Newest First)</SelectItem>
-              <SelectItem value="week-asc">Week (Oldest First)</SelectItem>
+              <SelectItem value="week-desc">Week, then Decided (Newest First)</SelectItem>
+              <SelectItem value="week-asc">Week, then Decided (Oldest First)</SelectItem>
               <SelectItem value="member-asc">Member (A → Z)</SelectItem>
               <SelectItem value="win-pct-desc">Win % (Highest First)</SelectItem>
               <SelectItem value="pending-desc">Most Pending Legs</SelectItem>
@@ -902,7 +920,10 @@ export default function DemoDataEditor() {
         </div>
       ) : viewMode === "grid" ? (
         <Suspense fallback={<div className="h-[70vh] bg-white/5 rounded-xl animate-pulse" />}>
-          <ParlayLegsGrid rows={flattenParlayLegs(sorted)} rowActions={gridRowActions} />
+          <ParlayLegsGrid
+            rows={flattenParlayLegs(sorted.map(p => ({ ...p, legs: [...p.legs].sort(compareLegsByDecided) })))}
+            rowActions={gridRowActions}
+          />
         </Suspense>
       ) : (
         <div className="space-y-4">
@@ -1042,6 +1063,21 @@ export default function DemoDataEditor() {
         weeks={weeks ?? []}
         members={members ?? []}
       />
+
+      {/* Add Parlay (Multi-Bet) — mounted only while open so it starts fresh */}
+      {multiBetOpen && (
+        <AddMultiBetParlayDialog
+          open={multiBetOpen}
+          onOpenChange={setMultiBetOpen}
+          leagueId={leagueId}
+          minLegs={league.minLegsPerParlay ?? 1}
+          weeks={weeks ?? []}
+          members={members ?? []}
+          parlays={allParlays ?? []}
+          currentUserId={effectiveUserId}
+          defaultWeekId={specificWeekId}
+        />
+      )}
 
       {/* Grid ("Table" view) right-click actions — edit/fetch mirror the same
           controls ParlayRollupCard offers per-leg in Rollup Tiles view. */}

@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type { Server } from "http";
-import { storage } from "./storage";
+import { storage, ParlayAlreadyExistsError } from "./storage";
 import { logger } from "./logger";
 import { db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./auth";
@@ -49,8 +49,11 @@ import {
   updateLeagueSettingsSchema,
   updateParlayInputSchema,
   updateParlayLegInputSchema,
+  createMultiBetParlayInputSchema,
   updateUserSettingsSchema,
 } from "@shared/routeValidation";
+import { validateMultiBetLegs } from "@shared/multiBetValidation";
+import { abbrevToShort, syncAllPlayerStatsForWeek } from "./services/nflverse";
 import multer from "multer";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
@@ -1993,6 +1996,101 @@ export async function registerRoutes(
       }
       const parlay = await storage.createHistoricalParlay(userId, leagueId, Number(weekId), legs ?? []);
       res.json(parlay);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // "Add Parlay (Multi-Bet)": one parlay, one bet per member, entered in one
+  // form. Runs the same checks as the dialog (shared/multiBetValidation.ts),
+  // saves, then pulls scores/stats and grades every new leg before replying.
+  app.post("/api/leagues/:leagueId/parlays/multi-bet", isAuthenticated, auditLog("parlay.multi_bet_create", { targetParam: "leagueId", targetType: "league" }), async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const input = createMultiBetParlayInputSchema.parse(req.body);
+
+      const [league, week, members, weekGames] = await Promise.all([
+        storage.getLeague(leagueId),
+        storage.getWeek(input.weekId),
+        storage.getLeagueMembers(leagueId),
+        storage.getGamesByWeek(input.weekId),
+      ]);
+      if (!week) return res.status(400).json({ message: "Week not found" });
+
+      const memberIds = new Set(members.map(m => m.userId));
+      if (!memberIds.has(input.userId)) {
+        return res.status(400).json({ message: "The parlay owner is not a member of this league" });
+      }
+      const validation = validateMultiBetLegs(input.legs, { minLegs: league?.minLegsPerParlay ?? 1 });
+      const gameIds = new Set(weekGames.map(g => g.id));
+      input.legs.forEach((leg, i) => {
+        if (leg.userId && !memberIds.has(leg.userId)) (validation.rowErrors[i] ??= []).push("Bet owner is not a member of this league");
+        if (leg.gameId != null && !gameIds.has(leg.gameId)) (validation.rowErrors[i] ??= []).push(`That game isn't in ${week.label}`);
+      });
+      if (validation.formErrors.length > 0 || Object.keys(validation.rowErrors).length > 0) {
+        return res.status(400).json({
+          message: "Some bets need fixing before this parlay can be saved",
+          formErrors: validation.formErrors,
+          rowErrors: validation.rowErrors,
+        });
+      }
+
+      // A prop has no game picker in the form. Link it to the player's game
+      // that week when we can, so the card shows its date/kickoff/slate.
+      const legs = await Promise.all(input.legs.map(async (leg) => {
+        if (leg.betType !== "player_prop" || leg.gameId != null || !leg.playerName) return leg;
+        const name = leg.playerName.trim().toLowerCase();
+        const player = (await storage.searchPlayers(leg.playerName.trim(), 5))
+          .find(p => p.name.toLowerCase() === name || p.displayName?.toLowerCase() === name);
+        const team = player?.team ? abbrevToShort(player.team) : null;
+        const game = team ? weekGames.find(g => g.homeTeam === team || g.awayTeam === team) : undefined;
+        return game ? { ...leg, gameId: game.id } : leg;
+      }));
+
+      const { parlay, legIds } = await storage.createMultiBetParlay(input.userId, leagueId, input.weekId, legs);
+
+      // enrichSingleLeg records its own failures in the returned log rather
+      // than throwing, so a data-source outage never loses the saved parlay.
+      // Every game leg is in the same week, so one score pull covers them all.
+      const logs = [];
+      let scoresPulled = false;
+      for (const [i, legId] of legIds.entries()) {
+        const needsScores = legs[i].betType !== "player_prop" && !legs[i].result;
+        logs.push(await enrichSingleLeg(legId, { skipScoreSync: needsScores && scoresPulled }));
+        if (needsScores) scoresPulled = true;
+      }
+      await storage.rollupParlayStatus(parlay.id);
+
+      const saved = await db.select({ result: parlayLegs.result }).from(parlayLegs).where(eq(parlayLegs.parlayId, parlay.id));
+      const graded = saved.filter(l => !!l.result).length;
+      res.status(201).json({
+        parlay,
+        refresh: {
+          graded,
+          pending: saved.length - graded,
+          errors: logs.reduce((n, log) => n + log.errors.length, 0),
+        },
+      });
+    } catch (err: any) {
+      if (err instanceof ParlayAlreadyExistsError) return res.status(409).json({ message: err.message });
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // "Look up new players" in the multi-bet form: pulls every player with
+  // stats that week from nflverse into the players table, so someone the
+  // search couldn't find becomes selectable.
+  app.post("/api/leagues/:leagueId/weeks/:weekId/sync-players", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const uid = await requireDemoAdmin(req, res, leagueId);
+      if (!uid) return;
+      const week = await storage.getWeek(Number(req.params.weekId));
+      if (!week) return res.status(404).json({ message: "Week not found" });
+      const result = await syncAllPlayerStatsForWeek(week.season, week.weekNumber);
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
