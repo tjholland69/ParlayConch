@@ -41,7 +41,8 @@ import {
 } from "@/hooks/use-parlays";
 import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
 import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
-import { useEffectiveUserId, useEffectiveSettings } from "@/hooks/use-acting-as";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
+import { useAuth } from "@/hooks/use-auth";
 import { useAppResume } from "@/hooks/use-app-resume";
 import { format } from "date-fns";
 import { SPORTSBOOK_PROVIDERS, pickDeepLinkGames, type SportsbookProvider, type DeepLinkGame } from "@shared/sportsbook-providers";
@@ -50,7 +51,7 @@ import { resolveResultDetail } from "@shared/legJustification";
 import { getSlate } from "@shared/slate";
 import { webLeagueSettingsUrl } from "@/lib/pickHelpers";
 import { shadows } from "@/lib/theme";
-import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
+import { getOpenParlayVisualStyle, getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
@@ -138,6 +139,9 @@ function ParlayCard({
   const pending = legs.length - resolved;
   const pct = resolved > 0 ? Math.round((wins / resolved) * 100) : null;
   const visual = getParlayVisualStyle(pct, 1);
+  // Until a leg is decided there's no win % to color by, so an open parlay
+  // shows its status instead: light blue while pending, a glow once active.
+  const openVisual = pct === null ? getOpenParlayVisualStyle(parlay.status) : null;
   const pctColor = pct !== null ? (([r, g, b]) => `rgb(${r}, ${g}, ${b})`)(getWinPctColor(pct)) : "#64748b";
 
   const bustedLeg = getBustedLeg(parlay);
@@ -274,8 +278,14 @@ function ParlayCard({
   }
 
   return (
-    <View style={styles.parlayCardShadowWrap}>
-    <View style={[styles.parlayCard, { borderColor: visual.borderColor }]}>
+    <View style={[styles.parlayCardShadowWrap, openVisual?.glowColor && shadows.glow(openVisual.glowColor, 0.45)]}>
+    <View
+      style={[
+        styles.parlayCard,
+        { borderColor: openVisual?.borderColor ?? visual.borderColor },
+        openVisual?.backgroundColor && { backgroundColor: openVisual.backgroundColor },
+      ]}
+    >
       <Pressable
         onPress={() => setCollapsed((c) => !c)}
         style={({ pressed }) => [styles.parlayCardHeader, pressed && styles.headerPressed]}
@@ -345,11 +355,10 @@ function ParlayCard({
         <Ionicons name={statusIcon} size={22} color={statusColor} />
       </Pressable>
 
-      {!collapsed && (
-        <View style={styles.mixBarWrap}>
-          <ParlayMixBar legs={legs} />
-        </View>
-      )}
+      {/* Bet-type mix stays visible when collapsed — it's the at-a-glance summary. */}
+      <View style={styles.mixBarWrap}>
+        <ParlayMixBar legs={legs} />
+      </View>
 
       {!collapsed && legs.length > 0 && (
         <View style={styles.legsSection}>
@@ -738,31 +747,48 @@ function LeagueRecordTile({ record, members, onLookthrough }: { record: LeagueRe
       style={({ pressed }) => [styles.recordTile, hasLookthrough && pressed && { opacity: 0.7 }]}
       onPress={hasLookthrough ? () => onLookthrough(record) : undefined}
       disabled={!hasLookthrough}
+      testID={`card-league-record-${record.key}`}
     >
-      {record.title ? (
-        <>
+      <View style={styles.recordBody}>
+        {record.title ? (
+          <>
+            <View style={styles.recordTitleRow}>
+              <LeagueRecordIcon recordKey={record.key} size={14} color="#2563eb" />
+              <Text style={styles.recordTitle} numberOfLines={1}>{record.title}</Text>
+            </View>
+            {!!record.label && (
+              <Text style={styles.recordLabel} numberOfLines={2}>{record.label}</Text>
+            )}
+          </>
+        ) : (
           <View style={styles.recordTitleRow}>
-            <LeagueRecordIcon recordKey={record.key} size={14} color="#2563eb" />
-            <Text style={styles.recordTitle} numberOfLines={1}>{record.title}</Text>
-          </View>
-          {!!record.label && (
+            <LeagueRecordIcon recordKey={record.key} size={13} color="#94a3b8" />
             <Text style={styles.recordLabel} numberOfLines={2}>{record.label}</Text>
+          </View>
+        )}
+        <Text style={styles.recordValue} numberOfLines={1}>
+          {record.value}
+          {record.detail ? <Text style={styles.recordDetail}> ({record.detail})</Text> : null}
+        </Text>
+        {winLossLabel && <Text style={styles.recordMeta} numberOfLines={1}>Record: {winLossLabel}</Text>}
+        {holderName && <Text style={styles.recordMeta} numberOfLines={1}>{holderName}</Text>}
+        {weekLabel && <Text style={styles.recordMeta} numberOfLines={1}>{weekLabel}</Text>}
+        {dateRangeLabel && <Text style={styles.recordMeta} numberOfLines={1}>{dateRangeLabel}</Text>}
+      </View>
+      {/* The viewer's own figure for this category — a footnote to the
+          record, so it stays small. */}
+      {record.viewerValue !== undefined && (
+        <View style={styles.recordViewerRow} testID={`text-record-viewer-${record.key}`}>
+          {record.viewerIsHolder ? (
+            <Text style={styles.recordViewerValue} numberOfLines={1}>That's You Silly!</Text>
+          ) : (
+            <>
+              <Text style={styles.recordViewerLabel}>YOU</Text>
+              <Text style={styles.recordViewerValue} numberOfLines={1}>{record.viewerValue ?? "—"}</Text>
+            </>
           )}
-        </>
-      ) : (
-        <View style={styles.recordTitleRow}>
-          <LeagueRecordIcon recordKey={record.key} size={13} color="#94a3b8" />
-          <Text style={styles.recordLabel} numberOfLines={2}>{record.label}</Text>
         </View>
       )}
-      <Text style={styles.recordValue} numberOfLines={1}>
-        {record.value}
-        {record.detail ? <Text style={styles.recordDetail}> ({record.detail})</Text> : null}
-      </Text>
-      {winLossLabel && <Text style={styles.recordMeta} numberOfLines={1}>Record: {winLossLabel}</Text>}
-      {holderName && <Text style={styles.recordMeta} numberOfLines={1}>{holderName}</Text>}
-      {weekLabel && <Text style={styles.recordMeta} numberOfLines={1}>{weekLabel}</Text>}
-      {dateRangeLabel && <Text style={styles.recordMeta} numberOfLines={1}>{dateRangeLabel}</Text>}
     </Pressable>
   );
 }
@@ -779,7 +805,7 @@ export default function LeagueDetailScreen() {
   const [resultFilter, setResultFilter] = useState("all");
   const activeWeek = useActiveWeek();
   const effectiveUserId = useEffectiveUserId();
-  const effectiveSettings = useEffectiveSettings();
+  const { user } = useAuth();
 
   const { data: league, isLoading: leagueLoading } = useQuery({
     queryKey: ["/api/leagues", leagueId],
@@ -797,7 +823,10 @@ export default function LeagueDetailScreen() {
 
   const { data: members, isLoading: membersLoading, refetch: refetchMembers } = useLeagueMembersWithUsers(leagueId);
   const isAdmin = !!members?.some((m: any) => m.userId === effectiveUserId && m.role === "admin");
-  const preferredSportsbook = (effectiveSettings as any)?.preferredSportsbook as SportsbookProvider | undefined;
+  // The signed-in user's own preference, even while acting for someone
+  // else: it decides which app opens on this phone, and it's the one the
+  // Settings screen edits.
+  const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as SportsbookProvider | undefined;
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useLeagueStats(leagueId);
   const { data: leagueRecords, isLoading: recordsLoading } = useLeagueRecords(leagueId);
   const [lookthroughRecord, setLookthroughRecord] = useState<LeagueRecordEntry | null>(null);
@@ -1867,8 +1896,22 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: "#2a3447",
-    padding: 12,
+    overflow: "hidden",
   },
+  recordBody: { flex: 1, padding: 12 },
+  recordViewerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderTopWidth: 1,
+    borderTopColor: "rgba(56, 189, 248, 0.2)",
+    backgroundColor: "rgba(56, 189, 248, 0.1)",
+  },
+  recordViewerLabel: { fontSize: 9, fontWeight: "700", color: "rgba(125, 211, 252, 0.7)", letterSpacing: 0.5 },
+  recordViewerValue: { fontSize: 10, fontWeight: "700", color: "#7dd3fc", flexShrink: 1 },
   recordTitleRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 },
   recordTitle: { fontSize: 13, fontWeight: "800", color: "#f1f5f9", flexShrink: 1 },
   recordLabel: {

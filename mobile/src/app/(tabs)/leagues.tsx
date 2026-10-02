@@ -36,6 +36,10 @@ export default function LeaguesScreen() {
   const needsPick = (leagueId: number) =>
     !!activeWeek && !(parlayHistory ?? []).some((p) => p.leagueId === leagueId && p.weekId === activeWeek.id);
 
+  const hasUnsubmittedDraft = (leagueId: number) =>
+    !!activeWeek &&
+    (parlayHistory ?? []).some((p) => p.leagueId === leagueId && p.weekId === activeWeek.id && p.status === "draft");
+
   const [modal, setModal] = useState<ModalType>(null);
   const [leagueName, setLeagueName] = useState("");
   const [leagueDesc, setLeagueDesc] = useState("");
@@ -120,6 +124,7 @@ export default function LeaguesScreen() {
               league={league}
               stat={overviewStats?.[league.id]}
               needsPick={needsPick(league.id)}
+              hasUnsubmittedDraft={hasUnsubmittedDraft(league.id)}
               activeWeekId={activeWeek?.id}
             />
           )}

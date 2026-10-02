@@ -39,3 +39,5 @@ export function legMatchupText(leg: LegLike): string {
   }
   return `${leg.game?.awayTeam ?? ""} ${leg.game?.homeTeam ?? ""}`;
 }
+
+export { legChipLabel } from "@shared/formatPick";

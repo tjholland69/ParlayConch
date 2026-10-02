@@ -34,7 +34,36 @@ export type ParlayVisualStyle = {
   borderColor: string;
   boxShadow?: string;
   barGradient?: string;
+  /** Flat wash laid over the tile's own background. */
+  tint?: string;
 };
+
+const SKY: RGB = [56, 189, 248];  // sky-400
+const LIVE: RGB = [34, 197, 94];  // green-500
+
+/**
+ * The look of a parlay that's open but has no decided legs yet, when there's
+ * no win % to color it by: light blue while it's still waiting on approval,
+ * and the same green glow as an approved league tile on Quick Picks once
+ * it's active. Returns null for any other status (settled, draft, void).
+ */
+export function getOpenParlayVisualStyle(status: string | null | undefined): ParlayVisualStyle | null {
+  if (status === "pending") {
+    const [r, g, b] = SKY;
+    return {
+      borderColor: `rgba(${r}, ${g}, ${b}, 0.55)`,
+      tint: `rgba(${r}, ${g}, ${b}, 0.08)`,
+    };
+  }
+  if (status === "approved" || status === "sent" || status === "placed") {
+    const [r, g, b] = LIVE;
+    return {
+      borderColor: `rgba(${r}, ${g}, ${b}, 0.5)`,
+      boxShadow: `0 0 18px 3px rgba(${r}, ${g}, ${b}, 0.22), 0 0 5px 1px rgba(${r}, ${g}, ${b}, 0.16)`,
+    };
+  }
+  return null;
+}
 
 /**
  * pct: the parlay's own resolved win % (0-100), or null if nothing has resolved yet.

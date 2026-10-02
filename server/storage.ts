@@ -312,7 +312,7 @@ export interface IStorage {
   getGamesForSeasonWeek(season: number, weekNumber: number): Promise<Game[]>;
   upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player>;
   upsertPlayerByEspn(data: Omit<InsertPlayer, 'updatedAt' | 'nflverseId'> & { espnId: string }): Promise<Player>;
-  searchPlayers(query: string, limit?: number): Promise<Player[]>;
+  searchPlayers(query: string, limit?: number, opts?: { teams?: string[] }): Promise<Player[]>;
   getAllTeams(): Promise<Team[]>;
   upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
   bulkUpsertPlayers(rows: (Omit<InsertPlayer, 'updatedAt'> & { nflverseId: string })[]): Promise<Map<string, number>>;
@@ -1227,15 +1227,20 @@ export class DatabaseStorage implements IStorage {
     maxLegsPerParlay: number,
     maxBetsPerGame: number,
   ): Promise<Parlay> {
-    const [existingLock] = await db.select().from(leagueWeekLocks)
-      .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
+    // The three pre-checks read independent rows, so they run together —
+    // this is on the per-tap path, where each sequential query is felt.
+    const legExclusivityKey = exclusivityKey(leg);
+    const [[existingLock], takenByOthers, [game]] = await Promise.all([
+      db.select().from(leagueWeekLocks)
+        .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId))),
+      legExclusivityKey != null ? this.getTakenPicksForWeek(leagueId, weekId, userId) : [],
+      leg.gameId != null ? db.select().from(games).where(eq(games.id, leg.gameId)) : [],
+    ]);
     if (existingLock) {
       throw new Error("This week's picks are locked and can no longer be changed.");
     }
 
-    const legExclusivityKey = exclusivityKey(leg);
     if (legExclusivityKey != null) {
-      const takenByOthers = await this.getTakenPicksForWeek(leagueId, weekId, userId);
       if (takenByOthers.some(t => exclusivityKey(t) === legExclusivityKey)) {
         throw new Error(
           leg.betType === 'player_prop'
@@ -1246,7 +1251,6 @@ export class DatabaseStorage implements IStorage {
     }
 
     if (leg.gameId != null) {
-      const [game] = await db.select().from(games).where(eq(games.id, leg.gameId));
       if (game && (game.isFinished || (game.gameTime && new Date(game.gameTime) < new Date()))) {
         throw new Error("This game has already started and can no longer be picked.");
       }
@@ -2897,7 +2901,10 @@ export class DatabaseStorage implements IStorage {
    * parlay legs (typed in by hand, never synced) are included too, with a
    * negative id, since filters match on the leg's player name.
    */
-  async searchPlayers(query: string, limit = 20): Promise<Player[]> {
+  async searchPlayers(query: string, limit = 20, opts: { teams?: string[] } = {}): Promise<Player[]> {
+    // `teams` (abbreviations) scopes the search to those rosters — used by
+    // the player-prop picker, which only offers players in the game.
+    const teamScope = opts.teams?.map(t => t.toUpperCase());
     const norm = normalizePlayerName(query);
     const tokens = norm.split(" ").filter(Boolean);
     const normalized = (col: unknown) => sql`regexp_replace(lower(${col}), '[^a-z0-9 ]', '', 'g')`;
@@ -2907,13 +2914,34 @@ export class DatabaseStorage implements IStorage {
     const playerHaystack = normalized(sql`coalesce(${players.displayName}, '') || ' ' || ${players.name}`);
     const displayNorm = normalized(sql`coalesce(${players.displayName}, ${players.name})`);
     const playerRows = await db.select().from(players)
-      .where(matchesAll(playerHaystack))
+      .where(and(
+        matchesAll(playerHaystack),
+        teamScope ? inArray(sql`upper(${players.team})`, teamScope) : undefined,
+      ))
       .orderBy(
         // Names that start with what was typed, then ones where a later word does.
         sql`case when ${displayNorm} like ${`${norm}%`} then 0 when ${displayNorm} like ${`% ${norm}%`} then 1 else 2 end`,
+        // Within a roster, the positions props are usually bet on come first,
+        // so the list is useful before anything is typed.
+        ...(teamScope
+          ? [sql`case ${players.position} when 'QB' then 0 when 'RB' then 1 when 'WR' then 2 when 'TE' then 3 when 'K' then 4 else 5 end`]
+          : []),
         sql`coalesce(${players.displayName}, ${players.name})`,
       )
       .limit(limit);
+
+    // Names typed onto past legs have no team, so they can't be placed on a
+    // roster. A player synced from two sources can have two rows; keep the
+    // one that knows its position, which the prop picker filters on.
+    if (teamScope) {
+      const byName = new Map<string, Player>();
+      for (const p of playerRows) {
+        const key = normalizePlayerName(p.displayName || p.name);
+        const kept = byName.get(key);
+        if (!kept || (!kept.position && p.position)) byName.set(key, p);
+      }
+      return [...byName.values()];
+    }
 
     const legHaystack = normalized(parlayLegs.playerName);
     const legRows = await db

@@ -55,6 +55,7 @@ import {
 } from "@shared/routeValidation";
 import { validateMultiBetLegs } from "@shared/multiBetValidation";
 import { syncAllPlayerStatsForWeek } from "./services/nflverse";
+import { abbreviationsForTeam } from "@shared/nflTeams";
 import multer from "multer";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
@@ -569,7 +570,7 @@ export async function registerRoutes(
     const superUser = await storage.isSuperUser(userId);
     const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
     if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
-    const records = await getLeagueRecords(leagueId);
+    const records = await getLeagueRecords(leagueId, userId);
     res.json(records);
   });
 
@@ -783,9 +784,15 @@ export async function registerRoutes(
       const leagueId = Number(req.params.leagueId);
       const weekId = Number(req.params.weekId);
 
-      const leagues = await storage.getUserLeagues(userId);
-      const league = leagues.find(l => l.id === leagueId);
-      if (!league) return res.status(403).json({ message: "Not a member of this league" });
+      // This runs on every tile tap, so it checks just this league rather
+      // than loading every league and member list the caller can see.
+      const [league, superUser, members] = await Promise.all([
+        storage.getLeague(leagueId),
+        storage.isSuperUser(userId),
+        storage.getLeagueMembers(leagueId),
+      ]);
+      const isMember = superUser || members.some(m => m.userId === userId);
+      if (!league || !isMember) return res.status(403).json({ message: "Not a member of this league" });
 
       await storage.addLegToDraftParlay(
         userId,
@@ -819,7 +826,13 @@ export async function registerRoutes(
   app.delete("/api/parlays/:id/legs/:legId", isAuthenticated, async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
-      const parlay = await storage.removeDraftParlayLeg(userId, Number(req.params.id), Number(req.params.legId));
+      const remaining = await storage.removeDraftParlayLeg(userId, Number(req.params.id), Number(req.params.legId));
+      // Returned with its legs, like the add route: the mobile app replaces
+      // its cached draft with this, and a bare parlay row made every other
+      // pick disappear from the build screen after one was removed.
+      const parlay = remaining
+        ? await storage.getUserParlayForWeek(userId, remaining.leagueId, remaining.weekId)
+        : null;
       res.json({ parlay });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
@@ -1618,9 +1631,20 @@ export async function registerRoutes(
   });
 
   // GET /api/players?q=<search> — for player-picker dropdowns (e.g. Advanced Filters).
+  // With &gameId=<id> the search only covers the two teams playing that game
+  // (the player-prop picker).
   app.get("/api/players", isAuthenticated, async (req, res) => {
     try {
       const q = typeof req.query.q === "string" ? req.query.q : "";
+      const gameId = Number(req.query.gameId);
+      if (req.query.gameId != null && Number.isFinite(gameId)) {
+        const game = await storage.getGame(gameId);
+        if (!game) return res.status(404).json({ message: "Game not found" });
+        const teams = [...abbreviationsForTeam(game.homeTeam), ...abbreviationsForTeam(game.awayTeam)];
+        // Unrecognized team names would otherwise match no one; fall back to
+        // the unscoped search rather than an empty picker.
+        if (teams.length > 0) return res.json(await storage.searchPlayers(q, 25, { teams }));
+      }
       const results = await storage.searchPlayers(q);
       res.json(results);
     } catch (err: any) {
@@ -1892,9 +1916,13 @@ export async function registerRoutes(
   });
 
   // ===== USER SETTINGS =====
+  // The three /api/users/me/* settings writes below go to the signed-in
+  // user even while acting for someone else. The Settings screen reads from
+  // GET /api/auth/user, which is never act-for'd, so writing to the acted-for
+  // user would save one person's form over another person's account.
   app.patch("/api/users/me/settings", isAuthenticated, async (req, res) => {
     try {
-      const userId = (req.user as any).claims.sub;
+      const userId = realUserId(req);
       const settings = updateUserSettingsSchema.parse(req.body);
       await storage.updateUserSettings(userId, settings);
       res.json({ success: true });
@@ -1906,7 +1934,7 @@ export async function registerRoutes(
   // ===== DEMO FLAGS =====
   app.patch("/api/users/me/demo", isAuthenticated, async (req, res) => {
     try {
-      const userId = (req.user as any).claims.sub;
+      const userId = realUserId(req);
       // Demo flagging is specific to the app owner's own testing/QA workflow —
       // never a capability regular users should have over their own account.
       if (!(await storage.isSuperUser(userId))) {
@@ -2611,7 +2639,7 @@ export async function registerRoutes(
   // User: update notification delivery preferences
   app.patch("/api/users/me/notification-preferences", isAuthenticated, async (req, res) => {
     try {
-      const userId = (req.user as any).claims.sub;
+      const userId = realUserId(req);
       const prefs = z.object({
         email: z.boolean(),
         sms: z.boolean(),

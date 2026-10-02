@@ -68,8 +68,17 @@ export const updateUserSettingsSchema = z
     displayName: z.string().min(1).max(100).optional(),
     skipImportInstructions: z.boolean().optional(),
     primaryColor: z.string().max(32).optional(),
-    region: z.enum(["US", "EMEA", "APAC"]).optional(),
+    // UserRegion (shared/schema.ts): a continent tile plus the state or
+    // country picked under it. null clears a saved region.
+    region: z
+      .object({ continent: z.string().min(1).max(64), place: z.string().min(1).max(100) })
+      .strict()
+      .nullable()
+      .optional(),
     theme: z.enum(["dark", "light", "system"]).optional(),
+    preferredSportsbook: z.enum(["fanduel", "draftkings", "other"]).nullable().optional(),
+    preferredSportsbookOther: z.string().max(60).nullable().optional(),
+    avatarTeam: z.string().max(8).nullable().optional(),
   })
   .strict();
 

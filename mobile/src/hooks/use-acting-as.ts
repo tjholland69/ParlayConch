@@ -50,21 +50,6 @@ export function useEffectiveUserId(): string | undefined {
   return actingAsData?.actingAs?.id ?? user?.id;
 }
 
-/**
- * The settings object to read app preferences from (preferredSportsbook,
- * notification prefs, etc). Same reasoning as useEffectiveUserId: while
- * acting as another user, useAuth().user.settings is still the real super
- * user's settings (GET /api/auth/user is exempt from the act-as override),
- * but PATCH /api/users/me/settings writes to the acted-as user's row — so
- * reading from useAuth().user.settings directly is a read/write mismatch.
- * Use this wherever a preference is read for display or as a default.
- */
-export function useEffectiveSettings(): Record<string, unknown> | null | undefined {
-  const { user } = useAuth();
-  const { data: actingAsData } = useActingAs();
-  return actingAsData?.actingAs ? actingAsData.actingAs.settings : user?.settings;
-}
-
 export function useSuperUserSearch(query: string, enabled: boolean) {
   return useQuery<SuperUserResult[]>({
     queryKey: ["/api/superuser/users", query],

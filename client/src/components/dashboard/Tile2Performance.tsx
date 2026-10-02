@@ -19,6 +19,7 @@ import { Calendar } from "@/components/ui/calendar";
 import type { DateRange } from "react-day-picker";
 import {
   PerformanceLineChart,
+  PerformanceCurrentValues,
   seriesColor,
   lighten,
   type PerformancePoint,
@@ -367,10 +368,13 @@ function PerformanceChartSlide({
 
   return (
     <div>
-      <h2 className="text-xl font-bold flex items-center gap-2 mb-5">
-        <BarChart3 className="w-5 h-5 text-accent" />
-        Performance Over Time
-      </h2>
+      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 mb-5">
+        <h2 className="text-xl font-bold flex items-center gap-2">
+          <BarChart3 className="w-5 h-5 text-accent" />
+          Performance Over Time
+        </h2>
+        <PerformanceCurrentValues points={points} series={series} />
+      </div>
       {series.length === 0 ? (
         <EmptyState icon={BarChart3} message="Pick at least one index to compare against." />
       ) : (

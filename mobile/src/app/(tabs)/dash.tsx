@@ -344,10 +344,29 @@ function PerformanceSlide({
   if (points.length === 0) {
     return <DashboardEmptyState message="No decided parlay legs yet — check back once some weeks are settled." />;
   }
+  // The index's latest value — the last week it has decided legs in.
+  const currentIndex = [...indexPoints].reverse().find((v): v is number => v != null) ?? null;
 
   return (
     <View>
-      <Text style={styles.slideTitle}>Performance Over Time</Text>
+      <View style={styles.slideTitleRow}>
+        <Text style={[styles.slideTitle, styles.slideTitleInRow]}>Performance Over Time</Text>
+        {/* Where each line stands now, so it doesn't take a press-and-hold to read. */}
+        <View style={styles.currentValues} testID="text-performance-current">
+          <View style={styles.currentValue}>
+            <View style={[styles.currentSwatch, { backgroundColor: accent }]} />
+            <Text style={styles.currentLabel}>You</Text>
+            <Text style={styles.currentPct}>{points[points.length - 1].value.toFixed(1)}%</Text>
+          </View>
+          {currentIndex != null && (
+            <View style={styles.currentValue}>
+              <View style={[styles.currentSwatch, styles.currentSwatchIndex, { borderColor: accent }]} />
+              <Text style={styles.currentLabel}>Index</Text>
+              <Text style={styles.currentPct}>{currentIndex.toFixed(1)}%</Text>
+            </View>
+          )}
+        </View>
+      </View>
       <SimpleLineChart points={points} indexPoints={indexPoints} color={accent} formatValue={(v) => `${v.toFixed(1)}%`} />
     </View>
   );
@@ -736,6 +755,13 @@ const styles = StyleSheet.create({
   slideTitle: { fontSize: 16, fontWeight: "700", color: "#f1f5f9", marginBottom: 12 },
   slideTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 },
   slideTitleMeta: { fontSize: 11, color: "#475569", fontWeight: "600" },
+  slideTitleInRow: { marginBottom: 0, flexShrink: 1 },
+  currentValues: { alignItems: "flex-end", gap: 2 },
+  currentValue: { flexDirection: "row", alignItems: "center", gap: 5 },
+  currentSwatch: { width: 10, height: 2.5, borderRadius: 1 },
+  currentSwatchIndex: { height: 0, borderTopWidth: 2, borderStyle: "dashed", backgroundColor: "transparent" },
+  currentLabel: { fontSize: 11, color: "#94a3b8" },
+  currentPct: { fontSize: 13, fontWeight: "700", color: "#f1f5f9", minWidth: 46, textAlign: "right" },
   statGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   statTile: {
     width: "47%",

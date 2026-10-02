@@ -41,13 +41,24 @@ describe("mobile/lib/pickHelpers", () => {
     expect(awaySpreadDisplay(null)).toBeNull();
   });
 
-  test("shortLegLabel builds compact pick text", () => {
+  test("shortLegLabel names the side, the market and its number", () => {
     const spreadHome: SelectedLeg = { gameId: 1, betType: "spread", pick: "home" };
     const mlAway: SelectedLeg = { gameId: 1, betType: "moneyline", pick: "away" };
-    expect(shortLegLabel(spreadHome, baseGame)).toBe("KC -3.5");
-    expect(shortLegLabel(mlAway, baseGame)).toBe("BUF ML (+145)");
-    expect(shortLegLabel({ gameId: 1, betType: "over", pick: "over" }, baseGame)).toBe("O 47.5");
+    expect(shortLegLabel(spreadHome, baseGame)).toBe("KC (Spread -3.5)");
+    expect(shortLegLabel(mlAway, baseGame)).toBe("BUF (Moneyline +145)");
+    expect(shortLegLabel({ gameId: 1, betType: "over", pick: "over" }, baseGame)).toBe("Over 47.5 (Total)");
     expect(shortLegLabel(spreadHome, undefined)).toBe("Pick");
+  });
+
+  test("shortLegLabel prefers the leg's stored line (bought points) over the game's", () => {
+    const bought: SelectedLeg = { gameId: 1, betType: "spread", pick: "home", line: "-2.5 (-125)" };
+    expect(shortLegLabel(bought, baseGame)).toBe("KC (Spread -2.5)");
+    expect(shortLegLabel({ gameId: 1, betType: "under", pick: "under", line: "U48.5 (-125)" }, baseGame)).toBe("Under 48.5 (Total)");
+  });
+
+  test("shortLegLabel spells out a player prop without needing the game", () => {
+    const prop: SelectedLeg = { gameId: 1, betType: "player_prop", pick: "over", line: "74.5", playerName: "Josh Downs", propType: "rec_yards" };
+    expect(shortLegLabel(prop, undefined)).toBe("Josh Downs (Receiving Over 74.5 Yds)");
   });
 
   test("isGamePast uses finished flag or kickoff time", () => {

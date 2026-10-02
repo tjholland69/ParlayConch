@@ -13,6 +13,7 @@ import Papa from "papaparse";
 import { storage } from "../storage";
 import type { Game } from "@shared/schema";
 import { logger } from "../logger";
+import { abbrevToShort, NFLVERSE_ABBREV_TO_SHORT } from "@shared/nflTeams";
 
 // ─── nflverse data URLs ─────────────────────────────────────────────────────
 
@@ -36,50 +37,9 @@ const PLAYER_STATS_ALL_SEASONS_URL =
   `${BASE}/player_stats/player_stats.csv`;
 
 // ─── Team abbreviation mapping ──────────────────────────────────────────────
-// nflverse uses standard NFL abbreviations; our games table uses short names
-// (populated by the Odds API's teamNameMap in oddsApi.ts)
+// The abbreviation table itself lives in shared/nflTeams.ts.
 
-const NFLVERSE_ABBREV_TO_SHORT: Record<string, string> = {
-  ARI: "Cardinals",
-  ATL: "Falcons",
-  BAL: "Ravens",
-  BUF: "Bills",
-  CAR: "Panthers",
-  CHI: "Bears",
-  CIN: "Bengals",
-  CLE: "Browns",
-  DAL: "Cowboys",
-  DEN: "Broncos",
-  DET: "Lions",
-  GB: "Packers",
-  HOU: "Texans",
-  IND: "Colts",
-  JAX: "Jaguars",
-  JAC: "Jaguars",   // nflverse uses both
-  KC: "Chiefs",
-  LA: "Rams",
-  LAR: "Rams",
-  LAC: "Chargers",
-  LV: "Raiders",
-  MIA: "Dolphins",
-  MIN: "Vikings",
-  NE: "Patriots",
-  NO: "Saints",
-  NYG: "Giants",
-  NYJ: "Jets",
-  PHI: "Eagles",
-  PIT: "Steelers",
-  SF: "49ers",
-  SEA: "Seahawks",
-  TB: "Buccaneers",
-  TEN: "Titans",
-  WAS: "Commanders",
-  WSH: "Commanders",
-};
-
-export function abbrevToShort(abbrev: string): string {
-  return NFLVERSE_ABBREV_TO_SHORT[abbrev?.toUpperCase()] ?? abbrev;
-}
+export { abbrevToShort };
 
 /**
  * nflverse's `spread_line` is positive when the HOME team is favored (it

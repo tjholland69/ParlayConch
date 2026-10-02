@@ -166,10 +166,31 @@ export const ROUTE_VALIDATION_RULES: RouteValidationRule[] = [
   },
   {
     id: "userSettings.theme-region",
-    description: "Accepts theme and region enums",
+    description: "Accepts theme and a continent/place region",
     schema: updateUserSettingsSchema,
-    payload: { theme: "dark", region: "US" },
+    payload: { theme: "dark", region: { continent: "US", place: "Indiana" } },
     expect: "pass",
+  },
+  {
+    id: "userSettings.clear-region",
+    description: "Accepts null to clear a saved region",
+    schema: updateUserSettingsSchema,
+    payload: { region: null },
+    expect: "pass",
+  },
+  {
+    id: "userSettings.mobile-preferences",
+    description: "Accepts the sportsbook and avatar-team preferences the mobile app saves",
+    schema: updateUserSettingsSchema,
+    payload: { preferredSportsbook: "other", preferredSportsbookOther: "Bet365", avatarTeam: "KC" },
+    expect: "pass",
+  },
+  {
+    id: "userSettings.region-missing-place",
+    description: "Rejects a region without a place",
+    schema: updateUserSettingsSchema,
+    payload: { region: { continent: "US" } },
+    expect: "fail",
   },
   {
     id: "userSettings.invalid-theme",
