@@ -33,7 +33,8 @@ import { getDisplayName, shortId } from "@/lib/displayName";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { getBuildingVerb } from "@/lib/parlaySlang";
-import { getLineForBet } from "@/lib/gameOdds";
+import { getLineForBet, spreadLabels } from "@/lib/gameOdds";
+import { SlateGroupedGames } from "@/components/SlateGroupedGames";
 import { PickTile } from "@/components/PickTile";
 import { MultiSelect } from "@/components/MultiSelect";
 import { upToCurrentWeek } from "@/lib/weekFilters";
@@ -467,8 +468,7 @@ export default function LeagueDetail() {
     const isPast = !!game.isFinished || (game.gameTime ? new Date(game.gameTime) < new Date() : false);
     const capReached = legsForGame(game.id).length >= maxBetsPerGame;
 
-    const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
-    const homeSpread = game.spread || null;
+    const { away: awaySpread, home: homeSpread } = spreadLabels(game);
 
     return (
       <Card
@@ -876,9 +876,7 @@ export default function LeagueDetail() {
               <p className="text-sm font-semibold" data-testid="text-current-week-label">
                 {activeWeek?.label} <span className="text-muted-foreground font-normal">· current week</span>
               </p>
-              <div className="grid gap-4 md:grid-cols-2">
-                {thisWeekGames.map(renderGameCard)}
-              </div>
+              <SlateGroupedGames games={thisWeekGames} renderGame={renderGameCard} />
 
               {laterWeekSections.map(section => (
                 <div key={section.label} className="space-y-3" data-testid={`section-later-week-${section.label}`}>
@@ -888,9 +886,7 @@ export default function LeagueDetail() {
                       {section.isLoading ? "Loading…" : `${section.label} lines aren't posted yet.`}
                     </p>
                   ) : (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {section.games.map(renderGameCard)}
-                    </div>
+                    <SlateGroupedGames games={section.games} renderGame={renderGameCard} />
                   )}
                 </div>
               ))}

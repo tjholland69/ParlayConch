@@ -25,7 +25,10 @@
     "backfill:decision-moments": "tsx --env-file=.env.local scripts/backfill-decision-moments.ts",
     "backfill:local-auth": "tsx --env-file=.env.local scripts/backfill-local-auth.ts",
     "claim-demo-user": "tsx --env-file=.env.local scripts/claim-demo-user.ts",
-    "repair:season-schedule": "tsx --env-file-if-exists=.env.local scripts/repair-season-schedule.ts"
+    "repair:season-schedule": "tsx --env-file-if-exists=.env.local scripts/repair-season-schedule.ts",
+    "repair:spread-signs": "tsx --env-file-if-exists=.env.local scripts/repair-spread-signs.ts",
+    "backfill:prop-games": "tsx --env-file-if-exists=.env.local scripts/backfill-prop-leg-games.ts",
+    "audit:parlays": "tsx --env-file-if-exists=.env.local scripts/audit-parlay-integrity.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1104.0",

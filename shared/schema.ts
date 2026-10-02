@@ -300,6 +300,8 @@ export type ParlayWithLegs = Parlay & {
 // parlay — including parlays owned/merged by another league member.
 export type ParlayLegWithParlayContext = ParlayLeg & {
   game: Game | null;
+  /** The member who placed this leg (parlay_legs.user_id), which can differ from the parlay's owner. */
+  user?: { firstName?: string | null; email?: string | null; settings?: UserSettings | null } | null;
   parlay: {
     id: number;
     weekId: number;

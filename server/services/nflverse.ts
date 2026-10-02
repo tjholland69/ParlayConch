@@ -81,6 +81,19 @@ export function abbrevToShort(abbrev: string): string {
   return NFLVERSE_ABBREV_TO_SHORT[abbrev?.toUpperCase()] ?? abbrev;
 }
 
+/**
+ * nflverse's `spread_line` is positive when the HOME team is favored (it
+ * lines up with `result` = home minus away). games.spread is the home team's
+ * line the way a sportsbook prints it, favorites negative (see oddsApi.ts),
+ * so the sign flips: spread_line 3 -> "-3", -2.5 -> "+2.5".
+ */
+export function homeSpreadFromNflverse(spreadLine: string | number | null | undefined): string | null {
+  const n = typeof spreadLine === "number" ? spreadLine : parseFloat(spreadLine ?? "");
+  if (Number.isNaN(n)) return null;
+  const home = -n;
+  return home > 0 ? `+${home}` : `${home || 0}`;
+}
+
 // ─── CSV fetch helper ────────────────────────────────────────────────────────
 
 export async function fetchCsv(url: string): Promise<Record<string, string>[]> {
@@ -296,15 +309,15 @@ export async function syncGameScoresFromNflverse(
     }
 
     // Update scores and, optionally, fill odds if missing
-    const spreadLine = parseFloat(row.spread_line);
+    const homeSpread = homeSpreadFromNflverse(row.spread_line);
     const totalLine = parseFloat(row.total_line);
 
     await storage.updateGameScores(game.id, homeScore, awayScore, true);
 
     // Backfill spread / total if the game record has none
-    if (!game.spread && !isNaN(spreadLine)) {
+    if (!game.spread && homeSpread) {
       await storage.patchGameOdds(game.id, {
-        spread: spreadLine.toString(),
+        spread: homeSpread,
         overUnder: !isNaN(totalLine) ? totalLine.toString() : undefined,
         moneylineHome: row.home_moneyline || undefined,
         moneylineAway: row.away_moneyline || undefined,
@@ -464,58 +477,50 @@ async function upsertPlayerStatsRows(
 
   logger.info(`[nflverse] ${relevant.length} player stat rows matched`);
 
-  let playerCount = 0;
-  let statCount = 0;
+  // A week is ~1,800 rows. Saving them one at a time cost four round trips
+  // each (minutes against a remote database), so both tables go in bulk.
+  const valid = relevant.filter((row) => row.player_id && row.player_name);
+  const teamOf = (row: NflversePlayerStatRow) => row.team || row.recent_team || null;
 
-  for (const row of relevant) {
-    if (!row.player_id || !row.player_name) continue;
+  const playerIds = await storage.bulkUpsertPlayers(valid.map((row) => ({
+    nflverseId: row.player_id,
+    name: row.player_name,
+    displayName: row.player_display_name || row.player_name,
+    position: row.position || null,
+    team: teamOf(row),
+    headshot: row.headshot_url || null,
+  })));
 
-    const p = num(row);
-    const team = row.team || row.recent_team || null;
+  const p = int;
+  const statCount = await storage.bulkUpsertPlayerWeekStats(valid.map((row) => ({
+    playerId: playerIds.get(row.player_id)!,
+    season,
+    week,
+    seasonType: row.season_type || "REG",
+    team: teamOf(row),
+    completions: p(row.completions),
+    attempts: p(row.attempts),
+    passingYards: p(row.passing_yards),
+    passingTds: p(row.passing_tds),
+    interceptions: p(row.passing_interceptions ?? row.interceptions),
+    // passer_rating isn't published in the current stats_player release;
+    // stays null there and only populates from the legacy player_stats file.
+    passerRating: pf(row.passer_rating),
+    carries: p(row.carries),
+    rushingYards: p(row.rushing_yards),
+    rushingTds: p(row.rushing_tds),
+    receptions: p(row.receptions),
+    targets: p(row.targets),
+    receivingYards: p(row.receiving_yards),
+    receivingTds: p(row.receiving_tds),
+    defSacks: pf(row.def_sacks),
+    defTacklesSolo: p(row.def_tackles_solo),
+    defTacklesWithAssist: p(row.def_tackles_with_assist),
+    fantasyPoints: pf(row.fantasy_points),
+    fantasyPointsPpr: pf(row.fantasy_points_ppr),
+  })));
 
-    // Upsert player
-    const player = await storage.upsertPlayer({
-      nflverseId: row.player_id,
-      name: row.player_name,
-      displayName: row.player_display_name || row.player_name,
-      position: row.position || null,
-      team,
-      headshot: row.headshot_url || null,
-    });
-    playerCount++;
-
-    // Upsert weekly stat row
-    await storage.upsertPlayerWeekStat({
-      playerId: player.id,
-      season,
-      week,
-      seasonType: row.season_type || "REG",
-      team,
-      completions: p(row.completions),
-      attempts: p(row.attempts),
-      passingYards: p(row.passing_yards),
-      passingTds: p(row.passing_tds),
-      interceptions: p(row.passing_interceptions ?? row.interceptions),
-      // passer_rating isn't published in the current stats_player release;
-      // stays null there and only populates from the legacy player_stats file.
-      passerRating: pf(row.passer_rating),
-      carries: p(row.carries),
-      rushingYards: p(row.rushing_yards),
-      rushingTds: p(row.rushing_tds),
-      receptions: p(row.receptions),
-      targets: p(row.targets),
-      receivingYards: p(row.receiving_yards),
-      receivingTds: p(row.receiving_tds),
-      defSacks: pf(row.def_sacks),
-      defTacklesSolo: p(row.def_tackles_solo),
-      defTacklesWithAssist: p(row.def_tackles_with_assist),
-      fantasyPoints: pf(row.fantasy_points),
-      fantasyPointsPpr: pf(row.fantasy_points_ppr),
-    });
-    statCount++;
-  }
-
-  return { players: playerCount, stats: statCount };
+  return { players: playerIds.size, stats: statCount };
 }
 
 /**
@@ -570,6 +575,25 @@ export async function syncAllPlayerStatsForWeek(
   week: number
 ): Promise<{ players: number; stats: number }> {
   return upsertPlayerStatsRows(season, week, null);
+}
+
+const WEEK_STATS_FRESH_MS = 10 * 60_000;
+const recentWeekSyncs = new Map<string, { at: number; run: Promise<{ players: number; stats: number }> }>();
+
+/**
+ * syncAllPlayerStatsForWeek, but a week pulled in the last ten minutes (or
+ * being pulled right now) isn't downloaded again. Grading several prop legs
+ * from one week used to re-run the whole import once per leg whenever a
+ * player's name didn't match, which a second download can't fix.
+ */
+export function ensureWeekPlayerStats(season: number, week: number): Promise<{ players: number; stats: number }> {
+  const key = `${season}-${week}`;
+  const recent = recentWeekSyncs.get(key);
+  if (recent && Date.now() - recent.at < WEEK_STATS_FRESH_MS) return recent.run;
+  const run = syncAllPlayerStatsForWeek(season, week);
+  recentWeekSyncs.set(key, { at: Date.now(), run });
+  run.catch(() => recentWeekSyncs.delete(key));
+  return run;
 }
 
 // ─── Season rollover (auto-detect + import a newly-released schedule) ──────
@@ -675,7 +699,6 @@ export async function detectAndImportNewSeason(): Promise<{
       const awayTeam = abbrevToShort(row.away_team);
       if (existingByTeams.has(`${homeTeam}|${awayTeam}`)) continue;
 
-      const spreadLine = parseFloat(row.spread_line);
       const totalLine = parseFloat(row.total_line);
       const gameTime = row.gameday
         ? zonedWallTimeToUtc(row.gameday, row.gametime || "13:00", "America/New_York")
@@ -685,7 +708,7 @@ export async function detectAndImportNewSeason(): Promise<{
         weekId: week.id,
         homeTeam,
         awayTeam,
-        spread: !isNaN(spreadLine) ? spreadLine.toString() : null,
+        spread: homeSpreadFromNflverse(row.spread_line),
         overUnder: !isNaN(totalLine) ? totalLine.toString() : null,
         moneylineHome: row.home_moneyline || null,
         moneylineAway: row.away_moneyline || null,
@@ -706,11 +729,9 @@ export async function detectAndImportNewSeason(): Promise<{
 // ─── Internal helpers ────────────────────────────────────────────────────────
 
 /** Parse int, returning null for blanks/NaN */
-function num(row: any) {
-  return (v: string) => {
-    const n = parseInt(v);
-    return isNaN(n) ? null : n;
-  };
+function int(v: string): number | null {
+  const n = parseInt(v);
+  return isNaN(n) ? null : n;
 }
 
 /** Parse float, returning null for blanks/NaN */

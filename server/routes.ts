@@ -34,7 +34,8 @@ import { STORY_SECTION_KINDS, type StorySectionKind, PARLAY_LIST_SORTS } from "@
 import { resolvePropsFromStats, fetchPropLinesFromOddsApi } from "./services/propEnrichment";
 import { auditLog, recordAuditEvent } from "./services/audit";
 import { uploadDisputeScreenshot, getDisputeScreenshotUrl, deleteDisputeScreenshot } from "./disputeStorage";
-import { sendMemberAddedEmail, sendLeagueInviteEmail } from "./services/email";
+import { sendMemberAddedEmail, sendLeagueInviteEmail, sendBetHistoryExportEmail } from "./services/email";
+import { legsToCsv } from "@shared/legsCsv";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
 import { enrichSingleLeg } from "./services/legEnrich";
 import { syncGameFinishTimesFromPlayByPlay } from "./services/playByPlay";
@@ -53,7 +54,7 @@ import {
   updateUserSettingsSchema,
 } from "@shared/routeValidation";
 import { validateMultiBetLegs } from "@shared/multiBetValidation";
-import { abbrevToShort, syncAllPlayerStatsForWeek } from "./services/nflverse";
+import { syncAllPlayerStatsForWeek } from "./services/nflverse";
 import multer from "multer";
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
@@ -599,6 +600,44 @@ export async function registerRoutes(
       : [];
     const legs = await storage.getMyParlayLegsByIds(userId, legIds);
     res.json(legs);
+  });
+
+  // Bet-history export (History page). One row per parlay leg in the
+  // caller's leagues; `leagueId` narrows to one league, `mine=1` to the legs
+  // the caller placed. Same query powers the download and the emailed copy.
+  const legExportOptions = (req: { query: Record<string, unknown> }) => ({
+    leagueId: typeof req.query.leagueId === "string" && Number.isFinite(Number(req.query.leagueId))
+      ? Number(req.query.leagueId)
+      : undefined,
+    mineOnly: req.query.mine === "1",
+  });
+  const legExportFilename = () => `parlay-conch-bet-history-${new Date().toISOString().slice(0, 10)}.csv`;
+
+  app.get("/api/parlay-legs/export.csv", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const rows = await storage.getLegExportRows(userId, legExportOptions(req));
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${legExportFilename()}"`);
+    res.send(legsToCsv(rows));
+  });
+
+  app.post("/api/parlay-legs/export/email", isAuthenticated, auditLog("bet_history.export_email"), async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    // Always the signed-in person's own address, even while acting for
+    // another member: an export must never be mailed to someone else.
+    const recipient = await storage.getUser((req.user as any).claims.realSub ?? userId);
+    if (!recipient?.email) return res.status(400).json({ message: "Your account has no email address on file" });
+    if (!process.env.RESEND_API_KEY) return res.status(503).json({ message: "Email isn't set up on this server. Use Download instead." });
+    const rows = await storage.getLegExportRows(userId, legExportOptions(req));
+    if (rows.length === 0) return res.status(400).json({ message: "There are no bets to export yet" });
+    await sendBetHistoryExportEmail({
+      toEmail: recipient.email,
+      toName: recipient.firstName,
+      filename: legExportFilename(),
+      csv: legsToCsv(rows),
+      legCount: rows.length,
+    });
+    res.json({ sentTo: recipient.email, legs: rows.length });
   });
 
   // "Lookthrough" for a participation-rate record (e.g. Weak Link) — the
@@ -2001,6 +2040,8 @@ export async function registerRoutes(
     }
   });
 
+  const SLOW_MULTI_BET_SAVE_MS = 10_000;
+
   // "Add Parlay (Multi-Bet)": one parlay, one bet per member, entered in one
   // form. Runs the same checks as the dialog (shared/multiBetValidation.ts),
   // saves, then pulls scores/stats and grades every new leg before replying.
@@ -2037,31 +2078,35 @@ export async function registerRoutes(
         });
       }
 
-      // A prop has no game picker in the form. Link it to the player's game
-      // that week when we can, so the card shows its date/kickoff/slate.
-      const legs = await Promise.all(input.legs.map(async (leg) => {
-        if (leg.betType !== "player_prop" || leg.gameId != null || !leg.playerName) return leg;
-        const name = leg.playerName.trim().toLowerCase();
-        const player = (await storage.searchPlayers(leg.playerName.trim(), 5))
-          .find(p => p.name.toLowerCase() === name || p.displayName?.toLowerCase() === name);
-        const team = player?.team ? abbrevToShort(player.team) : null;
-        const game = team ? weekGames.find(g => g.homeTeam === team || g.awayTeam === team) : undefined;
-        return game ? { ...leg, gameId: game.id } : leg;
-      }));
-
+      const legs = input.legs;
+      const startedAt = Date.now();
       const { parlay, legIds } = await storage.createMultiBetParlay(input.userId, leagueId, input.weekId, legs);
+      const savedMs = Date.now() - startedAt;
 
       // enrichSingleLeg records its own failures in the returned log rather
       // than throwing, so a data-source outage never loses the saved parlay.
       // Every game leg is in the same week, so one score pull covers them all.
+      // It also links each prop to its player's game (date/kickoff/slate).
       const logs = [];
+      const legTimings: { legId: number; betType: string; ms: number; errors: number }[] = [];
       let scoresPulled = false;
       for (const [i, legId] of legIds.entries()) {
+        const legStartedAt = Date.now();
         const needsScores = legs[i].betType !== "player_prop" && !legs[i].result;
-        logs.push(await enrichSingleLeg(legId, { skipScoreSync: needsScores && scoresPulled }));
+        const log = await enrichSingleLeg(legId, { skipScoreSync: needsScores && scoresPulled });
+        logs.push(log);
+        legTimings.push({ legId, betType: legs[i].betType, ms: Date.now() - legStartedAt, errors: log.errors.length });
         if (needsScores) scoresPulled = true;
       }
       await storage.rollupParlayStatus(parlay.id);
+
+      // Prod only logs warn and above, so a slow save is logged at warn: the
+      // per-leg timings say which data pull it was waiting on.
+      const totalMs = Date.now() - startedAt;
+      logger[totalMs > SLOW_MULTI_BET_SAVE_MS ? "warn" : "info"](
+        { parlayId: parlay.id, leagueId, weekId: input.weekId, totalMs, savedMs, legs: legTimings },
+        "[multi-bet] parlay saved and graded",
+      );
 
       const saved = await db.select({ result: parlayLegs.result }).from(parlayLegs).where(eq(parlayLegs.parlayId, parlay.id));
       const graded = saved.filter(l => !!l.result).length;

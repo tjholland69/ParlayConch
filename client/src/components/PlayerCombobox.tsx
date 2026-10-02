@@ -27,7 +27,7 @@ export function PlayerCombobox({
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const { data: players, isFetching } = usePlayerSearch(search);
+  const { data: players, isLoading } = usePlayerSearch(search);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -46,7 +46,7 @@ export function PlayerCombobox({
         <Command shouldFilter={false}>
           <CommandInput placeholder="Search players…" value={search} onValueChange={setSearch} />
           <CommandList>
-            {isFetching ? (
+            {isLoading ? (
               <div className="flex items-center justify-center py-4">
                 <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
               </div>

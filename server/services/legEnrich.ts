@@ -4,7 +4,7 @@ import { logger } from "../logger";
 import { parlayLegs, games, players, playerWeekStats } from "@shared/db-schema";
 import type { Game, ParlayLeg, PlayerWeekStat, Player } from "@shared/schema";
 import { storage } from "../storage";
-import { syncGameScoresFromNflverse, syncAllPlayerStatsForWeek } from "./nflverse";
+import { syncGameScoresFromNflverse, ensureWeekPlayerStats, abbrevToShort } from "./nflverse";
 import { syncDefensiveStatsFromEspn } from "./espnBoxscore";
 import { syncGameFinishTimesFromPlayByPlay } from "./playByPlay";
 import { getHistoricalGameLines } from "./historicalOddsCache";
@@ -25,7 +25,7 @@ export type EnrichLog = {
  * spread/overUnder (`game.spread`/`game.overUnder`) when the leg has none,
  * since the current line can drift from what was actually bet.
  */
-function calculateLegResult(betType: string, pick: string, game: Game, line?: string | null): "win" | "loss" | "push" | null {
+export function calculateLegResult(betType: string, pick: string, game: Game, line?: string | null): "win" | "loss" | "push" | null {
   const homeScore = game.homeScore;
   const awayScore = game.awayScore;
   if (homeScore == null || awayScore == null) return null;
@@ -172,6 +172,30 @@ async function saveLog(legId: number, log: EnrichLog): Promise<EnrichLog> {
 }
 
 /**
+ * A prop leg is entered without a game. Finds the game from the team the
+ * player suited up for that week (player_week_stats.team, not their current
+ * team, so a since-traded player still lands on the right game) and saves it
+ * on the leg, which is what fills the card's Date / Kickoff / Slate columns.
+ * Returns the game, or null when the player's stats for the week aren't in
+ * the DB or their team has no game in that week.
+ */
+export async function linkPropLegToGame(
+  leg: Pick<ParlayLeg, "id" | "playerName">,
+  weekId: number,
+  season: number,
+  weekNumber: number,
+): Promise<Game | null> {
+  if (!leg.playerName) return null;
+  const stat = await storage.getPlayerStatByName(leg.playerName, season, weekNumber);
+  if (!stat?.team) return null;
+  const team = abbrevToShort(stat.team);
+  const game = (await storage.getGamesByWeek(weekId)).find(g => g.homeTeam === team || g.awayTeam === team);
+  if (!game) return null;
+  await storage.updateParlayLeg(leg.id, { gameId: game.id });
+  return game;
+}
+
+/**
  * `skipScoreSync` grades against the scores already in the DB instead of
  * pulling the week again. For a caller enriching several legs from one week
  * back to back, where the first leg's pull already covered the rest.
@@ -192,8 +216,33 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
     const { season, weekNumber } = week;
     log.changes.push(`Bet: Season ${season} Week ${weekNumber} — type=${leg.betType} pick=${leg.pick}`);
 
+    // A prop leg with no game shows blank Date / Kickoff / Slate. Linking it
+    // doesn't depend on grading, so it runs even when the result was typed in.
+    let needsGameLink = leg.betType === "player_prop" && leg.gameId == null && !!leg.playerName;
+    const tryGameLink = async () => {
+      if (!needsGameLink) return;
+      const game = await linkPropLegToGame(leg, parlay.weekId, season, weekNumber);
+      if (!game) return;
+      needsGameLink = false;
+      log.changes.push(`✓ Linked to ${game.awayTeam} @ ${game.homeTeam} (game #${game.id})`);
+    };
+    if (needsGameLink) {
+      await tryGameLink();
+      if (needsGameLink) {
+        try {
+          await ensureWeekPlayerStats(season, weekNumber);
+          await tryGameLink();
+        } catch (err: any) {
+          log.warnings.push(`Could not pull Season ${season} Week ${weekNumber} player stats to find this prop's game: ${err.message}`);
+        }
+      }
+    }
+
     // If a result is already recorded, skip the data fetch entirely
     if (leg.result) {
+      if (needsGameLink) {
+        log.warnings.push(`No game linked: "${leg.playerName}" has no stats for Season ${season} Week ${weekNumber}. Check the spelling, or set the game with the Edit button.`);
+      }
       log.changes.push(`Result already set to "${leg.result}" — skipping data fetch`);
       return saveLog(legId, log);
     }
@@ -212,7 +261,7 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
         try {
           // Use the team-unrestricted sync so players on any team can be found,
           // regardless of whether that team appears in our bet-on games.
-          const syncResult = await syncAllPlayerStatsForWeek(season, weekNumber);
+          const syncResult = await ensureWeekPlayerStats(season, weekNumber);
           log.changes.push(`nflverse sync: ${syncResult.players} player(s), ${syncResult.stats} stat row(s) fetched`);
         } catch (err: any) {
           log.errors.push(`nflverse player stats fetch failed: ${err.message}`);
@@ -246,6 +295,9 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
       }
 
       log.changes.push(`Stats found: ${playerStat.player.displayName ?? playerStat.player.name} (team: ${playerStat.team ?? "?"})`);
+      // Defensive players only arrive with the ESPN pull above, so try again.
+      await tryGameLink();
+      if (needsGameLink) log.warnings.push(`No game linked: ${playerStat.team ?? "this player's team"} has no game in Week ${weekNumber} in our schedule`);
 
       if (!leg.propType) {
         log.warnings.push("No prop type set on this leg — cannot calculate result. Edit the leg to set a prop type.");
@@ -277,8 +329,9 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
         log.changes.push(`Scores for Season ${season} Week ${weekNumber} already refreshed in this run`);
       } else {
         log.changes.push(`Fetching nflverse scores for Season ${season} Week ${weekNumber}…`);
+        let scoreResult: Awaited<ReturnType<typeof syncGameScoresFromNflverse>> | null = null;
         try {
-          const scoreResult = await syncGameScoresFromNflverse(season, [weekNumber]);
+          scoreResult = await syncGameScoresFromNflverse(season, [weekNumber]);
           if (scoreResult.updated > 0) {
             log.changes.push(`nflverse: ${scoreResult.updated} game(s) updated with new scores`);
           } else if (scoreResult.alreadyFinal > 0) {
@@ -292,18 +345,16 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
         }
 
         // The score sync above stamps games.finishedAt at the moment THIS sync
-        // runs, not the game's actual final whistle — fine for a single leg
-        // finishing in isolation, but every game in a batch/slate ends up with
-        // ~the same timestamp otherwise (breaks Hero/Loser ordering and sorting
-        // by "when did this settle"). Re-derive the precise finish time from
-        // play-by-play right away rather than waiting on the scheduled job.
-        try {
-          const finishResult = await syncGameFinishTimesFromPlayByPlay(season, [weekNumber]);
-          if (finishResult.updated > 0) {
-            log.changes.push(`Play-by-play: precise finish time set for ${finishResult.updated} game(s)`);
-          }
-        } catch (err: any) {
-          log.warnings.push(`Play-by-play finish-time sync failed (non-fatal): ${err.message}`);
+        // runs, not the game's actual final whistle, so every game it just
+        // finalized shares ~the same timestamp (breaks Hero/Loser ordering).
+        // Play-by-play has the real finish time, but it's a ~100 MB download
+        // that grading doesn't need: only fetch it when scores actually
+        // changed, and don't make the caller wait on it.
+        if (scoreResult && scoreResult.updated > 0) {
+          log.changes.push(`Play-by-play: refreshing precise finish times in the background`);
+          void syncGameFinishTimesFromPlayByPlay(season, [weekNumber]).catch((err) =>
+            logger.warn({ err }, `[legEnrich] play-by-play finish-time sync failed for ${season} week ${weekNumber}`),
+          );
         }
       }
 

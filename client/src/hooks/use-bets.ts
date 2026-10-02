@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, type InfiniteData } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, keepPreviousData, type InfiniteData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import type { MultiBetLegInput } from "@shared/multiBetValidation";
@@ -90,6 +90,10 @@ export function usePlayerSearch(query: string) {
       if (!res.ok) throw new Error("Failed to fetch players");
       return res.json();
     },
+    // Keep the last results on screen while the next keystroke's load, so the
+    // list doesn't blink to a spinner on every letter.
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
   });
 }
 
@@ -385,6 +389,32 @@ export function useMyParlayHistory(leagueId?: number) {
       if (!res.ok) throw new Error("Failed to fetch parlay history");
       return res.json();
     },
+  });
+}
+
+/** Query string shared by the bet-history download link and the emailed copy. */
+export function betHistoryExportQuery(opts: { leagueId?: number; mineOnly?: boolean }): string {
+  const params = new URLSearchParams();
+  if (opts.leagueId) params.set("leagueId", String(opts.leagueId));
+  if (opts.mineOnly) params.set("mine", "1");
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+/** Emails the bet-history CSV to the signed-in user's own address. */
+export function useEmailBetHistoryExport() {
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (opts: { leagueId?: number; mineOnly?: boolean }) => {
+      const res = await fetch(`/api/parlay-legs/export/email${betHistoryExportQuery(opts)}`, { method: "POST", credentials: "include" });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.message ?? "Could not email the export");
+      }
+      return res.json() as Promise<{ sentTo: string; legs: number }>;
+    },
+    onSuccess: (data) => toast({ title: "Export emailed", description: `${data.legs} bets sent to ${data.sentTo}.` }),
+    onError: (e: Error) => toast({ title: "Export not sent", description: e.message, variant: "destructive" }),
   });
 }
 

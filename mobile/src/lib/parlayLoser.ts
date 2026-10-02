@@ -12,7 +12,7 @@ function decidedTime(leg: ParlayLeg & { game?: Game | null }): number | null {
  * lost, the one decided earliest. Returns null for anything that isn't a
  * decided loss, or if no losing leg has a resolvable timestamp at all.
  */
-export function getBustedLeg(parlay: ParlayWithLegs): (ParlayLeg & { game: Game | null }) | null {
+export function getBustedLeg(parlay: ParlayWithLegs): ParlayWithLegs["legs"][number] | null {
   if (parlay.status !== "loss") return null;
   const busted = parlay.legs.filter(l => l.result === "loss");
   if (busted.length === 0) return null;

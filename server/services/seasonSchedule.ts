@@ -4,6 +4,7 @@ import { games, parlayLegs, parlays, weeks } from "@shared/db-schema";
 import {
   abbrevToShort,
   fetchCsv,
+  homeSpreadFromNflverse,
   schedulesUrl,
   zonedWallTimeToUtc,
   type NflverseScheduleRow,
@@ -130,13 +131,12 @@ export async function syncSeasonSchedule(season: number, opts: { apply: boolean 
       report.inserted++;
       if (!opts.apply) continue;
       const [homeTeam, awayTeam] = k.split("|");
-      const spread = parseFloat(row.spread_line);
       const total = parseFloat(row.total_line);
       await tx.insert(games).values({
         weekId: weekIdByNumber.get(parseInt(row.week))!,
         homeTeam,
         awayTeam,
-        spread: Number.isNaN(spread) ? null : spread.toString(),
+        spread: homeSpreadFromNflverse(row.spread_line),
         overUnder: Number.isNaN(total) ? null : total.toString(),
         moneylineHome: row.home_moneyline || null,
         moneylineAway: row.away_moneyline || null,
