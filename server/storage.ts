@@ -26,6 +26,7 @@ import { normalizeJoinedGame, normalizeParlayLegPatch } from "@shared/dataIntegr
 import { countParlayOutcomes, mergeUserSettings, buildUserStat, normalizeOutcomeCounts } from "@shared/statsAggregation";
 import { formatPickOwnerLabel } from "@shared/pickOwnerLabel";
 import { eq, and, or, desc, asc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import {
   averagePowerScore,
   legPowerContribution,
@@ -35,8 +36,18 @@ import {
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 import { impliedPointsMoved, MAX_POINTS_MOVE } from "@shared/buyPoints";
 import type { MultiBetLegInput } from "@shared/multiBetValidation";
+import type { LegExportRow } from "@shared/legsCsv";
 
 /** Thrown by createMultiBetParlay when the owner already has a parlay that week. */
+/** The member who placed a leg, as shown in a "Bet Owner" column. */
+function legOwnerSummary(owner: typeof users.$inferSelect | null) {
+  return owner ? { firstName: owner.firstName, email: owner.email, settings: owner.settings as UserSettings | null } : null;
+}
+
+// Rows per statement for the bulk player upserts: ~25 columns each, well
+// under Postgres's 65,535 bind-parameter limit.
+const BULK_UPSERT_CHUNK = 500;
+
 export class ParlayAlreadyExistsError extends Error {
   constructor() {
     super("This owner already has a parlay for that week. Edit it instead, or pick a different owner.");
@@ -188,6 +199,8 @@ export interface IStorage {
    * scoped to the caller's own legs by userId instead of a single league, since dashboard
    * aggregates span every league the user belongs to. */
   getMyParlayLegsByIds(userId: string, legIds: number[]): Promise<ParlayLegWithParlayContext[]>;
+  /** Bet-history export: legs in the caller's leagues (or just their own), flattened for a CSV. */
+  getLegExportRows(userId: string, opts?: { leagueId?: number; mineOnly?: boolean }): Promise<LegExportRow[]>;
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
   cancelOwnParlay(parlayId: number, userId: string): Promise<void>;
@@ -302,6 +315,8 @@ export interface IStorage {
   searchPlayers(query: string, limit?: number): Promise<Player[]>;
   getAllTeams(): Promise<Team[]>;
   upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
+  bulkUpsertPlayers(rows: (Omit<InsertPlayer, 'updatedAt'> & { nflverseId: string })[]): Promise<Map<string, number>>;
+  bulkUpsertPlayerWeekStats(rows: InsertPlayerWeekStat[]): Promise<number>;
   getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]>;
   getPlayerStatByName(playerName: string, season: number, week: number): Promise<(PlayerWeekStat & { player: Player }) | null>;
   setLegEnrichmentLog(legId: number, log: string): Promise<void>;
@@ -1606,10 +1621,12 @@ export class DatabaseStorage implements IStorage {
   async getParlayLegsByIds(leagueId: number, legIds: number[], requestingUserId: string): Promise<ParlayLegWithParlayContext[]> {
     if (legIds.length === 0) return [];
 
-    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users })
+    const legOwners = alias(users, "leg_owners");
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users, legOwner: legOwners })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
       .leftJoin(users, eq(parlays.userId, users.id))
+      .leftJoin(legOwners, eq(parlayLegs.userId, legOwners.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
       .where(and(inArray(parlayLegs.id, legIds), eq(parlays.leagueId, leagueId)));
 
@@ -1620,11 +1637,12 @@ export class DatabaseStorage implements IStorage {
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
     return rows
-      .map(({ leg, game, parlay, owner }) => {
+      .map(({ leg, game, parlay, owner, legOwner }) => {
         const isOwnParlay = parlay.userId === requestingUserId;
         return {
           ...leg,
           game,
+          user: legOwnerSummary(legOwner),
           parlay: {
             id: parlay.id,
             weekId: parlay.weekId,
@@ -1645,9 +1663,10 @@ export class DatabaseStorage implements IStorage {
   async getMyParlayLegsByIds(userId: string, legIds: number[]): Promise<ParlayLegWithParlayContext[]> {
     if (legIds.length === 0) return [];
 
-    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays })
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, legOwner: users })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(users, eq(parlayLegs.userId, users.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
       // Your own legs, plus any leg in a parlay you started (the dashboard's
       // "Parlays Owned" lookthrough) — both already visible to you in-league.
@@ -1663,15 +1682,17 @@ export class DatabaseStorage implements IStorage {
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
     return rows
-      .map(({ leg, game, parlay }) => ({
+      .map(({ leg, game, parlay, legOwner }) => ({
         ...leg,
         game,
+        user: legOwnerSummary(legOwner),
         parlay: {
           id: parlay.id,
           weekId: parlay.weekId,
           week: weekById.get(parlay.weekId)!,
           status: parlay.status,
-          isOwnParlay: true,
+          // The caller may only have contributed a leg to someone else's parlay.
+          isOwnParlay: parlay.userId === userId,
           owner: null,
         },
       }))
@@ -1680,6 +1701,53 @@ export class DatabaseStorage implements IStorage {
         const bTime = b.game?.gameTime ? new Date(b.game.gameTime).getTime() : 0;
         return bTime - aTime || b.id - a.id;
       });
+  }
+
+  async getLegExportRows(userId: string, opts: { leagueId?: number; mineOnly?: boolean } = {}): Promise<LegExportRow[]> {
+    const memberships = await db.select({ leagueId: leagueMembers.leagueId }).from(leagueMembers)
+      .where(eq(leagueMembers.userId, userId));
+    const leagueIds = memberships.map(m => m.leagueId).filter(id => opts.leagueId == null || id === opts.leagueId);
+    if (leagueIds.length === 0) return [];
+
+    const rows = await db
+      .select({ leg: parlayLegs, parlay: parlays, week: weeks, league: leagues, game: games, owner: users })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+      .innerJoin(leagues, eq(parlays.leagueId, leagues.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .leftJoin(users, eq(parlayLegs.userId, users.id))
+      .where(and(
+        inArray(parlays.leagueId, leagueIds),
+        // Someone else's unsubmitted draft isn't bet history yet.
+        or(eq(parlayLegs.userId, userId), not(eq(parlays.status, "draft"))),
+        opts.mineOnly ? eq(parlayLegs.userId, userId) : undefined,
+      ));
+
+    return rows.map(({ leg, parlay, week, league, game, owner }) => ({
+      legId: leg.id,
+      parlayId: parlay.id,
+      league: league.name,
+      season: week.season,
+      week: week.weekNumber,
+      parlayStatus: parlay.status,
+      betOwner: (owner?.settings as UserSettings | null)?.displayName || owner?.firstName || owner?.email || "Unknown",
+      betType: leg.betType,
+      awayTeam: game?.awayTeam ?? null,
+      homeTeam: game?.homeTeam ?? null,
+      playerName: leg.playerName,
+      propType: leg.propType,
+      pick: leg.pick,
+      line: leg.line,
+      odds: leg.odds,
+      oddsSource: leg.oddsSource,
+      gameSegment: leg.gameSegment,
+      result: leg.result,
+      resultDetail: leg.resultDetail,
+      kickoff: game?.gameTime ?? null,
+      decidedAt: leg.decidedAt ?? game?.finishedAt ?? null,
+      notes: leg.notes,
+    }));
   }
 
   async updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay> {
@@ -2822,15 +2890,60 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(teams).orderBy(teams.nickname);
   }
 
+  /**
+   * Player picker search. Matches every word of the query against the full
+   * name and the short nflverse name ("P.Mahomes"), ignoring case and
+   * punctuation, so "aj brown" finds "A.J. Brown". Names that only exist on
+   * parlay legs (typed in by hand, never synced) are included too, with a
+   * negative id, since filters match on the leg's player name.
+   */
   async searchPlayers(query: string, limit = 20): Promise<Player[]> {
-    const trimmed = query.trim();
-    if (!trimmed) {
-      return db.select().from(players).orderBy(players.name).limit(limit);
-    }
-    return db.select().from(players)
-      .where(ilike(players.name, `%${trimmed}%`))
-      .orderBy(players.name)
+    const norm = normalizePlayerName(query);
+    const tokens = norm.split(" ").filter(Boolean);
+    const normalized = (col: unknown) => sql`regexp_replace(lower(${col}), '[^a-z0-9 ]', '', 'g')`;
+    const matchesAll = (haystack: unknown) =>
+      tokens.length ? and(...tokens.map(t => sql`${haystack} like ${`%${t}%`}`)) : undefined;
+
+    const playerHaystack = normalized(sql`coalesce(${players.displayName}, '') || ' ' || ${players.name}`);
+    const displayNorm = normalized(sql`coalesce(${players.displayName}, ${players.name})`);
+    const playerRows = await db.select().from(players)
+      .where(matchesAll(playerHaystack))
+      .orderBy(
+        // Names that start with what was typed, then ones where a later word does.
+        sql`case when ${displayNorm} like ${`${norm}%`} then 0 when ${displayNorm} like ${`% ${norm}%`} then 1 else 2 end`,
+        sql`coalesce(${players.displayName}, ${players.name})`,
+      )
       .limit(limit);
+
+    const legHaystack = normalized(parlayLegs.playerName);
+    const legRows = await db
+      .select({ name: sql<string>`min(${parlayLegs.playerName})`, uses: sql<number>`count(*)::int` })
+      .from(parlayLegs)
+      .where(and(sql`${parlayLegs.playerName} is not null`, matchesAll(legHaystack)))
+      .groupBy(legHaystack)
+      .orderBy(sql`count(*) desc`)
+      .limit(limit);
+
+    const seen = new Set<string>();
+    const results: Player[] = [];
+    for (const p of playerRows) {
+      const key = normalizePlayerName(p.displayName || p.name);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      results.push(p);
+    }
+    const legOnly: Player[] = [];
+    for (const row of legRows) {
+      const key = normalizePlayerName(row.name);
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      legOnly.push({
+        id: -(legOnly.length + 1), nflverseId: null, espnId: null, name: row.name, displayName: row.name,
+        position: null, team: null, headshot: null, updatedAt: null,
+      });
+    }
+    // With nothing typed yet, lead with players the league has actually bet on.
+    return (tokens.length ? [...results, ...legOnly] : [...legOnly, ...results]).slice(0, limit);
   }
 
   async upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat> {
@@ -2854,6 +2967,71 @@ export class DatabaseStorage implements IStorage {
 
     const [created] = await db.insert(playerWeekStats).values(data).returning();
     return created;
+  }
+
+  /**
+   * Upserts many nflverse players in a few statements instead of two round
+   * trips each. Returns nflverseId -> players.id for every row passed in.
+   */
+  async bulkUpsertPlayers(rows: (Omit<InsertPlayer, 'updatedAt'> & { nflverseId: string })[]): Promise<Map<string, number>> {
+    // One statement can't update the same row twice, so keep the last copy of each id.
+    const unique = [...new Map(rows.map(r => [r.nflverseId, r])).values()];
+    const idByNflverseId = new Map<string, number>();
+    for (let i = 0; i < unique.length; i += BULK_UPSERT_CHUNK) {
+      const saved = await db.insert(players)
+        .values(unique.slice(i, i + BULK_UPSERT_CHUNK).map(r => ({ ...r, updatedAt: new Date() })))
+        .onConflictDoUpdate({
+          target: players.nflverseId,
+          set: {
+            name: sql`excluded.name`,
+            displayName: sql`excluded.display_name`,
+            position: sql`excluded.position`,
+            team: sql`excluded.team`,
+            headshot: sql`excluded.headshot`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        })
+        .returning({ id: players.id, nflverseId: players.nflverseId });
+      for (const p of saved) if (p.nflverseId) idByNflverseId.set(p.nflverseId, p.id);
+    }
+    return idByNflverseId;
+  }
+
+  /** Bulk version of upsertPlayerWeekStat, keyed on (player, season, week). */
+  async bulkUpsertPlayerWeekStats(rows: InsertPlayerWeekStat[]): Promise<number> {
+    const unique = [...new Map(rows.map(r => [`${r.playerId}|${r.season}|${r.week}`, r])).values()];
+    for (let i = 0; i < unique.length; i += BULK_UPSERT_CHUNK) {
+      await db.insert(playerWeekStats)
+        .values(unique.slice(i, i + BULK_UPSERT_CHUNK))
+        .onConflictDoUpdate({
+          target: [playerWeekStats.playerId, playerWeekStats.season, playerWeekStats.week],
+          set: {
+            seasonType: sql`excluded.season_type`,
+            team: sql`excluded.team`,
+            completions: sql`excluded.completions`,
+            attempts: sql`excluded.attempts`,
+            passingYards: sql`excluded.passing_yards`,
+            passingTds: sql`excluded.passing_tds`,
+            interceptions: sql`excluded.interceptions`,
+            passerRating: sql`excluded.passer_rating`,
+            carries: sql`excluded.carries`,
+            rushingYards: sql`excluded.rushing_yards`,
+            rushingTds: sql`excluded.rushing_tds`,
+            receptions: sql`excluded.receptions`,
+            targets: sql`excluded.targets`,
+            receivingYards: sql`excluded.receiving_yards`,
+            receivingTds: sql`excluded.receiving_tds`,
+            // Defensive numbers can also come from ESPN (espnBoxscore.ts);
+            // a source file without those columns must not blank them.
+            defSacks: sql`coalesce(excluded.def_sacks, ${playerWeekStats.defSacks})`,
+            defTacklesSolo: sql`coalesce(excluded.def_tackles_solo, ${playerWeekStats.defTacklesSolo})`,
+            defTacklesWithAssist: sql`coalesce(excluded.def_tackles_with_assist, ${playerWeekStats.defTacklesWithAssist})`,
+            fantasyPoints: sql`excluded.fantasy_points`,
+            fantasyPointsPpr: sql`excluded.fantasy_points_ppr`,
+          },
+        });
+    }
+    return unique.length;
   }
 
   async getPlayerStatsForGame(gameId: number): Promise<(PlayerWeekStat & { player: Player })[]> {

@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { getBuildingVerb } from "@/lib/parlaySlang";
 import { upToCurrentWeek } from "@/lib/weekFilters";
 import { PageLoader } from "@/components/PageLoader";
+import { SlateGroupedGames } from "@/components/SlateGroupedGames";
 
 interface InjuryNewsItem {
   id: string;
@@ -296,8 +297,9 @@ export default function Picks() {
                 <span>Lines and game times will be posted closer to kickoff. Check back soon!</span>
               </div>
             )}
-            <div className="grid gap-3 md:grid-cols-2">
-              {visibleGames.map((game) => {
+            <SlateGroupedGames
+              games={visibleGames}
+              renderGame={(game) => {
                 const hasOdds = !!(game.spread || game.overUnder || game.moneylineHome);
                 const hasTime = !!game.gameTime;
                 return (
@@ -314,11 +316,11 @@ export default function Picks() {
                         )}
                       </div>
                       <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <p className="font-bold">{game.awayTeam}</p>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold truncate">{game.awayTeam}</p>
                           <p className="text-xs text-muted-foreground">{game.awayRecord ?? ""}</p>
                         </div>
-                        <div className="px-3 text-center min-w-[90px]">
+                        <div className="px-2 text-center min-w-[64px]">
                           {game.isFinished ? (
                             <p className="font-mono">{game.awayScore} - {game.homeScore}</p>
                           ) : hasOdds ? (
@@ -333,16 +335,16 @@ export default function Picks() {
                             </>
                           )}
                         </div>
-                        <div className="flex-1 text-right">
-                          <p className="font-bold">{game.homeTeam}</p>
+                        <div className="flex-1 min-w-0 text-right">
+                          <p className="font-bold truncate">{game.homeTeam}</p>
                           <p className="text-xs text-muted-foreground">{game.homeRecord ?? ""}</p>
                         </div>
                       </div>
                     </CardContent>
                   </Card>
                 );
-              })}
-            </div>
+              }}
+            />
           </>
         )}
       </div>

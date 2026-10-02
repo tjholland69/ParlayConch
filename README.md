@@ -276,6 +276,9 @@ http://localhost:5000
 | `npm run db:generate` | Generate a migration from schema changes |
 | `npm run db:push` | Push the schema directly to the configured database |
 | `npm run db:seed` | Seed development data |
+| `npm run audit:parlays` | Read-only check for parlays, legs and games filed under the wrong week |
+| `npm run repair:spread-signs` | Fix game spreads stored with the wrong sign (dry run unless `--apply`) |
+| `npm run backfill:prop-games` | Link player-prop legs to their player's game (dry run unless `--apply`) |
 
 ## Authentication and authorization
 

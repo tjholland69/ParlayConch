@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, Scissors, Info, Copy, Check, Clock } from "lucide-react";
+import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, ChevronDown, ChevronUp, Scissors, Info, Copy, Check, Clock } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
@@ -371,6 +371,11 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const heroMemberName = heroLeg?.user
     ? getDisplayName(heroLeg.user, `User #${shortId(heroLeg.userId)}`)
     : memberName;
+  // The loser is whoever placed the leg that lost first, not whoever started
+  // the parlay (which used to name the same person on every loss).
+  const loserMemberName = bustedLeg
+    ? getDisplayName(bustedLeg.user, `User #${shortId(bustedLeg.userId)}`)
+    : memberName;
 
   // Slate the parlay was decided in: the decisive leg's game — the leg that
   // killed the parlay (bustedLeg) for a loss, or the leg that clinched it
@@ -467,7 +472,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                   )}
                   {bustedLeg && (
                     <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal shrink-0 border-destructive/40 text-destructive">
-                      {loserLabelText}: {memberName}
+                      {loserLabelText}: {loserMemberName}
                     </Badge>
                   )}
                   {heroLeg && (
@@ -641,6 +646,20 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                 </Button>
               </div>
             )}
+
+            {/* This card's own expand/collapse, next to the page-wide controls */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-foreground shrink-0"
+              title={collapsed ? "Expand this card" : "Collapse this card"}
+              aria-expanded={!collapsed}
+              onClick={e => { e.stopPropagation(); setCollapsed(c => !c); }}
+              data-testid={`button-toggle-card-${parlay.id}`}
+            >
+              {collapsed ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">{collapsed ? "Expand" : "Collapse"}</span>
+            </Button>
           </div>
           {!collapsed && (
             <div className="mt-3 relative z-10">

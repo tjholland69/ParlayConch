@@ -17,7 +17,8 @@
 
 import { storage } from "../storage";
 import { logger } from "../logger";
-import { fetchCsv, findGameInDb, abbrevToShort } from "./nflverse";
+import Papa from "papaparse";
+import { findGameInDb, abbrevToShort } from "./nflverse";
 
 const BASE = "https://github.com/nflverse/nflverse-data/releases/download";
 
@@ -97,23 +98,42 @@ function pruneRow(row: PbpRow): PbpRow {
 /**
  * Fetch a season's play-by-play file and group rows by game_id, each game's
  * plays sorted chronologically (ascending numeric play_id — nflverse assigns
- * these in play order within a game).
+ * these in play order within a game). `weekNumbers` keeps only those weeks.
+ *
+ * The file is ~100 MB and ~370 columns wide. Rows are pruned as they are
+ * parsed (Papa's `step`) rather than after: building every full-width row
+ * first needs ~2 GB of heap and was crashing the server out of memory.
  */
-export async function getPlaysByGame(season: number): Promise<Map<string, PbpRow[]>> {
+export async function getPlaysByGame(season: number, weekNumbers?: number[]): Promise<Map<string, PbpRow[]>> {
   logger.info(`[play-by-play] Fetching play-by-play for season ${season}…`);
-  const rawRows = (await fetchCsv(playByPlayUrl(season))) as unknown as PbpRow[];
-
-  const byGame = new Map<string, PbpRow[]>();
-  for (const raw of rawRows) {
-    const row = pruneRow(raw);
-    const list = byGame.get(row.game_id);
-    if (list) list.push(row);
-    else byGame.set(row.game_id, [row]);
+  const url = playByPlayUrl(season);
+  const res = await fetch(url, { headers: { "User-Agent": "parlayconch-app/1.0" } });
+  if (!res.ok) {
+    throw new Error(`nflverse fetch failed: ${res.status} ${res.statusText} — ${url}`);
   }
+  const text = await res.text();
+
+  const onlyWeeks = weekNumbers && weekNumbers.length > 0 ? new Set(weekNumbers) : null;
+  const byGame = new Map<string, PbpRow[]>();
+  let total = 0;
+  Papa.parse<PbpRow>(text, {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: (h) => h.trim().toLowerCase(),
+    step: ({ data }) => {
+      if (!data.game_id) return;
+      if (onlyWeeks && !onlyWeeks.has(parseInt(data.week, 10))) return;
+      const row = pruneRow(data);
+      const list = byGame.get(row.game_id);
+      if (list) list.push(row);
+      else byGame.set(row.game_id, [row]);
+      total++;
+    },
+  });
   for (const plays of byGame.values()) {
     plays.sort((a, b) => (parseInt(a.play_id, 10) || 0) - (parseInt(b.play_id, 10) || 0));
   }
-  logger.info(`[play-by-play] ${byGame.size} games, ${rawRows.length} plays total for season ${season}`);
+  logger.info(`[play-by-play] ${byGame.size} games, ${total} plays total for season ${season}`);
   return byGame;
 }
 
@@ -133,7 +153,7 @@ export async function syncGameFinishTimesFromPlayByPlay(
 ): Promise<{ updated: number; noMatch: number; notYetFinished: number }> {
   let playsByGame: Map<string, PbpRow[]>;
   try {
-    playsByGame = await getPlaysByGame(season);
+    playsByGame = await getPlaysByGame(season, weekNumbers);
   } catch (err) {
     logger.warn({ err }, `[play-by-play] Could not fetch play-by-play for season ${season}; skipping finish-time sync`);
     return { updated: 0, noMatch: 0, notYetFinished: 0 };

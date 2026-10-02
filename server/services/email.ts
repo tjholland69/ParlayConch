@@ -199,3 +199,32 @@ export async function sendLeagueInviteEmail(opts: {
     html,
   });
 }
+
+/**
+ * Emails someone their own bet-history export (History page) as a CSV
+ * attachment. Only ever sent to the address on the requester's account.
+ */
+export async function sendBetHistoryExportEmail(opts: {
+  toEmail: string;
+  toName: string | null;
+  filename: string;
+  csv: string;
+  legCount: number;
+}): Promise<void> {
+  const { client, fromEmail } = await getUncachableResendClient();
+
+  const greeting = opts.toName ? `Hi ${opts.toName},` : "Hey there,";
+  const html = baseHtml(`
+    <h1>Your bet history export</h1>
+    <p>${greeting}</p>
+    <p>Attached is the export you asked for: <strong>${opts.legCount}</strong> bet${opts.legCount !== 1 ? "s" : ""}, one row per parlay leg. It opens in Excel, Numbers or Google Sheets.</p>
+  `);
+
+  await sendChecked(client, {
+    from: `Parlay.Conch <${fromEmail}>`,
+    to: opts.toEmail,
+    subject: "Your Parlay.Conch bet history export",
+    html,
+    attachments: [{ filename: opts.filename, content: Buffer.from(opts.csv, "utf8") }],
+  });
+}

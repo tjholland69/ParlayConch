@@ -4,6 +4,7 @@ import { Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
 import { getDisplayName } from "@/lib/displayName";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { legMatchup } from "@/lib/legLabel";
 import { getSlate } from "@shared/slate";
 import type { ParlayLegWithParlayContext } from "@shared/schema";
@@ -16,6 +17,9 @@ import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
 // the leading "Parlay" column, since a row here doesn't already imply which
 // parlay it belongs to the way a rollup tile's own legs table does.
 export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
+  // "Bet Owner" is who placed the leg, which on a group parlay is usually not
+  // the member who started the parlay.
+  const effectiveUserId = useEffectiveUserId();
   if (legs.length === 0) {
     return <p className="text-sm text-muted-foreground italic py-2 px-1">No legs.</p>;
   }
@@ -62,7 +66,7 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
                 </div>
               </td>
               <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
-                {leg.parlay.isOwnParlay ? "You" : getDisplayName(leg.parlay.owner, "Member")}
+                {leg.userId === effectiveUserId ? "You" : getDisplayName(leg.user, "Member")}
               </td>
               <td className="px-3 py-2 font-medium">
                 <div className="flex items-center gap-1.5 flex-wrap min-w-0">

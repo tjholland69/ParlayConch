@@ -20,7 +20,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { ParlayRollupCard, LegSheet, legToForm, blankLeg, BET_TYPES, RESULTS, type LegFormState } from "@/components/ParlayRollupCard";
 import { PickTile } from "@/components/PickTile";
-import { getLineForBet } from "@/lib/gameOdds";
+import { getLineForBet, spreadLabels } from "@/lib/gameOdds";
 import { upToCurrentWeek } from "@/lib/weekFilters";
 import { format } from "date-fns";
 import { PageLoader } from "@/components/PageLoader";
@@ -396,8 +396,7 @@ function AddHistoricalBetSheet({ open, onOpenChange, leagueId, weeks, members }:
                 ) : (
                   <div className="space-y-2 max-h-72 overflow-y-auto rounded-lg border border-white/10 p-2">
                     {weekGames.map(game => {
-                      const awaySpread = game.spread ? `+${game.spread.replace('-', '')}` : null;
-                      const homeSpread = game.spread || null;
+                      const { away: awaySpread, home: homeSpread } = spreadLabels(game);
                       return (
                         <div key={game.id} className="rounded-md bg-card/40 p-2">
                           <div className="flex items-center justify-between mb-1.5 text-xs text-muted-foreground">

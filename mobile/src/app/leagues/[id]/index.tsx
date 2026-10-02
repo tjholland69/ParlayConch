@@ -147,6 +147,10 @@ function ParlayCard({
   const heroMemberName = heroLeg?.user
     ? heroLeg.user.settings?.displayName ?? heroLeg.user.firstName ?? heroLeg.user.email ?? "Unknown"
     : name;
+  // Whoever placed the leg that lost first, not whoever started the parlay.
+  const loserMemberName = bustedLeg?.user
+    ? bustedLeg.user.settings?.displayName ?? bustedLeg.user.firstName ?? bustedLeg.user.email ?? "Unknown"
+    : name;
 
   // getSlate buckets by kickoff time, not finish time, so this must use the
   // decisive leg's game.gameTime — not decidedAt/finishedAt (see web's
@@ -307,7 +311,7 @@ function ParlayCard({
               {bustedLeg && (
                 <View style={[styles.resultChip, styles.resultChipDestructive]}>
                   <Text style={[styles.resultChipText, styles.resultChipTextDestructive]} numberOfLines={1}>
-                    {loserLabelText}: {name}
+                    {loserLabelText}: {loserMemberName}
                   </Text>
                 </View>
               )}

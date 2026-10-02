@@ -1,4 +1,4 @@
-import { useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useAllMyLeaguesParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages, useMissingParlayMembers, useBackfillMissingParlays } from "@/hooks/use-bets";
+import { useMyLegHistory, useLeagues, useAllLeagueParlaysReadOnly, useAllMyLeaguesParlaysReadOnly, useLeagueMembersWithUsers, flattenParlayPages, useMissingParlayMembers, useBackfillMissingParlays, useEmailBetHistoryExport, betHistoryExportQuery } from "@/hooks/use-bets";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { useSearch } from "wouter";
 import { useState, useEffect, useMemo, useRef, Suspense, lazy } from "react";
@@ -17,7 +17,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { DateRange } from "react-day-picker";
 import { MultiSelect } from "@/components/MultiSelect";
 import { BET_TYPE_OPTIONS } from "@/lib/bettingConstants";
-import { History as HistoryIcon, Trophy, Filter, Calendar, ChevronsUpDown, Search, HelpCircle, LayoutGrid, Table2, Info } from "lucide-react";
+import { History as HistoryIcon, Trophy, Filter, Calendar, ChevronsUpDown, Search, HelpCircle, LayoutGrid, Table2, Info, Download, Mail, Loader2 } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { buildSlipText } from "@/components/BetSlipPanel";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -278,6 +279,7 @@ export default function History() {
   // is safe to default off even for a deep-linked parlay belonging to
   // someone else (see highlightParlayId above).
   const [ownPicksOnly, setOwnPicksOnly] = useState(false);
+  const emailExport = useEmailBetHistoryExport();
   const [selectedMemberIds, setSelectedMemberIds] = useState<string[]>([]);
   const [selectedBetTypes, setSelectedBetTypes] = useState<string[]>([]);
   const [historyDateRangeMode, setHistoryDateRangeMode] = useState<DateRangeMode>("all");
@@ -295,6 +297,7 @@ export default function History() {
   };
 
   const leagueId = selectedLeagueId === "all" ? undefined : Number(selectedLeagueId);
+  const exportOptions = { leagueId, mineOnly: ownPicksOnly };
   const { data: myLegs } = useMyLegHistory(leagueId);
   const [activeTile, setActiveTile] = useState<TileKey | null>(null);
 
@@ -534,20 +537,49 @@ export default function History() {
           <p className="text-muted-foreground">Track your parlay performance over time</p>
         </div>
 
-        <Select value={selectedLeagueId} onValueChange={setSelectedLeagueId}>
-          <SelectTrigger className="w-48 bg-background border-white/10">
-            <Filter className="w-4 h-4 text-primary mr-2" />
-            <SelectValue placeholder="Filter by league" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Leagues</SelectItem>
-            {leagues?.map(league => (
-              <SelectItem key={league.id} value={league.id.toString()}>
-                {league.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={selectedLeagueId} onValueChange={setSelectedLeagueId}>
+            <SelectTrigger className="w-48 bg-background border-white/10">
+              <Filter className="w-4 h-4 text-primary mr-2" />
+              <SelectValue placeholder="Filter by league" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Leagues</SelectItem>
+              {leagues?.map(league => (
+                <SelectItem key={league.id} value={league.id.toString()}>
+                  {league.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {/* Bet-history export: one row per parlay leg, for the league picked
+              above and the "own picks only" box below. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="border-white/10" data-testid="button-export-history">
+                {emailExport.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+                Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem asChild data-testid="button-export-history-download">
+                <a href={`/api/parlay-legs/export.csv${betHistoryExportQuery(exportOptions)}`} download>
+                  <Download className="w-4 h-4 mr-2" />
+                  Download .csv
+                </a>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={emailExport.isPending}
+                onClick={() => emailExport.mutate(exportOptions)}
+                data-testid="button-export-history-email"
+              >
+                <Mail className="w-4 h-4 mr-2" />
+                Email it to me
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {/* Filters */}

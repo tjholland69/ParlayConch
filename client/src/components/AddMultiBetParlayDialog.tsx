@@ -12,6 +12,7 @@ import { useAddMultiBetParlay, useGames, usePlayerSearch, useSyncWeekPlayers, ty
 import { BET_TYPE_OPTIONS, RESULTS } from "@/lib/bettingConstants";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { withPlusSign } from "@/lib/formatPick";
+import { awaySpread } from "@/lib/gameOdds";
 import { primaryPropType, propTypesForPosition } from "@/lib/propPosition";
 import { upToCurrentWeek } from "@/lib/weekFilters";
 import { cn } from "@/lib/utils";
@@ -50,12 +51,6 @@ const toLeg = (row: Row): MultiBetLegInput => ({
   playerName: row.playerName.trim() || null,
   propType: row.propType || null,
 });
-
-/** The away team's side of the home spread stored on a game. */
-function awaySpread(homeSpread: string | null | undefined): string {
-  const n = parseFloat(homeSpread ?? "");
-  return Number.isNaN(n) ? "" : String(-n);
-}
 
 /** Line and odds a game already carries for one market, to prefill the row. */
 function gameMarket(game: Game, betType: string, pick: string): { line: string; odds: string } {
@@ -204,7 +199,7 @@ type PlayerPickerProps = {
 function PlayerPicker({ value, onSelect, onLookupNew, isLookingUp, testId }: PlayerPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
-  const { data: players, isFetching } = usePlayerSearch(search);
+  const { data: players, isLoading } = usePlayerSearch(search);
   const typed = search.trim();
   const exactMatch = (players ?? []).some(p => (p.displayName || p.name).toLowerCase() === typed.toLowerCase());
 
@@ -227,7 +222,7 @@ function PlayerPicker({ value, onSelect, onLookupNew, isLookingUp, testId }: Pla
         <Command shouldFilter={false}>
           <CommandInput placeholder="Search players…" value={search} onValueChange={setSearch} />
           <CommandList>
-            {isFetching ? (
+            {isLoading ? (
               <div className="flex items-center justify-center py-4">
                 <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
               </div>

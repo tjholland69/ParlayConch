@@ -23,3 +23,31 @@ export function getSlate(date: Date | string): SlateName {
   if (minutesSinceMidnight < 18 * 60 + 30) return "Afternoon Slate";
   return "Primetime";
 }
+
+export type SlateGroup<T> = { key: string; label: string; games: T[] };
+
+/**
+ * Splits a week's games into the windows people bet them in: one group per
+ * Eastern-time day and slate ("Thursday Primetime", "Sunday Early Slate"),
+ * in kickoff order. Games with no kickoff time yet go in a last "Time TBD" group.
+ */
+export function groupGamesBySlate<T extends { gameTime?: Date | string | null }>(games: T[]): SlateGroup<T>[] {
+  const time = (g: T) => (g.gameTime ? new Date(g.gameTime).getTime() : Infinity);
+  const groups = new Map<string, SlateGroup<T>>();
+  for (const game of [...games].sort((a, b) => time(a) - time(b))) {
+    let key = "tbd";
+    let label = "Time TBD";
+    if (game.gameTime) {
+      const kickoff = new Date(game.gameTime);
+      const day = kickoff.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+      const weekday = kickoff.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long" });
+      const slate = getSlate(kickoff);
+      key = `${day}|${slate}`;
+      label = `${weekday} ${slate}`;
+    }
+    const group = groups.get(key);
+    if (group) group.games.push(game);
+    else groups.set(key, { key, label, games: [game] });
+  }
+  return [...groups.values()];
+}
