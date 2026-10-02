@@ -20,14 +20,18 @@ interface LeagueCardProps {
   stat?: { winRate: number; totalDecided: number; parlaysWon: number };
   /** Shows a "Create New Parlay" button on the card when this league still needs a pick for the active week. */
   needsPick?: boolean;
+  /** Shows an "Unsubmitted picks" alert when the user has started this
+   * week's parlay here but hasn't submitted it — a draft counts nowhere. */
+  hasUnsubmittedDraft?: boolean;
   /** Active week id, used to hold the button back once that week's deadline has locked. */
   activeWeekId?: number;
 }
 
-export function LeagueCard({ league, stat, needsPick, activeWeekId }: LeagueCardProps) {
+export function LeagueCard({ league, stat, needsPick, hasUnsubmittedDraft, activeWeekId }: LeagueCardProps) {
   const router = useRouter();
   const { data: lockStatus } = useWeekLockStatus(league.id, activeWeekId ?? 0);
   const showCreateParlay = needsPick && !lockStatus?.isLocked;
+  const showDraftAlert = hasUnsubmittedDraft && !lockStatus?.isLocked;
 
   const statColor =
     stat && stat.winRate >= 60 ? "#4ade80" : stat && stat.winRate >= 40 ? "#facc15" : "#f87171";
@@ -124,6 +128,27 @@ export function LeagueCard({ league, stat, needsPick, activeWeekId }: LeagueCard
               </View>
             )}
           </Pressable>
+
+          {showDraftAlert && (
+            <Pressable
+              onPress={() => router.push(`/leagues/${league.id}/build`)}
+              style={({ pressed }) => [styles.draftAlert, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel={`Finish your unsubmitted picks in ${league.name}`}
+              testID={`alert-unsubmitted-picks-${league.id}`}
+            >
+              <View style={styles.draftAlertLabel}>
+                <View style={styles.draftAlertDot} />
+                <Text style={styles.draftAlertText} numberOfLines={1}>
+                  Unsubmitted picks
+                </Text>
+              </View>
+              <View style={styles.draftAlertAction}>
+                <Text style={styles.draftAlertActionText}>Finish Picks</Text>
+                <Ionicons name="arrow-forward" size={13} color="#fdba74" />
+              </View>
+            </Pressable>
+          )}
 
           {/* Sibling of the card Pressable — nested Pressables were flaky. */}
           {showCreateParlay && (
@@ -271,6 +296,23 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     flexShrink: 1,
   },
+  draftAlert: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    minHeight: BUTTON_MIN_HEIGHT,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "rgba(249, 115, 22, 0.3)",
+    backgroundColor: "rgba(249, 115, 22, 0.1)",
+  },
+  draftAlertLabel: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minWidth: 0 },
+  draftAlertDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#f97316", flexShrink: 0 },
+  draftAlertText: { fontSize: 13, fontWeight: "600", color: "#fb923c", flexShrink: 1 },
+  draftAlertAction: { flexDirection: "row", alignItems: "center", gap: 4, flexShrink: 0 },
+  draftAlertActionText: { fontSize: 13, fontWeight: "700", color: "#fdba74" },
   createParlayBtn: {
     minHeight: BUTTON_MIN_HEIGHT,
     borderRadius: 10,

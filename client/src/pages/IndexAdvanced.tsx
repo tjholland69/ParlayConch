@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
   PerformanceLineChart,
+  PerformanceCurrentValues,
   seriesColor,
   type PerformanceSeries,
 } from "@/components/dashboard/PerformanceLineChart";
@@ -204,10 +205,13 @@ export default function IndexAdvanced() {
       </Card>
 
       <Card className="p-5 border-white/5">
-        <h2 className="text-xl font-bold flex items-center gap-2 mb-5">
-          <BarChart3 className="w-5 h-5 text-accent" />
-          Performance Over Time
-        </h2>
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 mb-5">
+          <h2 className="text-xl font-bold flex items-center gap-2">
+            <BarChart3 className="w-5 h-5 text-accent" />
+            Performance Over Time
+          </h2>
+          {data && <PerformanceCurrentValues points={data.points as any} series={series} />}
+        </div>
 
         {isLoading ? (
           <div className="flex items-center gap-2 py-8">

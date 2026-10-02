@@ -7,9 +7,9 @@ import {
   Alert,
   StyleSheet,
 } from "react-native";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { apiRequest } from "@/lib/api";
@@ -33,7 +33,7 @@ import {
   correlatedMarketWarning,
   type SelectedLeg,
 } from "@/lib/pickHelpers";
-import type { Game, GameWithBet } from "@shared/schema";
+import type { Game, GameWithBet, ParlayWithLegs } from "@shared/schema";
 
 /** Moneyline + Spread on the same game are highly correlated (the spread
  * pick's side usually implies the moneyline outcome too) — confirm before
@@ -85,6 +85,7 @@ export default function BuildPickScreen() {
   const submitDraftParlay = useSubmitDraftParlay(leagueId, weekId);
   const cancelParlay = useCancelParlay(leagueId, weekId);
   const [propGame, setPropGame] = useState<Game | null>(null);
+  const queryClient = useQueryClient();
 
   const minLegs = league?.minLegsPerParlay ?? 3;
   const maxLegs = league?.maxLegsPerParlay ?? 5;
@@ -148,7 +149,55 @@ export default function BuildPickScreen() {
     [myParlay?.legs],
   );
 
-  const activeLegs = isEditingSubmitted ? selectedLegs : draftLegs;
+  // Draft taps show on screen straight away and save in the background:
+  // `pendingPicks` holds, per game, the grid pick the user just chose (null
+  // = cleared) until the server has caught up, and `draftQueue` runs those
+  // saves one at a time, in tap order, so a second tap never has to wait
+  // for (or get dropped behind) the first.
+  const [pendingPicks, setPendingPicks] = useState<Map<number, { leg: SelectedLeg | null; token: number }>>(new Map());
+  const draftQueue = useRef<Promise<unknown>>(Promise.resolve());
+  const pendingToken = useRef(0);
+
+  /** Runs `work` after every save already queued, whether those succeed or fail. */
+  function runQueued<T>(work: () => Promise<T>): Promise<T> {
+    const run = draftQueue.current.then(work, work);
+    draftQueue.current = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Shows `leg` as this game's grid pick now, then saves it via `work`. */
+  function saveGridPick(gameId: number, leg: SelectedLeg | null, failTitle: string, work: () => Promise<void>) {
+    const token = ++pendingToken.current;
+    setPendingPicks((prev) => new Map(prev).set(gameId, { leg, token }));
+    void runQueued(work)
+      .catch((err) => Alert.alert(failTitle, err instanceof Error ? err.message : "Please try again."))
+      .finally(() =>
+        // Hand the game back to the server's copy — unless a newer tap on
+        // it is still waiting its turn.
+        setPendingPicks((prev) => {
+          if (prev.get(gameId)?.token !== token) return prev;
+          const next = new Map(prev);
+          next.delete(gameId);
+          return next;
+        }),
+      );
+  }
+
+  /** This game's saved grid pick (spread/ML/total), read fresh from the
+   * cache — a queued save runs after earlier ones have changed the draft. */
+  function savedGridLeg(gameId: number) {
+    const parlay = queryClient.getQueryData<ParlayWithLegs | null>(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"]);
+    return parlay?.legs?.find((l) => l.gameId === gameId && l.betType !== "player_prop");
+  }
+
+  const draftLegsShown: SelectedLeg[] = useMemo(() => {
+    if (pendingPicks.size === 0) return draftLegs;
+    const kept = draftLegs.filter((l) => l.betType === "player_prop" || !pendingPicks.has(l.gameId));
+    const chosen = [...pendingPicks.values()].flatMap((p) => (p.leg ? [p.leg] : []));
+    return [...kept, ...chosen];
+  }, [draftLegs, pendingPicks]);
+
+  const activeLegs = isEditingSubmitted ? selectedLegs : draftLegsShown;
   const legMutationPending = addDraftLeg.isPending || removeDraftLeg.isPending;
 
   // Only games still open to pick, plus any already-started/finished game
@@ -164,7 +213,7 @@ export default function BuildPickScreen() {
 
   const canSubmit = isEditingSubmitted
     ? selectedLegs.length >= minLegs && selectedLegs.length <= maxLegs && !lockStatus?.isLocked
-    : draftLegs.length >= minLegs && draftLegs.length <= maxLegs && !lockStatus?.isLocked;
+    : pendingPicks.size === 0 && draftLegs.length >= minLegs && draftLegs.length <= maxLegs && !lockStatus?.isLocked;
 
   function toggleLegSubmitted(game: Game, betType: string, pick: string) {
     const line = getLineForBet(game, betType, pick);
@@ -200,28 +249,32 @@ export default function BuildPickScreen() {
     applyChange();
   }
 
-  async function toggleLegDraft(game: Game, betType: string, pick: string) {
-    if (legMutationPending) return;
+  function toggleLegDraft(game: Game, betType: string, pick: string) {
     const line = getLineForBet(game, betType, pick);
-    const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === game.id);
-    const isDeselect = existingLeg?.pick === pick && existingLeg?.betType === betType;
+    // Props live outside the 2x3 grid and are never touched by a grid tap.
+    const shown = draftLegsShown.find((l) => l.gameId === game.id && l.betType !== "player_prop");
+    const isDeselect = shown?.pick === pick && shown?.betType === betType;
 
-    const performToggle = async () => {
-      try {
+    if (!shown && draftLegsShown.length >= maxLegs) {
+      Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
+      return;
+    }
+
+    const performToggle = () =>
+      saveGridPick(game.id, isDeselect ? null : { gameId: game.id, betType, pick, line }, "Couldn't update pick", async () => {
+        const existingLeg = savedGridLeg(game.id);
         if (existingLeg) {
-          // Same pick tapped again → remove it (deselect).
-          if (isDeselect) {
-            await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
-            return;
-          }
-          // Different pick on the same game → swap: remove the old leg, add the new one.
           await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
-          try {
-            await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
-          } catch (addErr) {
-            // The remove succeeded but the new pick failed to add — restore the
-            // original pick rather than silently leaving the draft one leg
-            // short of what the user had before tapping.
+        }
+        // Same pick tapped again → it was a deselect, nothing to add back.
+        if (isDeselect) return;
+        try {
+          await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
+        } catch (addErr) {
+          // A swap whose remove succeeded but whose new pick failed to add —
+          // restore the original pick rather than silently leaving the draft
+          // one leg short of what the user had before tapping.
+          if (existingLeg) {
             try {
               await addDraftLeg.mutateAsync({
                 gameId: game.id,
@@ -230,34 +283,22 @@ export default function BuildPickScreen() {
                 line: existingLeg.line ?? undefined,
               });
             } catch {
-              // Restore also failed — surface the original error below; the
+              // Restore also failed — the original error is surfaced; the
               // draft is left missing this leg, but the user sees why.
             }
-            throw addErr;
           }
-          return;
+          throw addErr;
         }
-
-        if (draftLegs.length >= maxLegs) {
-          Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
-          return;
-        }
-        await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
-      } catch (err) {
-        Alert.alert("Couldn't update pick", err instanceof Error ? err.message : "Please try again.");
-      }
-    };
+      });
 
     if (!isDeselect) {
       const conflictWith = correlatedMarketWarning(takenPicks, game.id, betType);
       if (conflictWith) {
-        confirmCorrelatedBet(conflictWith, betType, () => {
-          void performToggle();
-        });
+        confirmCorrelatedBet(conflictWith, betType, performToggle);
         return;
       }
     }
-    await performToggle();
+    performToggle();
   }
 
   function clearGameSubmitted(gameId: number) {
@@ -277,16 +318,14 @@ export default function BuildPickScreen() {
     setSelectedLegs((prev) => [...prev, leg]);
   }
 
-  async function clearGameDraft(gameId: number) {
+  function clearGameDraft(gameId: number) {
     // Same exclusion as clearGameSubmitted — the grid's Clear button must
     // never remove a separately-added player_prop leg on this game.
-    const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === gameId && l.betType !== "player_prop");
-    if (!existingLeg || legMutationPending) return;
-    try {
-      await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
-    } catch (err) {
-      Alert.alert("Couldn't remove leg", err instanceof Error ? err.message : "Please try again.");
-    }
+    if (!draftLegsShown.some((l) => l.gameId === gameId && l.betType !== "player_prop")) return;
+    saveGridPick(gameId, null, "Couldn't remove leg", async () => {
+      const existingLeg = savedGridLeg(gameId);
+      if (existingLeg) await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+    });
   }
 
   // A game can carry both a grid pick (spread/ML/total) and one or more
@@ -311,7 +350,7 @@ export default function BuildPickScreen() {
     );
     if (!existingLeg || legMutationPending) return;
     try {
-      await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
+      await runQueued(() => removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id }));
     } catch (err) {
       Alert.alert("Couldn't remove leg", err instanceof Error ? err.message : "Please try again.");
     }
@@ -330,22 +369,16 @@ export default function BuildPickScreen() {
     });
   }
 
-  const [pointsAdjustingGameId, setPointsAdjustingGameId] = useState<number | null>(null);
-
-  async function adjustPointsDraft(game: Game, pointsMoved: number) {
-    if (legMutationPending || pointsAdjustingGameId != null) return;
-    const existingLeg = (myParlay?.legs ?? []).find((l) => l.gameId === game.id);
-    if (!existingLeg) return;
-    const line = getLineForBet(game, existingLeg.betType, existingLeg.pick, pointsMoved);
-    setPointsAdjustingGameId(game.id);
-    try {
+  function adjustPointsDraft(game: Game, pointsMoved: number) {
+    const shown = draftLegsShown.find((l) => l.gameId === game.id && l.betType !== "player_prop");
+    if (!shown) return;
+    const line = getLineForBet(game, shown.betType, shown.pick, pointsMoved);
+    saveGridPick(game.id, { ...shown, line }, "Couldn't update points", async () => {
+      const existingLeg = savedGridLeg(game.id);
+      if (!existingLeg) return;
       await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
       await addDraftLeg.mutateAsync({ gameId: game.id, betType: existingLeg.betType, pick: existingLeg.pick, line });
-    } catch (err) {
-      Alert.alert("Couldn't update points", err instanceof Error ? err.message : "Please try again.");
-    } finally {
-      setPointsAdjustingGameId(null);
-    }
+    });
   }
 
   function submit() {
@@ -487,9 +520,8 @@ export default function BuildPickScreen() {
               }
               onClear={() => (isEditingSubmitted ? clearGameSubmitted(item.id) : clearGameDraft(item.id))}
               onAdjustPoints={(pointsMoved) =>
-                isEditingSubmitted ? adjustPointsSubmitted(item, pointsMoved) : void adjustPointsDraft(item, pointsMoved)
+                isEditingSubmitted ? adjustPointsSubmitted(item, pointsMoved) : adjustPointsDraft(item, pointsMoved)
               }
-              pointsPending={!isEditingSubmitted && pointsAdjustingGameId === item.id}
               onAddProp={!readOnly ? () => setPropGame(item) : undefined}
             />
           );
@@ -525,12 +557,14 @@ export default function BuildPickScreen() {
                 <Text style={styles.slipRowText} numberOfLines={1}>
                   {shortLegLabel(leg, gamesById.get(leg.gameId))}
                 </Text>
+                {/* Grid picks save in the background; only a prop's remove
+                    has to wait for the save ahead of it. */}
                 <Pressable
                   onPress={() => removeSlipLeg(leg)}
                   hitSlop={8}
-                  disabled={legMutationPending}
+                  disabled={leg.betType === "player_prop" && legMutationPending}
                 >
-                  {legMutationPending && !isEditingSubmitted ? (
+                  {leg.betType === "player_prop" && legMutationPending && !isEditingSubmitted ? (
                     <ActivityIndicator color="#64748b" size="small" />
                   ) : (
                     <Ionicons name="close-circle" size={20} color="#64748b" />
@@ -579,7 +613,7 @@ export default function BuildPickScreen() {
       <AddPlayerPropModal
         game={propGame}
         onClose={() => setPropGame(null)}
-        onAdd={isEditingSubmitted ? (leg) => addPropSubmitted(leg) : (leg) => addDraftLeg.mutateAsync(leg)}
+        onAdd={isEditingSubmitted ? (leg) => addPropSubmitted(leg) : (leg) => runQueued(() => addDraftLeg.mutateAsync(leg)).then(() => undefined)}
         isPending={!isEditingSubmitted && addDraftLeg.isPending}
       />
     </View>

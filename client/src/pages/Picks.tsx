@@ -34,6 +34,12 @@ function teamMatches(shortName: string, injuryTeam: string) {
   return a.includes(b) || b.includes(a);
 }
 
+/** One-off for this page's game tiles: "Commanders" is the only team name
+ * too long for the tile, so it gets a shorter stand-in here and nowhere else. */
+function previewTeamName(team: string) {
+  return team.replace(/Commanders$/, "Commies");
+}
+
 export default function Picks() {
   const { data: weeks, isLoading: isLoadingWeeks } = useWeeks();
   const { data: leagues, isLoading: isLoadingLeagues } = useLeagues();
@@ -184,6 +190,7 @@ export default function Picks() {
             ? Math.round((status!.submittedCount / Math.max(league.memberCount, 1)) * 100)
             : 0;
           const buildingVerb = getBuildingVerb(league.id);
+          const showDraftAlert = hasUnsubmittedDraft && !isBrewing && !isApproved;
 
           return (
             <Link key={league.id} href={`/leagues/${league.id}`}>
@@ -219,54 +226,65 @@ export default function Picks() {
                     }}
                   />
                 )}
-                <CardContent className="p-4 flex items-center justify-between relative z-10">
-                  <div>
-                    <p className="font-bold">{league.name}</p>
-                    {isBrewing ? (
-                      <>
-                        <p className="text-xs text-yellow-400 font-medium flex items-center gap-1.5 mt-0.5">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse shrink-0" />
-                          {buildingVerb}...
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {status!.submittedCount}/{league.memberCount} members in
-                        </p>
-                      </>
-                    ) : isApproved ? (
-                      <>
-                        <p className="text-xs text-green-400 font-medium flex items-center gap-1.5 mt-0.5">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-                          Parlay Approved
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {status!.submittedCount}/{league.memberCount} members in
-                        </p>
-                      </>
-                    ) : hasUnsubmittedDraft ? (
-                      <>
-                        <p className="text-xs text-orange-400 font-medium flex items-center gap-1.5 mt-0.5">
-                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
-                          Unsubmitted picks — tap to finish
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">{league.memberCount} members</p>
-                      </>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
+                <CardContent className="p-4 space-y-3 relative z-10">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-bold truncate">{league.name}</p>
+                      {isBrewing ? (
+                        <>
+                          <p className="text-xs text-yellow-400 font-medium flex items-center gap-1.5 mt-0.5">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse shrink-0" />
+                            {buildingVerb}...
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {status!.submittedCount}/{league.memberCount} members in
+                          </p>
+                        </>
+                      ) : isApproved ? (
+                        <>
+                          <p className="text-xs text-green-400 font-medium flex items-center gap-1.5 mt-0.5">
+                            <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
+                            Parlay Approved
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {status!.submittedCount}/{league.memberCount} members in
+                          </p>
+                        </>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">{league.memberCount} members</p>
+                      )}
+                    </div>
+                    {/* The draft alert below carries its own call to action. */}
+                    {!showDraftAlert && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className={cn(
+                          "shrink-0",
+                          isBrewing && "text-yellow-400 hover:text-yellow-300",
+                          isApproved && "text-green-400 hover:text-green-300"
+                        )}
+                      >
+                        {isBrewing ? "Join Parlay" : isApproved ? "View Parlay" : "Make Picks"}
+                        <ArrowRight className="w-3 h-3 ml-1" />
+                      </Button>
                     )}
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className={cn(
-                      "shrink-0",
-                      isBrewing && "text-yellow-400 hover:text-yellow-300",
-                      isApproved && "text-green-400 hover:text-green-300",
-                      hasUnsubmittedDraft && !isBrewing && !isApproved && "text-orange-400 hover:text-orange-300"
-                    )}
-                  >
-                    {isBrewing ? "Join Parlay" : isApproved ? "View Parlay" : hasUnsubmittedDraft ? "Finish Picks" : "Make Picks"}
-                    <ArrowRight className="w-3 h-3 ml-1" />
-                  </Button>
+                  {showDraftAlert && (
+                    <div
+                      className="flex items-center justify-between gap-3 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2"
+                      data-testid={`alert-unsubmitted-picks-${league.id}`}
+                    >
+                      <span className="flex items-center gap-1.5 min-w-0 text-xs font-medium text-orange-400">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
+                        <span className="truncate">Unsubmitted picks</span>
+                      </span>
+                      <span className="flex items-center shrink-0 whitespace-nowrap text-xs font-semibold text-orange-300">
+                        Finish Picks
+                        <ArrowRight className="w-3 h-3 ml-1" />
+                      </span>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </Link>
@@ -317,7 +335,7 @@ export default function Picks() {
                       </div>
                       <div className="flex items-center justify-between">
                         <div className="flex-1 min-w-0">
-                          <p className="font-bold truncate">{game.awayTeam}</p>
+                          <p className="font-bold truncate">{previewTeamName(game.awayTeam)}</p>
                           <p className="text-xs text-muted-foreground">{game.awayRecord ?? ""}</p>
                         </div>
                         <div className="px-2 text-center min-w-[64px]">
@@ -336,7 +354,7 @@ export default function Picks() {
                           )}
                         </div>
                         <div className="flex-1 min-w-0 text-right">
-                          <p className="font-bold truncate">{game.homeTeam}</p>
+                          <p className="font-bold truncate">{previewTeamName(game.homeTeam)}</p>
                           <p className="text-xs text-muted-foreground">{game.homeRecord ?? ""}</p>
                         </div>
                       </div>

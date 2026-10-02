@@ -6,9 +6,15 @@
  *
  * What gets created:
  *   Users:   dev_admin (Parlay Maestro), dev_user1 (Alice), dev_user2 (Bob), dev_user3 (Carol)
+ *            — all sign in with DEV_LOGIN_PASSWORD (scripts/lib/dev-week.ts)
  *   Weeks:   2024 Weeks 15-17 (historical, resolved) + Week 18 (active)
- *   Games:   4 NFL games per week (16 total), historical games have final scores
+ *   Games:   4 per historical week, with final scores; the active week gets
+ *            the full DEV_ACTIVE_WEEK_GAMES slate (scripts/lib/dev-week-schedule.ts)
  *   League:  "Dev League" (invite code: DEVTEST)
+ *
+ * The active week's kickoffs land on the coming weekend. Once they've all
+ * passed, `npm run db:refresh-week` (also run automatically by `npm run dev`)
+ * moves them forward again without wiping anything.
  *
  * Final standings after Weeks 15-17:
  *   dev_admin  3W  0L  0P  → 100.0%  (leaderboard #1)
@@ -26,6 +32,8 @@ import {
   parlays, parlayLegs, notifications,
 } from "../shared/db-schema";
 import { eq } from "drizzle-orm";
+import { DEV_LOGIN_PASSWORD, DEV_USER_IDS, assertLocalDatabase, ensureDevLogins } from "./lib/dev-week";
+import { DEV_ACTIVE_WEEK_GAMES, devWeekKickoff } from "./lib/dev-week-schedule";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -46,16 +54,6 @@ async function resolvedParlay(
   );
 }
 
-/** Days-from-now at a fixed UTC hour/minute — used for the active week's
- * games so they're always pickable regardless of when the seed is run
- * (a hardcoded past date would make every game "past" and disable picks). */
-function daysFromNow(days: number, hourUTC: number, minuteUTC: number): Date {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() + days);
-  d.setUTCHours(hourUTC, minuteUTC, 0, 0);
-  return d;
-}
-
 // ── Cleanup ───────────────────────────────────────────────────────────────────
 
 async function wipe() {
@@ -67,7 +65,7 @@ async function wipe() {
   await db.delete(leagues);
   await db.delete(games);
   await db.delete(weeks);
-  for (const id of ["dev_admin", "dev_user1", "dev_user2", "dev_user3"]) {
+  for (const id of DEV_USER_IDS) {
     await db.delete(users).where(eq(users.id, id));
   }
 }
@@ -75,16 +73,21 @@ async function wipe() {
 // ── Seed ─────────────────────────────────────────────────────────────────────
 
 async function seed() {
+  // This wipes every league, parlay and week before reseeding.
+  assertLocalDatabase("The dev seed");
   await wipe();
   console.log("Seeding...");
 
   // Users — isDemo: false so they appear in the leaderboard during local testing
   await db.insert(users).values([
-    { id: "dev_admin", firstName: "Dev Admin", email: "admin@dev.local", isDemo: false, settings: { displayName: "Dev Admin", region: "US"   } },
-    { id: "dev_user1", firstName: "Alice",     email: "alice@dev.local", isDemo: false, settings: { displayName: "Alice",     region: "US"   } },
-    { id: "dev_user2", firstName: "Bob",       email: "bob@dev.local",   isDemo: false, settings: { displayName: "Bob",       region: "EMEA" } },
-    { id: "dev_user3", firstName: "Carol",     email: "carol@dev.local", isDemo: false, settings: { displayName: "Carol",     region: "APAC" } },
+    { id: "dev_admin", firstName: "Dev Admin", email: "admin@dev.local", isDemo: false, settings: { displayName: "Dev Admin", region: { continent: "US", place: "Indiana" } } },
+    { id: "dev_user1", firstName: "Alice",     email: "alice@dev.local", isDemo: false, settings: { displayName: "Alice",     region: { continent: "US", place: "Texas" } } },
+    { id: "dev_user2", firstName: "Bob",       email: "bob@dev.local",   isDemo: false, settings: { displayName: "Bob",       region: { continent: "Europe", place: "Ireland" } } },
+    { id: "dev_user3", firstName: "Carol",     email: "carol@dev.local", isDemo: false, settings: { displayName: "Carol",     region: { continent: "Oceania", place: "Australia" } } },
   ]);
+  // The password is a known dev default, so it's only ever set on a
+  // database on this machine.
+  await ensureDevLogins();
   console.log("  ✓ users");
 
   // ── Week 15 (historical — all results: admin=W alice=W bob=W carol=L) ────────
@@ -217,43 +220,22 @@ async function seed() {
     season: 2024, weekNumber: 18, label: "Week 18", isActive: true,
   }).returning();
 
-  // Real 2024 Week 18 matchups (nflverse) — not yet finished, no scores.
-  // Kickoffs are computed relative to "now" (not a hardcoded past date) so
-  // the active week's games stay pickable no matter when this seed runs —
-  // isGamePast() in the mobile app's pickHelpers.ts disables a game's pick
-  // buttons once its gameTime has passed.
-  const [w18g1, w18g2, w18g3, w18g4] = await db.insert(games).values([
-    {
+  // Not yet finished, no scores. Kickoffs land on the coming weekend (not a
+  // hardcoded past date) so the active week's games are pickable when this
+  // runs; `npm run db:refresh-week` moves them forward again once they've
+  // passed. The first four are the ones the seeded parlays below pick from.
+  const now = new Date();
+  const [w18g1, w18g2, w18g3, w18g4] = await db.insert(games).values(
+    DEV_ACTIVE_WEEK_GAMES.map(g => ({
       weekId: w18.id,
-      homeTeam: "Eagles",  awayTeam: "Giants",
-      spread: "-3.0",      spreadOdds: "-110", overUnder: "36.5", overOdds: "-110", underOdds: "-110",
-      moneylineHome: "-155", moneylineAway: "+130",
-      gameTime: daysFromNow(3, 18, 0),
-    },
-    {
-      weekId: w18.id,
-      homeTeam: "Buccaneers",  awayTeam: "Saints",
-      spread: "-14.5",      spreadOdds: "-110", overUnder: "44.5", overOdds: "-110", underOdds: "-110",
-      moneylineHome: "-1050", moneylineAway: "+675",
-      gameTime: daysFromNow(3, 18, 0),
-    },
-    {
-      weekId: w18.id,
-      homeTeam: "Colts", awayTeam: "Jaguars",
-      spread: "-3.5",      spreadOdds: "-110", overUnder: "45.5", overOdds: "-110", underOdds: "-110",
-      moneylineHome: "-180", moneylineAway: "+150",
-      gameTime: daysFromNow(3, 18, 0),
-    },
-    {
-      weekId: w18.id,
-      homeTeam: "Lions",   awayTeam: "Vikings",
-      spread: "-3.0",      spreadOdds: "-110", overUnder: "56.5", overOdds: "-110", underOdds: "-110",
-      moneylineHome: "-148", moneylineAway: "+124",
-      gameTime: daysFromNow(3, 23, 20),
-    },
-  ]).returning();
+      homeTeam: g.homeTeam, awayTeam: g.awayTeam,
+      spread: g.spread, spreadOdds: "-110", overUnder: g.overUnder, overOdds: "-110", underOdds: "-110",
+      moneylineHome: g.moneylineHome, moneylineAway: g.moneylineAway,
+      gameTime: devWeekKickoff(g, now),
+    })),
+  ).returning();
 
-  console.log("  ✓ weeks + games  (4 weeks × 4 games)");
+  console.log(`  ✓ weeks + games  (3 weeks × 4 games + ${DEV_ACTIVE_WEEK_GAMES.length} in the active week)`);
 
   // ── League + members ─────────────────────────────────────────────────────────
   const [league] = await db.insert(leagues).values({
@@ -399,6 +381,7 @@ Done. Quick reference:
   League:      Dev League  (id=${league.id}, invite=DEVTEST)
   Active week: 2024 Week 18 (id=${w18.id})
   Logins:      admin@dev.local | alice@dev.local | bob@dev.local | carol@dev.local
+  Password:    ${DEV_LOGIN_PASSWORD}
 
   Standings after Weeks 15-17:
     dev_admin  3W  0L  0P  → 100.0%

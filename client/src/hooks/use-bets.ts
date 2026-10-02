@@ -97,6 +97,21 @@ export function usePlayerSearch(query: string) {
   });
 }
 
+/** usePlayerSearch limited to the two teams playing `gameId` — the
+ * player-prop picker, where only someone in that game can be picked. */
+export function useGamePlayerSearch(gameId: number, query: string) {
+  return useQuery<Player[]>({
+    queryKey: ["/api/players", query, { gameId }],
+    queryFn: async () => {
+      const res = await fetch(`/api/players?q=${encodeURIComponent(query)}&gameId=${gameId}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch players");
+      return res.json();
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+}
+
 // Full team reference list — only 32 rows, so fetched once and filtered
 // client-side (see TeamCombobox) rather than re-querying per keystroke.
 export function useTeams() {
@@ -239,6 +254,11 @@ export type LeagueRecordEntry = {
   /** "participation" fetches via useMissedWeeks instead — see the matching
    * doc comment in server/services/leagueRecords.ts. */
   lookthroughKind?: "participation";
+  /** The signed-in member's own figure for this category; null when they
+   * have nothing in it yet. */
+  viewerValue?: string | null;
+  /** True when the signed-in member holds this record. */
+  viewerIsHolder?: boolean;
 };
 
 export type MissedWeek = { weekId: number; season: number; weekNumber: number; label: string };
@@ -470,15 +490,62 @@ function invalidateDraftParlayQueries(queryClient: ReturnType<typeof useQueryCli
   queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'taken-picks'] });
 }
 
+// Shared by the add/remove draft-leg mutations so each can tell whether
+// another tap is still in flight.
+const DRAFT_LEG_MUTATION_KEY = ["draft-parlay-leg"];
+
+type DraftParlayCache = ParlayWithLegs | null | undefined;
+
+/** Refetches the draft's queries once the last in-flight tap has settled.
+ * Refetching after each one would briefly drop the optimistic legs of taps
+ * the server hasn't answered yet. */
+function settleDraftParlayQueries(queryClient: ReturnType<typeof useQueryClient>, leagueId: number, weekId: number) {
+  // The settling mutation still counts as in flight here.
+  if (queryClient.isMutating({ mutationKey: DRAFT_LEG_MUTATION_KEY }) > 1) return;
+  invalidateDraftParlayQueries(queryClient, leagueId, weekId);
+}
+
+function removeLegFromDraftCache(parlay: DraftParlayCache, legId: number): DraftParlayCache {
+  if (!parlay) return parlay;
+  const legs = parlay.legs.filter(l => l.id !== legId);
+  // Mirrors the server: a draft with no legs left is deleted.
+  return legs.length === 0 ? null : { ...parlay, legs };
+}
+
 // Adds ONE leg to (or starts) the caller's in-progress draft parlay — the
 // per-tap counterpart to useCreateParlay's all-at-once submit. Powers the
 // picks grid so each tile tap is its own server round-trip (needed for live
 // per-game caps and cross-user pick exclusivity — see addLegToDraftParlay).
+// The tile lights up straight away from an optimistic cache write (a leg
+// with a negative id until the server answers) and is rolled back if the
+// server rejects the pick.
 export function useAddDraftLeg() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   return useMutation({
+    mutationKey: DRAFT_LEG_MUTATION_KEY,
+    onMutate: async ({ leagueId, weekId, leg }) => {
+      const key = [api.parlays.myForWeek.path, leagueId, weekId];
+      await queryClient.cancelQueries({ queryKey: key });
+      const optimisticLegId = -Date.now();
+      queryClient.setQueryData<DraftParlayCache>(key, (current) => {
+        const optimisticLeg = {
+          id: optimisticLegId,
+          parlayId: current?.id ?? -1,
+          gameId: leg.gameId,
+          betType: leg.betType,
+          pick: leg.pick,
+          line: leg.line ?? null,
+          playerName: leg.playerName ?? null,
+          propType: leg.propType ?? null,
+        } as ParlayWithLegs["legs"][number];
+        return current
+          ? { ...current, legs: [...current.legs, optimisticLeg] }
+          : ({ id: -1, leagueId, weekId, status: "draft", legs: [optimisticLeg] } as ParlayWithLegs);
+      });
+      return { optimisticLegId };
+    },
     mutationFn: async (data: { leagueId: number; weekId: number; leg: DraftParlayLegInput }) => {
       const res = await fetch(`/api/leagues/${data.leagueId}/weeks/${data.weekId}/draft-parlay/legs`, {
         method: "POST",
@@ -492,11 +559,23 @@ export function useAddDraftLeg() {
       }
       return res.json() as Promise<ParlayWithLegs>;
     },
-    onSuccess: (_, variables) => {
-      invalidateDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);
+    onSuccess: (parlay, variables) => {
+      // The response is the full draft, so the real leg replaces the
+      // optimistic one without waiting on a refetch.
+      if (queryClient.isMutating({ mutationKey: DRAFT_LEG_MUTATION_KEY }) > 1) return;
+      queryClient.setQueryData<DraftParlayCache>([api.parlays.myForWeek.path, variables.leagueId, variables.weekId], parlay);
     },
-    onError: (error) => {
+    onError: (error, variables, context) => {
+      if (context) {
+        queryClient.setQueryData<DraftParlayCache>(
+          [api.parlays.myForWeek.path, variables.leagueId, variables.weekId],
+          (current) => removeLegFromDraftCache(current, context.optimisticLegId),
+        );
+      }
       toast({ title: "Couldn't add pick", description: error.message, variant: "destructive" });
+    },
+    onSettled: (_data, _error, variables) => {
+      settleDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);
     },
   });
 }
@@ -506,6 +585,14 @@ export function useRemoveDraftLeg() {
   const { toast } = useToast();
 
   return useMutation({
+    mutationKey: DRAFT_LEG_MUTATION_KEY,
+    // Unselects the tile straight away; if the server refuses, the refetch
+    // in onSettled puts the leg back.
+    onMutate: async ({ legId, leagueId, weekId }) => {
+      const key = [api.parlays.myForWeek.path, leagueId, weekId];
+      await queryClient.cancelQueries({ queryKey: key });
+      queryClient.setQueryData<DraftParlayCache>(key, (current) => removeLegFromDraftCache(current, legId));
+    },
     mutationFn: async (data: { parlayId: number; legId: number; leagueId: number; weekId: number }) => {
       const res = await fetch(`/api/parlays/${data.parlayId}/legs/${data.legId}`, {
         method: "DELETE",
@@ -517,11 +604,11 @@ export function useRemoveDraftLeg() {
       }
       return res.json();
     },
-    onSuccess: (_, variables) => {
-      invalidateDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);
-    },
     onError: (error) => {
       toast({ title: "Couldn't remove pick", description: error.message, variant: "destructive" });
+    },
+    onSettled: (_data, _error, variables) => {
+      settleDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);
     },
   });
 }

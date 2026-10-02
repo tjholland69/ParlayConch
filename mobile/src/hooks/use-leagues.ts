@@ -31,6 +31,11 @@ export interface LeagueRecordEntry {
   /** "participation" fetches via useMissedWeeks instead — see the matching
    * doc comment in server/services/leagueRecords.ts. */
   lookthroughKind?: "participation";
+  /** The signed-in member's own figure for this category; null when they
+   * have nothing in it yet. */
+  viewerValue?: string | null;
+  /** True when the signed-in member holds this record. */
+  viewerIsHolder?: boolean;
 }
 
 export type MissedWeek = { weekId: number; season: number; weekNumber: number; label: string };

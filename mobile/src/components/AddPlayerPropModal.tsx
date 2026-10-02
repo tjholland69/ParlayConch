@@ -2,10 +2,16 @@ import { useEffect, useState } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, Modal, Alert, KeyboardAvoidingView, Platform, StyleSheet } from "react-native";
 import type { Game } from "@shared/schema";
 import { PLAYER_PROP_TYPES } from "@shared/schema";
+import { YES_NO_PROP_TYPES } from "@shared/multiBetValidation";
+import { primaryPropType, propTypesForPosition } from "@shared/propPosition";
 import { PlayerTypeahead } from "@/components/PlayerTypeahead";
 import { useAccentColor } from "@/hooks/use-accent-color";
 
 const PICK_OPTIONS = ["over", "under", "yes", "no"] as const;
+type PickOption = (typeof PICK_OPTIONS)[number];
+/** Scoring props are a yes/no call; every other prop is an over/under. */
+const pickOptionsFor = (propType: string | null): readonly PickOption[] =>
+  !propType ? PICK_OPTIONS : YES_NO_PROP_TYPES.has(propType) ? ["yes", "no"] : ["over", "under"];
 const PICK_LABELS: Record<(typeof PICK_OPTIONS)[number], string> = {
   over: "Over",
   under: "Under",
@@ -31,7 +37,12 @@ export type AddPlayerPropLeg = {
  * mode server mutation, or a submitted-edit-mode local append) rather than
  * build.tsx's toggle/swap flow, since an arbitrary number of distinct props
  * can be added (each is its own leg), unlike the single spread/total/
- * moneyline pick a game's 2x3 grid manages. */
+ * moneyline pick a game's 2x3 grid manages.
+ *
+ * The player search only covers the two teams in this game, and picking a
+ * player narrows the prop types to ones their position can have — a
+ * receiver is never offered sacks or interceptions thrown. A name typed in
+ * by hand has no known position, so it's offered every prop type. */
 export function AddPlayerPropModal({
   game,
   onClose,
@@ -47,14 +58,16 @@ export function AddPlayerPropModal({
 }) {
   const accent = useAccentColor();
   const [playerName, setPlayerName] = useState("");
+  const [playerPosition, setPlayerPosition] = useState<string | null>(null);
   const [propType, setPropType] = useState<string | null>(null);
-  const [pick, setPick] = useState<(typeof PICK_OPTIONS)[number] | null>(null);
+  const [pick, setPick] = useState<PickOption | null>(null);
   const [line, setLine] = useState("");
 
   // Reset the form each time a different game's sheet opens.
   useEffect(() => {
     if (game) {
       setPlayerName("");
+      setPlayerPosition(null);
       setPropType(null);
       setPick(null);
       setLine("");
@@ -64,6 +77,23 @@ export function AddPlayerPropModal({
   if (!game) return null;
 
   const canAdd = playerName.trim().length > 0 && !!propType && !!pick;
+  const propOptions = playerPosition ? propTypesForPosition(playerPosition).primary : PLAYER_PROP_TYPES;
+  const pickOptions = pickOptionsFor(propType);
+
+  function changePropType(next: string) {
+    setPropType(next);
+    // Drop a pick the new prop type can't have (e.g. "over" on Anytime TD).
+    if (pick && !pickOptionsFor(next).includes(pick)) setPick(null);
+  }
+
+  function changePlayer(name: string, player: { position?: string | null } | null) {
+    setPlayerName(name);
+    const position = player?.position ?? null;
+    setPlayerPosition(position);
+    // Start on the stat this position is usually bet on; this also moves
+    // off a prop type the new player's position can't have.
+    if (position) changePropType(primaryPropType(position));
+  }
 
   async function handleAdd() {
     if (!canAdd || isPending) return;
@@ -93,14 +123,14 @@ export function AddPlayerPropModal({
           </Text>
 
           <Text style={styles.label}>Player</Text>
-          <PlayerTypeahead value={playerName} onChange={setPlayerName} />
+          <PlayerTypeahead gameId={game.id} value={playerName} onChange={changePlayer} />
 
           <Text style={styles.label}>Prop Type</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-            {PLAYER_PROP_TYPES.map((t) => (
+            {propOptions.map((t) => (
               <Pressable
                 key={t.value}
-                onPress={() => setPropType(t.value)}
+                onPress={() => changePropType(t.value)}
                 style={[styles.chip, propType === t.value && { backgroundColor: accent, borderColor: accent }]}
               >
                 <Text style={[styles.chipText, propType === t.value && styles.chipTextSelected]}>{t.label}</Text>
@@ -110,7 +140,7 @@ export function AddPlayerPropModal({
 
           <Text style={styles.label}>Pick</Text>
           <View style={styles.pickRow}>
-            {PICK_OPTIONS.map((p) => (
+            {pickOptions.map((p) => (
               <Pressable
                 key={p}
                 onPress={() => setPick(p)}

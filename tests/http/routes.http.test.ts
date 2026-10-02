@@ -118,12 +118,12 @@ describe("HTTP route validation and auth", () => {
 
       const res = await request(testApp)
         .patch("/api/users/me/settings")
-        .send({ theme: "dark", region: "US" });
+        .send({ theme: "dark", region: { continent: "US", place: "Indiana" } });
 
       expect(res.status).toBe(200);
       expect(mockStorage.updateUserSettings).toHaveBeenCalledWith(HTTP_TEST_USER, {
         theme: "dark",
-        region: "US",
+        region: { continent: "US", place: "Indiana" },
       });
     });
   });

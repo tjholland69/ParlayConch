@@ -34,6 +34,7 @@ import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { getBuildingVerb } from "@/lib/parlaySlang";
 import { getLineForBet, spreadLabels } from "@/lib/gameOdds";
+import { legChipLabel } from "@/lib/legLabel";
 import { SlateGroupedGames } from "@/components/SlateGroupedGames";
 import { PickTile } from "@/components/PickTile";
 import { MultiSelect } from "@/components/MultiSelect";
@@ -398,7 +399,8 @@ export default function LeagueDetail() {
     if (!activeWeekId || !leagueId) return;
     const existing = myLegs.find(l => l.gameId === game.id && l.betType === betType && l.pick === pick);
     if (existing) {
-      if (!myParlay) return;
+      // A negative id is a pick still being saved (see useAddDraftLeg).
+      if (!myParlay || existing.id < 0) return;
       removeDraftLeg.mutate({ parlayId: myParlay.id, legId: existing.id, leagueId, weekId: activeWeekId });
       return;
     }
@@ -833,7 +835,7 @@ export default function LeagueDetail() {
                     <CardTitle className="text-lg">Your Parlay ({myLegs.length}/{maxLegs} legs)</CardTitle>
                     <Button
                       onClick={submitParlay}
-                      disabled={!canSubmit || submitDraftParlay.isPending}
+                      disabled={!canSubmit || submitDraftParlay.isPending || myLegs.some(l => l.id < 0)}
                       data-testid="button-submit-parlay"
                     >
                       {submitDraftParlay.isPending ? `${getBuildingVerb(leagueId)}...` : "Submit Parlay"}
@@ -850,18 +852,9 @@ export default function LeagueDetail() {
                     <div className="flex flex-wrap gap-2">
                       {myLegs.map((leg) => {
                         const game = games?.find(g => g.id === leg.gameId) ?? laterWeekRowGames.find(g => g.id === leg.gameId);
-                        const pickLabel =
-                          leg.betType === 'player_prop' ? `${leg.playerName ?? 'Player'} ${leg.pick}` :
-                          leg.betType === 'over' ? `O ${game?.overUnder}` :
-                          leg.betType === 'under' ? `U ${game?.overUnder}` :
-                          leg.pick === 'home' ? game?.homeTeam : game?.awayTeam;
-                        const betLabel =
-                          leg.betType === 'spread' ? 'SPR' :
-                          leg.betType === 'moneyline' ? 'ML' :
-                          leg.betType === 'player_prop' ? 'PROP' : '';
                         return (
-                          <Badge key={leg.id} variant="outline" className="text-sm">
-                            {pickLabel} {betLabel && `(${betLabel})`}
+                          <Badge key={leg.id} variant="outline" className="text-sm" data-testid={`badge-my-leg-${leg.id}`}>
+                            {legChipLabel(leg, game)}
                           </Badge>
                         );
                       })}
@@ -1403,47 +1396,67 @@ export default function LeagueDetail() {
                       <div
                         key={record.key}
                         className={cn(
-                          "bg-white/5 border border-white/10 rounded-2xl p-4",
+                          "flex flex-col bg-white/5 border border-white/10 rounded-2xl overflow-hidden",
                           hasLookthrough && "cursor-pointer hover:border-white/20 hover:bg-white/[0.07] transition-colors"
                         )}
                         onClick={hasLookthrough ? () => setLookthroughRecord(record) : undefined}
                         role={hasLookthrough ? "button" : undefined}
+                        data-testid={`card-league-record-${record.key}`}
                       >
-                        {record.title ? (
-                          <>
-                            <div className="flex items-center gap-2 font-display font-bold text-sm mb-0.5">
-                              <Icon className="w-3.5 h-3.5 text-primary" />
-                              {record.title}
-                            </div>
-                            {record.label && (
-                              <div className="text-muted-foreground text-xs uppercase tracking-wider mb-2">
-                                {record.label}
+                        <div className="flex-1 p-4">
+                          {record.title ? (
+                            <>
+                              <div className="flex items-center gap-2 font-display font-bold text-sm mb-0.5">
+                                <Icon className="w-3.5 h-3.5 text-primary" />
+                                {record.title}
                               </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
-                            <Icon className="w-3.5 h-3.5" />
-                            {record.label}
-                          </div>
-                        )}
-                        <p className="font-mono font-bold text-xl truncate">
-                          {record.value}
-                          {record.detail && (
-                            <span className="text-xs font-normal text-muted-foreground ml-1.5">({record.detail})</span>
+                              {record.label && (
+                                <div className="text-muted-foreground text-xs uppercase tracking-wider mb-2">
+                                  {record.label}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <div className="flex items-center gap-2 text-muted-foreground text-xs uppercase tracking-wider mb-2">
+                              <Icon className="w-3.5 h-3.5" />
+                              {record.label}
+                            </div>
                           )}
-                        </p>
-                        {winLossLabel && (
-                          <p className="text-xs text-muted-foreground mt-1 truncate">Record: {winLossLabel}</p>
-                        )}
-                        {holderName && (
-                          <p className="text-xs text-muted-foreground mt-1 truncate">{holderName}</p>
-                        )}
-                        {weekLabel && (
-                          <p className="text-xs text-muted-foreground truncate">{weekLabel}</p>
-                        )}
-                        {dateRangeLabel && (
-                          <p className="text-xs text-muted-foreground truncate">{dateRangeLabel}</p>
+                          <p className="font-mono font-bold text-xl truncate">
+                            {record.value}
+                            {record.detail && (
+                              <span className="text-xs font-normal text-muted-foreground ml-1.5">({record.detail})</span>
+                            )}
+                          </p>
+                          {winLossLabel && (
+                            <p className="text-xs text-muted-foreground mt-1 truncate">Record: {winLossLabel}</p>
+                          )}
+                          {holderName && (
+                            <p className="text-xs text-muted-foreground mt-1 truncate">{holderName}</p>
+                          )}
+                          {weekLabel && (
+                            <p className="text-xs text-muted-foreground truncate">{weekLabel}</p>
+                          )}
+                          {dateRangeLabel && (
+                            <p className="text-xs text-muted-foreground truncate">{dateRangeLabel}</p>
+                          )}
+                        </div>
+                        {/* The viewer's own figure for this category — a footnote
+                            to the record, so it stays small. */}
+                        {record.viewerValue !== undefined && (
+                          <div
+                            className="flex items-center justify-between gap-2 px-4 py-1.5 border-t border-sky-400/20 bg-sky-400/10 text-[11px] text-sky-300"
+                            data-testid={`text-record-viewer-${record.key}`}
+                          >
+                            {record.viewerIsHolder ? (
+                              <span className="font-semibold truncate">That's You Silly!</span>
+                            ) : (
+                              <>
+                                <span className="uppercase tracking-wider text-sky-300/70 shrink-0">You</span>
+                                <span className="font-mono font-semibold truncate">{record.viewerValue ?? "—"}</span>
+                              </>
+                            )}
+                          </div>
                         )}
                       </div>
                     );

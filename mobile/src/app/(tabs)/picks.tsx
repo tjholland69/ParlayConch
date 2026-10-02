@@ -22,6 +22,9 @@ import { CHIP_MIN_HEIGHT, shadows } from "@/lib/theme";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
+// Approved and on its way (or already at the book) — these tiles glow.
+const ACTIVE_STATUSES = new Set(["approved", "sent", "placed"]);
+
 // A parlay counts as "Open" as long as it hasn't reached one of these final
 // outcomes — pending/approved/rejected/sent/placed still count as open.
 const PAST_STATUSES = new Set(["win", "loss", "push", "void"]);
@@ -49,8 +52,9 @@ function ParlayTile({
   onPress?: () => void;
   actionIcon?: IconName;
   /** Won parlays pulse with a soft green glow — the mobile take on the web
-   * app's animated "perfect week" glow (see client/src/lib/parlayVisuals.ts). */
-  glow?: boolean;
+   * app's animated "perfect week" glow (see client/src/lib/parlayVisuals.ts).
+   * An active parlay (approved, sent or placed) holds the same glow steady. */
+  glow?: "pulse" | "steady";
   /** Explicit CTA button below the tile's meta text — same action as tapping
    * the card, kept for tiles where the action shouldn't be implicit-only. */
   ctaLabel?: string;
@@ -58,13 +62,13 @@ function ParlayTile({
   const pulse = useSharedValue(0);
 
   useEffect(() => {
-    if (!glow) return;
+    if (glow !== "pulse") return;
     pulse.value = withRepeat(withTiming(1, { duration: 1400, easing: Easing.inOut(Easing.ease) }), -1, true);
   }, [glow, pulse]);
 
   const glowStyle = useAnimatedStyle(() => ({
-    shadowOpacity: glow ? 0.35 + pulse.value * 0.4 : 0.25,
-    shadowRadius: glow ? 8 + pulse.value * 6 : 8,
+    shadowOpacity: glow === "pulse" ? 0.35 + pulse.value * 0.4 : glow === "steady" ? 0.55 : 0.25,
+    shadowRadius: glow === "pulse" ? 8 + pulse.value * 6 : glow === "steady" ? 12 : 8,
   }));
 
   return (
@@ -162,11 +166,12 @@ const STATUS_META: Record<string, { icon: IconName; iconColor: string; label: st
   loss: { icon: "close-circle", iconColor: "#ef4444", label: "Lost", bg: "#1c0a0a", border: "#3d1a1a" },
   void: { icon: "ban-outline", iconColor: "#475569", label: "Void", bg: "#141926", border: "#2a3447" },
   push: { icon: "swap-horizontal-outline", iconColor: "#94a3b8", label: "Push", bg: "#141926", border: "#2a3447" },
-  approved: { icon: "checkmark-circle", iconColor: "#2563eb", label: "Approved", bg: "#0a1526", border: "#1a2e4d" },
+  approved: { icon: "checkmark-circle", iconColor: "#22c55e", label: "Approved", bg: "#0a1c14", border: "#1f6b3c" },
   rejected: { icon: "close-circle-outline", iconColor: "#f59e0b", label: "Rejected", bg: "#1c1a0a", border: "#3d2e00" },
-  sent: { icon: "paper-plane-outline", iconColor: "#0ea5e9", label: "Sent", bg: "#0a1620", border: "#1a3040" },
-  placed: { icon: "paper-plane-outline", iconColor: "#0ea5e9", label: "Placed", bg: "#0a1620", border: "#1a3040" },
-  pending: { icon: "time-outline", iconColor: "#94a3b8", label: "Pending review", bg: "#141926", border: "#2a3447" },
+  sent: { icon: "paper-plane-outline", iconColor: "#22c55e", label: "Sent", bg: "#0a1c14", border: "#1f6b3c" },
+  placed: { icon: "paper-plane-outline", iconColor: "#22c55e", label: "Placed", bg: "#0a1c14", border: "#1f6b3c" },
+  // Light blue while it waits on approval, rather than reading as inactive.
+  pending: { icon: "time-outline", iconColor: "#38bdf8", label: "Pending review", bg: "#10283a", border: "#2b7ba3" },
 };
 
 function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueName: string }) {
@@ -188,7 +193,7 @@ function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueNam
       }
       bg={meta.bg}
       border={meta.border}
-      glow={parlay.status === "win"}
+      glow={parlay.status === "win" ? "pulse" : ACTIVE_STATUSES.has(parlay.status ?? "") ? "steady" : undefined}
       actionIcon={isDraft ? "create-outline" : undefined}
       onPress={() =>
         isDraft

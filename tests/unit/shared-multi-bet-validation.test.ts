@@ -103,6 +103,7 @@ describe("client/lib/propPosition", () => {
     expect(primaryPropType("te")).toBe("rec_yards");
     expect(primaryPropType("K")).toBe("kicking_pts");
     expect(primaryPropType("LB")).toBe("tackles");
+    expect(primaryPropType("SAF")).toBe("tackles");
   });
 
   test("every prop type stays reachable, position-relevant ones first", () => {
@@ -116,5 +117,16 @@ describe("client/lib/propPosition", () => {
     const { primary, other } = propTypesForPosition(null);
     expect(primary).toHaveLength(19);
     expect(other).toHaveLength(0);
+  });
+
+  test("offensive players are never offered the defensive props", () => {
+    const defensive = ["sacks", "tackles"];
+    for (const position of ["QB", "RB", "WR", "TE", "K", "OT", "C"]) {
+      const offered = propTypesForPosition(position).primary.map((p) => p.value);
+      expect(offered.filter((v) => defensive.includes(v))).toEqual([]);
+    }
+    // Interceptions thrown is a passing stat: quarterbacks only.
+    expect(propTypesForPosition("QB").primary.map((p) => p.value)).toContain("interceptions");
+    expect(propTypesForPosition("WR").primary.map((p) => p.value)).not.toContain("interceptions");
   });
 });

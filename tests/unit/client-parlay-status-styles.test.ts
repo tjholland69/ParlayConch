@@ -4,6 +4,7 @@ import {
   statusColor,
   getStatusVariant,
 } from "../../client/src/lib/parlayStatusStyles";
+import { getOpenParlayVisualStyle } from "../../client/src/lib/parlayVisuals";
 
 describe("client/lib/parlayStatusStyles", () => {
   test("resultColor maps win/loss/push and falls back", () => {
@@ -28,5 +29,28 @@ describe("client/lib/parlayStatusStyles", () => {
     expect(getStatusVariant("approved")).toBe("outline");
     expect(getStatusVariant("rejected")).toBe("destructive");
     expect(getStatusVariant(null)).toBe("secondary");
+  });
+});
+
+describe("client/lib/parlayVisuals", () => {
+  test("a pending parlay is tinted light blue with no glow", () => {
+    const style = getOpenParlayVisualStyle("pending");
+    expect(style?.borderColor).toContain("56, 189, 248");
+    expect(style?.tint).toContain("56, 189, 248");
+    expect(style?.boxShadow).toBeUndefined();
+  });
+
+  test("an active parlay glows green", () => {
+    for (const status of ["approved", "sent", "placed"]) {
+      const style = getOpenParlayVisualStyle(status);
+      expect(style?.boxShadow).toContain("34, 197, 94");
+      expect(style?.tint).toBeUndefined();
+    }
+  });
+
+  test("settled, draft and unknown statuses keep the win-% styling", () => {
+    for (const status of ["win", "loss", "push", "void", "draft", "rejected", null, undefined]) {
+      expect(getOpenParlayVisualStyle(status)).toBeNull();
+    }
   });
 });

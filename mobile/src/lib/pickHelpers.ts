@@ -1,4 +1,5 @@
 import type { Game, TakenPick } from "@shared/schema";
+import { legChipLabel } from "@shared/formatPick";
 import { adjustedLine, adjustedOdds, formatAmericanOdds, canBuyPoints, impliedPointsMoved, MAX_POINTS_MOVE, POINTS_STEP } from "@shared/buyPoints";
 
 export { canBuyPoints, MAX_POINTS_MOVE, POINTS_STEP };
@@ -65,35 +66,17 @@ export function awaySpreadDisplay(spread: string | null | undefined): string | n
   return `+${spread.replace(/^[+-]/, "")}`;
 }
 
+/** A selected pick as it reads on the bet slip and a game's selection strip
+ * — "Colts (Spread -3.5)", "Over 47.5 (Total)". Same wording as the web
+ * app's "Your Parlay" chips. The leg's own stored line wins over the game's
+ * current market line: they can differ (points bought, or the market
+ * drifted since the pick), and the stored value is what was actually taken. */
 export function shortLegLabel(leg: SelectedLeg, game: Game | undefined): string {
-  if (leg.betType === "player_prop") {
-    const line = leg.line ? ` ${leg.line}` : "";
-    return `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"} ${leg.pick}${line}`.trim();
-  }
-  if (!game) return "Pick";
-  // Prefer the leg's own stored line over the game's current market line —
-  // they can differ (points bought, or the market line simply drifted since
-  // the pick was made), and the stored value is what was actually taken.
-  const storedLine = leg.line != null ? parseFloat(leg.line) : NaN;
-  const hasStoredLine = !Number.isNaN(storedLine);
-  if (leg.betType === "spread") {
-    const line = hasStoredLine
-      ? storedLine > 0 ? `+${storedLine}` : `${storedLine}`
-      : leg.pick === "home" ? game.spread : awaySpreadDisplay(game.spread);
-    const team = leg.pick === "home" ? game.homeTeam : game.awayTeam;
-    return `${team} ${line ?? ""}`.trim();
-  }
-  if (leg.betType === "moneyline") {
-    const team = leg.pick === "home" ? game.homeTeam : game.awayTeam;
-    const odds = leg.pick === "home" ? game.moneylineHome : game.moneylineAway;
-    return odds ? `${team} ML (${odds})` : `${team} ML`;
-  }
-  if (leg.betType === "over" || leg.betType === "under") {
-    const prefix = leg.betType === "over" ? "O" : "U";
-    const total = hasStoredLine ? storedLine : game.overUnder;
-    return `${prefix} ${total ?? ""}`.trim();
-  }
-  return `${leg.pick}`;
+  if (leg.betType !== "player_prop" && !game) return "Pick";
+  return legChipLabel(
+    { betType: leg.betType, pick: leg.pick, line: leg.line ?? null, playerName: leg.playerName, propType: leg.propType ?? null },
+    game,
+  );
 }
 
 /** Compact tile label for an NFL player name: "P. Mahomes" instead of

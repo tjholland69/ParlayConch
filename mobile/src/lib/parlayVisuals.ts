@@ -54,3 +54,28 @@ export function getParlayVisualStyle(pct: number | null, participationRate = 1):
     barColor: `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`,
   };
 }
+
+export type OpenParlayVisualStyle = {
+  borderColor: string;
+  /** Card background — the web's light-blue wash pre-mixed onto the card
+   * color, since RN can't layer a translucent fill over a background. */
+  backgroundColor?: string;
+  /** Shadow color for a steady glow around the card. */
+  glowColor?: string;
+};
+
+/**
+ * Mobile port of the web's getOpenParlayVisualStyle: how a parlay with no
+ * decided legs yet shows its status, when there's no win % to color it by.
+ * Light blue while it waits on approval; a green glow once it's active
+ * (approved, sent or placed). Null for every other status.
+ */
+export function getOpenParlayVisualStyle(status: string | null | undefined): OpenParlayVisualStyle | null {
+  if (status === "pending") {
+    return { borderColor: "rgba(56, 189, 248, 0.55)", backgroundColor: "#1e3147" };
+  }
+  if (status === "approved" || status === "sent" || status === "placed") {
+    return { borderColor: "rgba(34, 197, 94, 0.5)", glowColor: "#22c55e" };
+  }
+  return null;
+}

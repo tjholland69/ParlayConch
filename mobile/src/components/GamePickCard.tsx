@@ -15,6 +15,13 @@ import {
   type SelectedLeg,
 } from "@/lib/pickHelpers";
 
+/** One-off for this card's team header: "Commanders" is the only team name
+ * too long for its half of the card, so it gets a shorter stand-in here and
+ * nowhere else. */
+function headerTeamName(team: string) {
+  return team.replace(/Commanders$/, "Commies");
+}
+
 function TeamLogo({ logoUrl }: { logoUrl?: string | null }) {
   if (!logoUrl) return null;
   return <Image source={{ uri: logoUrl }} style={styles.teamLogo} resizeMode="contain" />;
@@ -170,7 +177,7 @@ export function GamePickCard({
         <View style={styles.teamHeaderCol}>
           <View style={styles.teamNameRow}>
             <Text style={styles.teamName} numberOfLines={1}>
-              {game.awayTeam}
+              {headerTeamName(game.awayTeam)}
             </Text>
             <TeamLogo logoUrl={awayTeamData?.logoUrl} />
           </View>
@@ -181,7 +188,7 @@ export function GamePickCard({
           <View style={[styles.teamNameRow, styles.teamNameRowRight]}>
             <TeamLogo logoUrl={homeTeamData?.logoUrl} />
             <Text style={styles.teamName} numberOfLines={1}>
-              {game.homeTeam}
+              {headerTeamName(game.homeTeam)}
             </Text>
           </View>
           {game.homeRecord ? <Text style={styles.record}>{game.homeRecord}</Text> : null}

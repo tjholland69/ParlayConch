@@ -7,6 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "predev": "tsx --env-file-if-exists=.env.local scripts/refresh-dev-week.ts --auto",
     "dev": "NODE_ENV=development tsx --env-file=.env.local server/index.ts",
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/migrate.cjs && NODE_ENV=production node dist/index.cjs",
@@ -18,6 +19,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx script/migrate.ts",
     "db:seed": "tsx --env-file=.env.local scripts/seed-dev.ts",
+    "db:refresh-week": "tsx --env-file=.env.local scripts/refresh-dev-week.ts",
     "db:seed:prod-replica": "tsx --env-file=.env.local scripts/pull-production-snapshot.ts",
     "db:seed-teams": "tsx --env-file=.env.local scripts/seed-teams.ts",
     "backfill:leg-justifications": "tsx --env-file=.env.local scripts/backfill-leg-justifications.ts",

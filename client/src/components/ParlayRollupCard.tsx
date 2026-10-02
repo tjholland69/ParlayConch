@@ -16,7 +16,7 @@ import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemb
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { getDisplayName, shortId } from "@/lib/displayName";
-import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
+import { getOpenParlayVisualStyle, getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { DisputeLegDialog } from "@/components/DisputeLegDialog";
@@ -400,7 +400,10 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
         const _resolved = _wins + _losses + _pushes;
         const _pct      = _resolved > 0 ? Math.round((_wins / _resolved) * 100) : 0;
         const _perfect  = _pct === 100 && _resolved > 0;
-        const _visual   = getParlayVisualStyle(_resolved > 0 ? _pct : null, participationRate);
+        // Until a leg is decided there's no win % to color by, so an open
+        // parlay shows its status instead (pending vs. active).
+        const _visual   = (_resolved === 0 ? getOpenParlayVisualStyle(parlay.status) : null)
+          ?? getParlayVisualStyle(_resolved > 0 ? _pct : null, participationRate);
 
         return (
           <Card
@@ -412,6 +415,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
             style={selectMode && isSelected ? undefined : {
               borderColor: _visual.borderColor,
               boxShadow: _visual.boxShadow,
+              backgroundImage: _visual.tint ? `linear-gradient(${_visual.tint}, ${_visual.tint})` : undefined,
             }}
             onClick={selectMode ? () => onToggleSelect(parlay.id) : undefined}
           >
@@ -661,11 +665,10 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
               <span className="hidden sm:inline">{collapsed ? "Expand" : "Collapse"}</span>
             </Button>
           </div>
-          {!collapsed && (
-            <div className="mt-3 relative z-10">
-              <ParlayMixBar legs={parlay.legs} />
-            </div>
-          )}
+          {/* Bet-type mix stays visible when collapsed — it's the at-a-glance summary. */}
+          <div className="mt-3 relative z-10">
+            <ParlayMixBar legs={parlay.legs} />
+          </div>
         </CardHeader>
 
         {!collapsed && <CardContent className="pt-0" onClick={e => selectMode && e.stopPropagation()}>
