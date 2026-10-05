@@ -192,6 +192,10 @@ export const parlays = pgTable("parlays", {
   importBatchId: integer("import_batch_id").references(() => importBatches.id, {
     onDelete: "set null",
   }),
+  // Sportsbook promo boost on this parlay's odds, as a percentage (25 = a
+  // 25% boost). Null when there's no boost. Editable at any status, since a
+  // boost claimed at the book is often recorded here after the bet is live.
+  boostPct: real("boost_pct"),
 }, (table) => [
   uniqueIndex("parlays_user_league_week_uidx").on(table.userId, table.leagueId, table.weekId),
   index("parlays_league_week_idx").on(table.leagueId, table.weekId),
@@ -466,7 +470,7 @@ export const insertBetSchema = createInsertSchema(bets).omit({ id: true, userId:
 export const insertLeagueSchema = createInsertSchema(leagues).omit({ id: true, inviteCode: true, createdAt: true });
 export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({ id: true, joinedAt: true, isActive: true, startDate: true, endDate: true, purgedAt: true });
 export const insertTeamSchema = createInsertSchema(teams).omit({ id: true });
-export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true, source: true, importBatchId: true });
+export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true, source: true, importBatchId: true, boostPct: true });
 export const insertParlayLegSchema = createInsertSchema(parlayLegs)
   .omit({ id: true, result: true, decidedAt: true, decidedPlayDesc: true, decidedQuarter: true, decidedClock: true, decidedConfidence: true })
   .extend({ userId: z.string().optional() }); // server attaches userId before insert; clients need not supply it

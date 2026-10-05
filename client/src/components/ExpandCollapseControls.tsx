@@ -7,8 +7,15 @@ type ExpandCollapseControlsProps = {
   className?: string;
 };
 
+// Collapse All and Expand All presses draw from one counter, so a card can
+// tell which was pressed most recently by comparing its collapseSignal and
+// expandSignal. A card that only mounts later (a virtualized list renders
+// just the rows in view) needs that to open in the right state.
+let bulkSignal = 0;
+export const nextBulkSignal = () => ++bulkSignal;
+
 // Shared "Collapse All" / "Expand All" pair for any list of parlay rollup tiles —
-// drives a card's collapseSignal/expandSignal props.
+// drives a card's collapseSignal/expandSignal props. Set those with nextBulkSignal().
 export function ExpandCollapseControls({ onCollapseAll, onExpandAll, className }: ExpandCollapseControlsProps) {
   return (
     <div className={className ?? "flex items-center gap-2"}>

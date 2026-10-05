@@ -34,6 +34,7 @@ import {
   type SelectedLeg,
 } from "@/lib/pickHelpers";
 import type { Game, GameWithBet, ParlayWithLegs } from "@shared/schema";
+import { BoostSheet } from "@/components/BoostSheet";
 
 /** Moneyline + Spread on the same game are highly correlated (the spread
  * pick's side usually implies the moneyline outcome too) — confirm before
@@ -85,6 +86,7 @@ export default function BuildPickScreen() {
   const submitDraftParlay = useSubmitDraftParlay(leagueId, weekId);
   const cancelParlay = useCancelParlay(leagueId, weekId);
   const [propGame, setPropGame] = useState<Game | null>(null);
+  const [boostPromptOpen, setBoostPromptOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const minLegs = league?.minLegsPerParlay ?? 3;
@@ -401,9 +403,16 @@ export default function BuildPickScreen() {
       return;
     }
 
+    // A fresh pick first asks whether the sportsbook boosted this parlay.
     if (!myParlay) return;
-    submitDraftParlay.mutate(myParlay.id, {
+    setBoostPromptOpen(true);
+  }
+
+  function submitWithBoost(boostPct: number | null) {
+    if (!myParlay) return;
+    submitDraftParlay.mutate({ parlayId: myParlay.id, boostPct }, {
       onSuccess: () => {
+        setBoostPromptOpen(false);
         Alert.alert("Pick submitted", "Your parlay is pending review.", [
           { text: "OK", onPress: () => router.back() },
         ]);
@@ -615,6 +624,16 @@ export default function BuildPickScreen() {
         onClose={() => setPropGame(null)}
         onAdd={isEditingSubmitted ? (leg) => addPropSubmitted(leg) : (leg) => runQueued(() => addDraftLeg.mutateAsync(leg)).then(() => undefined)}
         isPending={!isEditingSubmitted && addDraftLeg.isPending}
+      />
+
+      <BoostSheet
+        visible={boostPromptOpen}
+        onClose={() => setBoostPromptOpen(false)}
+        initialPct={myParlay?.boostPct}
+        saving={submitDraftParlay.isPending}
+        title="Before you submit"
+        confirmLabel="Submit pick"
+        onConfirm={submitWithBoost}
       />
     </View>
   );

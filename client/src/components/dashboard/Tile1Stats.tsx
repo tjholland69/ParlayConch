@@ -175,7 +175,7 @@ function StatRow({
 }: {
   icon: React.ElementType;
   label: string;
-  value: string;
+  value: React.ReactNode;
   /** Present when this stat has underlying legs to drill into ("lookthrough"). */
   onClick?: () => void;
 }) {
@@ -194,6 +194,19 @@ function StatRow({
       </div>
       <span className="font-mono font-bold">{value}</span>
     </div>
+  );
+}
+
+/** "Over 3 - 2 Under": always over first, with the side picked less often
+ * greyed out (neither, when they're level). */
+function OverUnderLean({ over, under }: { over: number; under: number }) {
+  const dim = "text-muted-foreground/50 font-normal";
+  return (
+    <span data-testid="text-over-under-lean">
+      <span className={cn(over < under && dim)}>Over {over}</span>
+      <span className="text-muted-foreground/50"> - </span>
+      <span className={cn(under < over && dim)}>{under} Under</span>
+    </span>
   );
 }
 
@@ -261,7 +274,7 @@ function AnalyticsSlide() {
           <StatRow
             icon={ArrowUpDown}
             label="Over/Under Lean"
-            value={`${data.overUnderPreference.pick === "over" ? "Over" : "Under"} (${data.overUnderPreference.overCount}-${data.overUnderPreference.underCount})`}
+            value={<OverUnderLean over={data.overUnderPreference.overCount} under={data.overUnderPreference.underCount} />}
             onClick={() => setLookthrough({
               title: "Over/Under Lean",
               legIds: [...data.overUnderPreference!.overLegIds, ...data.overUnderPreference!.underLegIds],

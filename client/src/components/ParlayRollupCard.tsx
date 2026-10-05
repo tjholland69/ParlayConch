@@ -1,5 +1,5 @@
 import React, { useState, memo } from "react";
-import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useSplitParlayLegs, useCloneParlay, type EnrichLog } from "@/hooks/use-bets";
+import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useSplitParlayLegs, useCloneParlay, useSetParlayBoost, type EnrichLog } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, ChevronDown, ChevronUp, Scissors, Info, Copy, Check, Clock } from "lucide-react";
+import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, ChevronDown, ChevronUp, Scissors, Info, Copy, Check, Clock, Megaphone } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
@@ -28,6 +28,10 @@ import { legLabel } from "@/lib/legLabel";
 import { resultColor, statusColor } from "@/lib/parlayStatusStyles";
 import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
 import { getSlate } from "@shared/slate";
+import { boostLabel } from "@shared/parlayBoost";
+import { BoostDialog } from "@/components/BoostDialog";
+import { ShameReportDialog } from "@/components/ShameReportDialog";
+import { buildShameReport } from "@shared/shameReport";
 
 export { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 
@@ -229,6 +233,10 @@ export type ParlayCardProps = {
   copiedId?: number | null;
   /** Mount already expanded instead of the default collapsed state — e.g. a drill-down dialog. */
   defaultExpanded?: boolean;
+  /** The viewer is the league's Parlay Maestro: on a read-only card they can
+   * still set the promo boost on someone else's parlay (an owner always can
+   * on their own). */
+  canManage?: boolean;
 };
 
 const LOSER_LABEL_TEXT: Record<string, string> = {
@@ -304,7 +312,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   parlay, leagueId, members,
   selectMode = false, isSelected = false, onToggleSelect = () => {},
   legSelectMode = false, selectedLegIds, onToggleLegSelect = () => {},
-  collapseSignal = 0, expandSignal = 0, versionNumber, readOnly = false,
+  collapseSignal = 0, expandSignal = 0, versionNumber, readOnly = false, canManage = false,
   participationRate = 1, loserLabel = "parlay_loser", heroLabel = "parlay_hero",
   onCopySlip, copiedId = null, defaultExpanded = false,
 }: ParlayCardProps) {
@@ -335,9 +343,16 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const [enrichResults, setEnrichResults] = useState<Record<number, EnrichLog>>({});
   const [expandedLogs, setExpandedLogs] = useState<Record<number, boolean>>({});
   const [fetchAllState, setFetchAllState] = useState<{ running: boolean; done: number; total: number; errors: number } | null>(null);
-  const [collapsed, setCollapsed] = useState(!defaultExpanded);
-  React.useEffect(() => { if (collapseSignal > 0) setCollapsed(true); }, [collapseSignal]);
-  React.useEffect(() => { if (expandSignal > 0) setCollapsed(false); }, [expandSignal]);
+  // Whichever of Collapse All / Expand All was pressed last (the signals
+  // share one counter — see nextBulkSignal), or null if neither has been.
+  // Read at mount too: a virtualized list mounts cards as they scroll into
+  // view, long after the button was pressed.
+  const bulkCollapsed = collapseSignal === expandSignal ? null : collapseSignal > expandSignal;
+  const [collapsed, setCollapsed] = useState(bulkCollapsed ?? !defaultExpanded);
+  React.useEffect(() => { if (bulkCollapsed != null) setCollapsed(bulkCollapsed); }, [collapseSignal, expandSignal]);
+  const [boostOpen, setBoostOpen] = useState(false);
+  const setBoost = useSetParlayBoost();
+  const boostEditable = !selectMode && (canManage || !readOnly || parlay.userId === effectiveUserId);
   const [splitMode, setSplitMode] = useState(false);
   const [splitSelected, setSplitSelected] = useState<Set<number>>(new Set());
   const splitLegs = useSplitParlayLegs(leagueId);
@@ -376,6 +391,18 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const loserMemberName = bustedLeg
     ? getDisplayName(bustedLeg.user, `User #${shortId(bustedLeg.userId)}`)
     : memberName;
+
+  // Only a lost parlay has a shame report; built on demand, when it's opened.
+  const [shameOpen, setShameOpen] = useState(false);
+  const shameReport = shameOpen
+    ? buildShameReport({
+        legs: parlay.legs,
+        bustedLegId: bustedLeg?.id,
+        nameOf: (l) => getDisplayName(l.user, `User #${shortId(l.userId)}`),
+        weekLabel: parlay.week?.label ?? `Week ${parlay.weekId}`,
+        loserLabel: loserLabelText,
+      })
+    : null;
 
   // Slate the parlay was decided in: the decisive leg's game — the leg that
   // killed the parlay (bustedLeg) for a loss, or the leg that clinched it
@@ -529,6 +556,27 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
               );
             })()}
 
+            {/* Promo boost: shown when set, and a way in for whoever can set it
+                — at any status, since boosts are often recorded after the fact. */}
+            {parlay.status !== "void" && (parlay.boostPct || boostEditable) && (
+              <button
+                type="button"
+                disabled={!boostEditable}
+                onClick={e => { e.stopPropagation(); setBoostOpen(true); }}
+                title={boostEditable ? (parlay.boostPct ? "Change boost" : "Add a sportsbook boost") : undefined}
+                className={cn(
+                  "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors",
+                  parlay.boostPct
+                    ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
+                    : "border-dashed border-white/15 text-muted-foreground/70",
+                  boostEditable && "hover:border-amber-400/60 hover:text-amber-200",
+                )}
+                data-testid={`button-parlay-boost-${parlay.id}`}
+              >
+                🚀 {boostLabel(parlay.boostPct) ?? "Add boost"}
+              </button>
+            )}
+
             <span className={cn(
               "text-xs italic shrink-0 hidden sm:inline-flex items-center gap-1 whitespace-nowrap",
               parlay.user ? "text-muted-foreground/50" : "text-amber-400"
@@ -540,6 +588,19 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
               )}
               (Started by {memberName})
             </span>
+
+            {bustedLeg && !selectMode && (
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); setShameOpen(true); }}
+                title="Shame report"
+                aria-label="Open the shame report"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-red-300 hover:bg-white/10 transition-colors shrink-0"
+                data-testid={`button-shame-report-${parlay.id}`}
+              >
+                <Megaphone className="w-3.5 h-3.5" />
+              </button>
+            )}
 
             {readOnly && onCopySlip && parlay.status !== "void" && (
               <button
@@ -956,6 +1017,21 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
           </Card>
         );
       })()}
+
+      {/* Outside the admin-only block below: read-only cards open these too. */}
+      {shameReport && (
+        <ShameReportDialog report={shameReport} open={shameOpen} onOpenChange={setShameOpen} />
+      )}
+
+      <BoostDialog
+        open={boostOpen}
+        onOpenChange={setBoostOpen}
+        initialPct={parlay.boostPct}
+        isSaving={setBoost.isPending}
+        onConfirm={(boostPct) =>
+          setBoost.mutate({ parlayId: parlay.id, boostPct }, { onSuccess: () => setBoostOpen(false) })
+        }
+      />
 
       {!readOnly && (
         <>

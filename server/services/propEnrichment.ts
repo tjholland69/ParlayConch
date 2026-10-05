@@ -15,6 +15,7 @@ import { parlayLegs, parlays, weeks } from "@shared/db-schema";
 import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import { storage } from "../storage";
 import { buildResultDetail } from "@shared/legJustification";
+import { gradePropOverUnder } from "@shared/propGrading";
 
 const BASE_URL = "https://api.the-odds-api.com/v4";
 const SPORT    = "americanfootball_nfl";
@@ -138,9 +139,7 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
           continue;
         }
         const actual = (stat.rushingYards ?? 0) + (stat.receivingYards ?? 0);
-        if (actual > lineRaw)        legResult = pick === "over"  ? "win" : "loss";
-        else if (actual < lineRaw)   legResult = pick === "under" ? "win" : "loss";
-        else                         legResult = "push";
+        legResult = gradePropOverUnder(actual, lineRaw, pick);
 
       // ── Tackles (solo + assist combined — the standard sportsbook line) ──
       } else if (propType === "tackles") {
@@ -155,9 +154,7 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
           continue;
         }
         const actual = (stat.defTacklesSolo ?? 0) + (stat.defTacklesWithAssist ?? 0);
-        if (actual > lineRaw)        legResult = pick === "over"  ? "win" : "loss";
-        else if (actual < lineRaw)   legResult = pick === "under" ? "win" : "loss";
-        else                         legResult = "push";
+        legResult = gradePropOverUnder(actual, lineRaw, pick);
 
       // ── Numeric over/under props ──────────────────────────────────────────
       } else {
@@ -181,9 +178,7 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
           continue;
         }
 
-        if (actual > lineRaw)        legResult = pick === "over"  ? "win" : "loss";
-        else if (actual < lineRaw)   legResult = pick === "under" ? "win" : "loss";
-        else                         legResult = "push";
+        legResult = gradePropOverUnder(actual, lineRaw, pick);
       }
 
       if (legResult) {

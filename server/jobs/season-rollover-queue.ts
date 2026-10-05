@@ -23,10 +23,23 @@ function getQueue(): Queue | null {
   return queue;
 }
 
-/** Starts the worker and (idempotently) registers the weekly repeatable check. No-ops without Redis. */
+// Without Redis there's no queue to schedule on, so production falls back to
+// checking daily in this process. The import is idempotent.
+const FALLBACK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+let fallbackTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Starts the worker and (idempotently) registers the weekly repeatable check.
+ * Without Redis, production runs the same check daily in-process instead.
+ */
 export async function startSeasonRolloverWorker(): Promise<void> {
   if (!isRedisConfigured()) {
-    logger.warn("[season-rollover] Redis not configured — automatic weekly season check is disabled. Trigger manually via POST /api/admin/check-new-season.");
+    if (process.env.NODE_ENV !== "production" || fallbackTimer) return;
+    logger.warn("[season-rollover] Redis not configured — checking for a new season daily in-process instead.");
+    fallbackTimer = setInterval(() => {
+      detectAndImportNewSeason().catch((err) => logger.error({ err }, "[season-rollover] in-process check failed"));
+    }, FALLBACK_INTERVAL_MS);
+    fallbackTimer.unref();
     return;
   }
 

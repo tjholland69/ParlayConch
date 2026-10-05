@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, useState } from "react";
 import { format } from "date-fns";
-import { AlertTriangle, Check, ChevronDown, Layers, Loader2, Plus, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Layers, Loader2, Minus, Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,6 +13,8 @@ import { BET_TYPE_OPTIONS, RESULTS } from "@/lib/bettingConstants";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { withPlusSign } from "@/lib/formatPick";
 import { awaySpread } from "@/lib/gameOdds";
+import { BoostFields } from "@/components/BoostDialog";
+import { parseBoostPct } from "@shared/parlayBoost";
 import { primaryPropType, propTypesForPosition } from "@/lib/propPosition";
 import { upToCurrentWeek } from "@/lib/weekFilters";
 import { cn } from "@/lib/utils";
@@ -39,6 +41,18 @@ const blankRow = (key: number): Row => ({
 });
 
 const isTotal = (betType: string) => betType === "over" || betType === "under";
+
+const SPREAD_NUDGE_CLASS =
+  "flex h-4 w-full items-center justify-center rounded-t-md border border-b-0 border-white/10 bg-white/5 " +
+  "text-muted-foreground transition-colors hover:bg-white/10 hover:text-foreground disabled:pointer-events-none disabled:opacity-40";
+
+const canNudgeSpread = (line: string) => Number.isFinite(parseFloat(line));
+
+/** Moves a spread a whole point: "-4.5" to "-3.5", "-0.5" to "0.5". */
+function nudgeSpread(line: string, delta: number): string {
+  const next = parseFloat(line) + delta;
+  return Number.isFinite(next) ? String(next) : line;
+}
 
 const toLeg = (row: Row): MultiBetLegInput => ({
   userId: row.userId,
@@ -314,6 +328,9 @@ export function AddMultiBetParlayDialog({
   const [rows, setRows] = useState<Row[]>(() => Array.from({ length: startingRows }, () => blankRow(nextKey.current++)));
   const [submitted, setSubmitted] = useState(false);
   const [serverErrors, setServerErrors] = useState<MultiBetSaveError | null>(null);
+  const [hasBoost, setHasBoost] = useState(false);
+  const [boostPctText, setBoostPctText] = useState("");
+  const boostPct = hasBoost ? parseBoostPct(boostPctText) : null;
 
   const { data: games } = useGames(weekId ? Number(weekId) : 0);
   const seasons = [...new Set(pickableWeeks.map(w => w.season))];
@@ -326,6 +343,7 @@ export function AddMultiBetParlayDialog({
   const formErrors = [...validation.formErrors];
   if (!weekId) formErrors.unshift("Choose a year and week");
   if (!ownerId) formErrors.unshift("Choose the parlay owner");
+  if (hasBoost && boostPct == null) formErrors.push("Enter the boost as a percent, like 25");
   const ownerName = getDisplayName(members.find(m => m.userId === ownerId)?.user, "This owner");
   if (ownerId && weekId && parlays.some(p => p.userId === ownerId && p.weekId === Number(weekId))) {
     formErrors.push(`${ownerName} already has a parlay for ${selectedWeek?.label ?? "that week"}. Edit that parlay, or choose a different owner.`);
@@ -388,7 +406,7 @@ export function AddMultiBetParlayDialog({
     setSubmitted(true);
     if (!isValid) return;
     addParlay.mutate(
-      { userId: ownerId, weekId: Number(weekId), legs },
+      { userId: ownerId, weekId: Number(weekId), legs, boostPct },
       {
         onSuccess: () => onOpenChange(false),
         onError: (err: MultiBetSaveError) => setServerErrors(err),
@@ -440,6 +458,8 @@ export function AddMultiBetParlayDialog({
             </Select>
           </div>
         </div>
+
+        <BoostFields hasBoost={hasBoost} pct={boostPctText} onHasBoostChange={setHasBoost} onPctChange={setBoostPctText} />
 
         <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-white/10">
           <table className="w-full min-w-[980px] text-sm">
@@ -558,14 +578,40 @@ export function AddMultiBetParlayDialog({
                         )}
                       </td>
                       <td className="px-2 py-2">
+                        {/* Spreads sit on the half point, so the quick-change
+                            buttons move a whole point (4.5 to 5.5), not half. */}
+                        {row.betType === "spread" && (
+                          <button
+                            type="button"
+                            className={SPREAD_NUDGE_CLASS}
+                            onClick={() => updateRow(row.key, { line: nudgeSpread(row.line, 1) })}
+                            disabled={!canNudgeSpread(row.line)}
+                            aria-label="Raise spread by 1 point"
+                            data-testid={`button-multi-bet-spread-up-${i}`}
+                          >
+                            <Plus className="h-3 w-3" />
+                          </button>
+                        )}
                         <Input
-                          className="h-8 px-2 text-xs"
+                          className={cn("h-8 px-2 text-xs", row.betType === "spread" && "rounded-none text-center")}
                           value={row.line}
                           disabled={row.betType === "moneyline" || yesNo}
                           onChange={e => updateRow(row.key, { line: e.target.value })}
                           placeholder={row.betType === "moneyline" || yesNo ? "—" : isProp ? "74.5" : "-3.5"}
                           data-testid={`input-multi-bet-line-${i}`}
                         />
+                        {row.betType === "spread" && (
+                          <button
+                            type="button"
+                            className={cn(SPREAD_NUDGE_CLASS, "rounded-b-md rounded-t-none border-t-0 border-b")}
+                            onClick={() => updateRow(row.key, { line: nudgeSpread(row.line, -1) })}
+                            disabled={!canNudgeSpread(row.line)}
+                            aria-label="Lower spread by 1 point"
+                            data-testid={`button-multi-bet-spread-down-${i}`}
+                          >
+                            <Minus className="h-3 w-3" />
+                          </button>
+                        )}
                       </td>
                       <td className="px-2 py-2">
                         <Input

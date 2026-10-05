@@ -98,6 +98,19 @@ function SummarySlide({ leagueId }: { leagueId?: number }) {
   );
 }
 
+/** "Over 3 - 2 Under": always over first, with the side picked less often
+ * greyed out (neither, when they're level). */
+function OverUnderLean({ over, under }: { over: number; under: number }) {
+  const dim = { color: "#475569", fontWeight: "500" as const };
+  return (
+    <>
+      <Text style={over < under && dim}>Over {over}</Text>
+      <Text style={{ color: "#475569" }}> - </Text>
+      <Text style={under < over && dim}>{under} Under</Text>
+    </>
+  );
+}
+
 function StatRow({
   icon,
   label,
@@ -106,7 +119,7 @@ function StatRow({
 }: {
   icon: IconName;
   label: string;
-  value: string;
+  value: React.ReactNode;
   /** Present when this stat has underlying legs to drill into ("lookthrough"). */
   onPress?: () => void;
 }) {
@@ -255,7 +268,7 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
           <StatRow
             icon="swap-vertical-outline"
             label="Over/Under Lean"
-            value={`${data.overUnderPreference.pick === "over" ? "Over" : "Under"} (${data.overUnderPreference.overCount}-${data.overUnderPreference.underCount})`}
+            value={<OverUnderLean over={data.overUnderPreference.overCount} under={data.overUnderPreference.underCount} />}
             onPress={() => setLookthrough({
               title: "Over/Under Lean",
               legIds: [...data.overUnderPreference!.overLegIds, ...data.overUnderPreference!.underLegIds],

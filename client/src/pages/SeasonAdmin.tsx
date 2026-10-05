@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/SlidingCard";
 import type { Week } from "@shared/schema";
+import { BackLink } from "@/components/BackLink";
 
 /**
  * Super-user-only panel for standing up a new season: create the week row,
@@ -91,6 +92,27 @@ export default function SeasonAdmin() {
     onError: (err: Error) => toast({ title: "Check failed", description: err.message, variant: "destructive" }),
   });
 
+  const checkWeekRollover = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/check-week-rollover");
+      return res.json() as Promise<{ advanced: boolean; reason?: string; unfinishedGames?: number }>;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/weeks"] });
+      if (!data.advanced) {
+        toast({ title: "Active week unchanged", description: data.reason });
+        return;
+      }
+      toast({
+        title: "Advanced to the next week",
+        description: data.unfinishedGames
+          ? `${data.unfinishedGames} game(s) in the old week were never marked finished.`
+          : undefined,
+      });
+    },
+    onError: (err: Error) => toast({ title: "Rollover check failed", description: err.message, variant: "destructive" }),
+  });
+
   const activateWeek = useMutation({
     mutationFn: async (weekId: number) => {
       const res = await apiRequest("POST", `/api/admin/weeks/${weekId}/activate`);
@@ -126,6 +148,7 @@ export default function SeasonAdmin() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       <div>
+        <BackLink href="/admin" label="Admin" />
         <h1 className="text-2xl font-bold font-display tracking-tight flex items-center gap-2">
           <CalendarPlus className="w-6 h-6 text-accent" />
           Season Admin
@@ -165,6 +188,26 @@ export default function SeasonAdmin() {
             disabled={checkNewSeason.isPending}
           >
             {checkNewSeason.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Search className="w-4 h-4 mr-2" /> Check for new season now</>}
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card className="border-white/5">
+        <CardHeader className="pb-2 font-semibold text-sm">Week rollover</CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            The active week advances by itself each morning once its games are done, or 6 hours after its
+            last kickoff if a game was never marked finished. After the final week it moves to the next
+            season's Week 1, two weeks before that season's first kickoff.
+          </p>
+          <Button
+            variant="outline"
+            className="w-full"
+            onClick={() => checkWeekRollover.mutate()}
+            disabled={checkWeekRollover.isPending}
+            data-testid="button-check-week-rollover"
+          >
+            {checkWeekRollover.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <><RefreshCw className="w-4 h-4 mr-2" /> Run the rollover check now</>}
           </Button>
         </CardContent>
       </Card>

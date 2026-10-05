@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+/** A sportsbook promo boost on a parlay's odds, in percent (25 = 25%).
+ * Null means no boost. */
+export const boostPctSchema = z.number().positive().max(500).nullable();
+
+// Body for PUT /api/parlays/:id/boost, and (optionally) POST /api/parlays/:id/submit.
+export const parlayBoostInputSchema = z.object({ boostPct: boostPctSchema }).strict();
+
 export const createParlayInputSchema = z.object({
   leagueId: z.number(),
   weekId: z.number(),
@@ -93,6 +100,14 @@ export const updateLeagueSettingsSchema = z
     insightsEnabled: z.boolean().optional(),
     loserLabel: z.enum(['parlay_loser', 'asshole', 'jerry', 'dud', 'doofus']).optional(),
     heroLabel: z.enum(['parlay_hero', 'mvp', 'legend', 'big_time']).optional(),
+    // When the league started (ISO timestamp). Set automatically when the
+    // league is made here; the Parlay Maestro can move it back for a league
+    // that existed before, so backloaded history reads right.
+    createdAt: z
+      .string()
+      .refine((v) => !Number.isNaN(Date.parse(v)), { message: "League created date isn't a valid date" })
+      .refine((v) => Date.parse(v) <= Date.now(), { message: "League created date can't be in the future" })
+      .optional(),
   })
   .strict()
   .refine(
@@ -145,6 +160,7 @@ export const createMultiBetParlayInputSchema = z
     userId: z.string().min(1),
     weekId: z.number().int().positive(),
     legs: z.array(multiBetLegInputSchema).min(1).max(50),
+    boostPct: boostPctSchema.optional(),
   })
   .strict();
 

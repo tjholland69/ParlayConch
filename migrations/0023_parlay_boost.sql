@@ -1,0 +1,1 @@
+ALTER TABLE "parlays" ADD COLUMN "boost_pct" real;

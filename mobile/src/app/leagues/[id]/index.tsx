@@ -38,7 +38,12 @@ import {
   useApproveParlay,
   useRejectParlay,
   useMyParlay,
+  useSetParlayBoost,
 } from "@/hooks/use-parlays";
+import { BoostSheet } from "@/components/BoostSheet";
+import { ShameReportModal } from "@/components/ShameReportModal";
+import { buildShameReport } from "@shared/shameReport";
+import { boostLabel } from "@shared/parlayBoost";
 import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
 import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
@@ -116,6 +121,12 @@ function ParlayCard({
   const markParlaySent = useMarkParlaySent(leagueId, weekId);
   const [expandedLegIndex, setExpandedLegIndex] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState(true);
+  const [boostOpen, setBoostOpen] = useState(false);
+  const setBoost = useSetParlayBoost(leagueId, weekId);
+  // Same rule the server enforces: the parlay's owner or the Parlay Maestro.
+  const boostEditable = isAdmin || parlay.userId === effectiveUserId;
+  const showBoostChip = parlay.status !== "void" && (!!parlay.boostPct || boostEditable);
+  const [shameOpen, setShameOpen] = useState(false);
   // Multi-game "Send to Sportsbook" walkthrough — set only when the parlay
   // spans 2+ distinct games, since a single game keeps the original one-shot
   // deep link. Advances on app-resume (see useAppResume below); there's no
@@ -155,6 +166,17 @@ function ParlayCard({
   const loserMemberName = bustedLeg?.user
     ? bustedLeg.user.settings?.displayName ?? bustedLeg.user.firstName ?? bustedLeg.user.email ?? "Unknown"
     : name;
+
+  // Only a lost parlay has a shame report; built on demand, when it's opened.
+  const shameReport = shameOpen
+    ? buildShameReport({
+        legs,
+        bustedLegId: bustedLeg?.id,
+        nameOf: (l) => l.user?.settings?.displayName ?? l.user?.firstName ?? l.user?.email ?? "Unknown",
+        weekLabel: parlay.week?.label ?? `Week ${parlay.weekId}`,
+        loserLabel: loserLabelText,
+      })
+    : null;
 
   // getSlate buckets by kickoff time, not finish time, so this must use the
   // decisive leg's game.gameTime — not decidedAt/finishedAt (see web's
@@ -359,6 +381,62 @@ function ParlayCard({
       <View style={styles.mixBarWrap}>
         <ParlayMixBar legs={legs} />
       </View>
+
+      {/* Promo boost: shown when set, and a way in for whoever can set it —
+          at any status, since boosts are often recorded after the fact. */}
+      {(showBoostChip || !!bustedLeg) && (
+        <View style={styles.cardChipRow}>
+          {showBoostChip && (
+            <Pressable
+              onPress={() => setBoostOpen(true)}
+              disabled={!boostEditable}
+              style={({ pressed }) => [
+                styles.boostChip,
+                !!parlay.boostPct && styles.boostChipActive,
+                pressed && { opacity: 0.7 },
+              ]}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={parlay.boostPct ? "Change boost" : "Add a sportsbook boost"}
+              testID={`button-parlay-boost-${parlay.id}`}
+            >
+              <Text style={[styles.boostChipText, !!parlay.boostPct && styles.boostChipTextActive]}>
+                🚀 {boostLabel(parlay.boostPct) ?? "Add boost"}
+              </Text>
+            </Pressable>
+          )}
+          {bustedLeg && (
+            <Pressable
+              onPress={() => setShameOpen(true)}
+              style={({ pressed }) => [styles.boostChip, styles.shameChip, pressed && { opacity: 0.7 }]}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Open the shame report"
+              testID={`button-shame-report-${parlay.id}`}
+            >
+              <Text style={[styles.boostChipText, styles.shameChipText]}>🚨 Shame report</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+      {shameReport && (
+        <ShameReportModal report={shameReport} visible={shameOpen} onClose={() => setShameOpen(false)} />
+      )}
+      <BoostSheet
+        visible={boostOpen}
+        onClose={() => setBoostOpen(false)}
+        initialPct={parlay.boostPct}
+        saving={setBoost.isPending}
+        onConfirm={(boostPct) =>
+          setBoost.mutate(
+            { parlayId: parlay.id, boostPct },
+            {
+              onSuccess: () => setBoostOpen(false),
+              onError: (err: Error) => Alert.alert("Couldn't save boost", err.message || "Please try again."),
+            },
+          )
+        }
+      />
 
       {!collapsed && legs.length > 0 && (
         <View style={styles.legsSection}>
@@ -783,7 +861,7 @@ function LeagueRecordTile({ record, members, onLookthrough }: { record: LeagueRe
             <Text style={styles.recordViewerValue} numberOfLines={1}>That's You Silly!</Text>
           ) : (
             <>
-              <Text style={styles.recordViewerLabel}>YOU</Text>
+              <Text style={styles.recordViewerLabel}>{record.viewerLabel ?? "...and for you..."}</Text>
               <Text style={styles.recordViewerValue} numberOfLines={1}>{record.viewerValue ?? "—"}</Text>
             </>
           )}
@@ -1053,9 +1131,21 @@ export default function LeagueDetailScreen() {
             the "full league info that doesn't belong here" clutter. */}
         {isAdmin && activeWeek && activeTab === "parlays" && (
           <View style={styles.adminBar}>
-            <Text style={styles.adminBarText}>
-              {lockStatus?.submittedCount ?? 0} / {lockStatus?.totalMembers ?? members?.length ?? "—"} submitted
-            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.adminBarText}>
+                {lockStatus?.submittedCount ?? 0} / {lockStatus?.totalMembers ?? members?.length ?? "—"} submitted
+              </Text>
+              {!isLocked && !!lockStatus?.missingMemberIds?.length && (
+                <Text style={styles.adminBarWaiting} numberOfLines={2} testID="text-waiting-on">
+                  Waiting on:{" "}
+                  {(members ?? [])
+                    .filter((m: any) => lockStatus.missingMemberIds.includes(m.userId))
+                    .map((m: any) => memberShortName(m))
+                    .sort((x: string, y: string) => x.localeCompare(y))
+                    .join(", ")}
+                </Text>
+              )}
+            </View>
             {isLocked ? (
               <Pressable
                 onPress={handleUnlockPress}
@@ -1518,7 +1608,22 @@ const styles = StyleSheet.create({
     borderBottomColor: "#2a3447",
     gap: 12,
   },
-  adminBarText: { fontSize: 13, color: "#94a3b8", fontWeight: "500", flex: 1 },
+  adminBarText: { fontSize: 13, color: "#94a3b8", fontWeight: "500" },
+  cardChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 14, paddingBottom: 10 },
+  shameChip: { borderStyle: "solid", borderColor: "rgba(248, 113, 113, 0.35)", backgroundColor: "rgba(248, 113, 113, 0.08)" },
+  shameChipText: { color: "#fca5a5" },
+  boostChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: "#2a3447",
+  },
+  boostChipActive: { borderStyle: "solid", borderColor: "rgba(251, 191, 36, 0.4)", backgroundColor: "rgba(251, 191, 36, 0.1)" },
+  boostChipText: { fontSize: 11, fontWeight: "600", color: "#64748b" },
+  boostChipTextActive: { color: "#fcd34d" },
+  adminBarWaiting: { fontSize: 11, color: "#64748b", marginTop: 2 },
   adminActionBtn: {
     flexDirection: "row",
     alignItems: "center",

@@ -9,6 +9,7 @@ import { Link } from "wouter";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { getBuildingVerb } from "@/lib/parlaySlang";
+import { getDisplayName } from "@/lib/displayName";
 import { upToCurrentWeek } from "@/lib/weekFilters";
 import { PageLoader } from "@/components/PageLoader";
 import { SlateGroupedGames } from "@/components/SlateGroupedGames";
@@ -190,6 +191,12 @@ export default function Picks() {
             ? Math.round((status!.submittedCount / Math.max(league.memberCount, 1)) * 100)
             : 0;
           const buildingVerb = getBuildingVerb(league.id);
+          // Who hasn't put a leg into the open parlay yet.
+          const missingIds = new Set(status?.missingMemberIds ?? []);
+          const waitingOn = league.members
+            .filter(m => missingIds.has(m.userId))
+            .map(m => getDisplayName(m.user, "Member"))
+            .sort((a, b) => a.localeCompare(b));
           const showDraftAlert = hasUnsubmittedDraft && !isBrewing && !isApproved;
 
           return (
@@ -239,6 +246,15 @@ export default function Picks() {
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {status!.submittedCount}/{league.memberCount} members in
                           </p>
+                          {waitingOn.length > 0 && (
+                            <p
+                              className="text-xs text-muted-foreground mt-0.5 line-clamp-2"
+                              title={waitingOn.join(", ")}
+                              data-testid={`text-waiting-on-${league.id}`}
+                            >
+                              <span className="text-yellow-400/80">Waiting on:</span> {waitingOn.join(", ")}
+                            </p>
+                          )}
                         </>
                       ) : isApproved ? (
                         <>

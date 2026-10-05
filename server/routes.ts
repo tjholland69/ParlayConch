@@ -16,7 +16,7 @@ import {
   startNflverseSyncWorker,
 } from "./jobs/nflverse-sync-queue";
 import { startSeasonRolloverWorker, runSeasonRolloverCheckNow } from "./jobs/season-rollover-queue";
-import { startWeekRolloverWorker } from "./jobs/week-rollover-queue";
+import { startWeekRolloverWorker, runWeekRolloverCheckNow } from "./jobs/week-rollover-queue";
 import { startMaintenanceWorker } from "./jobs/maintenance-queue";
 import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
@@ -51,6 +51,7 @@ import {
   updateParlayInputSchema,
   updateParlayLegInputSchema,
   createMultiBetParlayInputSchema,
+  parlayBoostInputSchema,
   updateUserSettingsSchema,
 } from "@shared/routeValidation";
 import { validateMultiBetLegs } from "@shared/multiBetValidation";
@@ -83,10 +84,11 @@ export async function registerRoutes(
   if (isRedisConfigured()) {
     startOddsSyncWorker();
     startNflverseSyncWorker();
-    await startSeasonRolloverWorker();
-    await startWeekRolloverWorker();
     await startMaintenanceWorker();
   }
+  // These two fall back to an in-process timer when there's no Redis.
+  await startSeasonRolloverWorker();
+  await startWeekRolloverWorker();
   registerRealtimeWebSocket(httpServer, app);
 
   app.get("/api/health", (_req, res) => {
@@ -854,15 +856,39 @@ export async function registerRoutes(
       const league = leagues.find(l => l.id === existing.leagueId);
       if (!league) return res.status(403).json({ message: "Not a member of this league" });
 
+      // Optional: the "any boost on this parlay?" answer from the submit prompt.
+      const boost = req.body && "boostPct" in req.body ? parlayBoostInputSchema.parse(req.body).boostPct : undefined;
+
       const parlay = await storage.submitDraftParlay(
         userId,
         parlayId,
         league.minLegsPerParlay || 3,
         league.maxLegsPerParlay || 5,
+        boost,
       );
       res.json(parlay);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
+    }
+  });
+
+  // PUT /api/parlays/:id/boost — sets or clears the sportsbook promo boost.
+  // Works at any status, live and settled included: a boost claimed at the
+  // book is often recorded here after the fact. Open to the parlay's owner
+  // and the league's Parlay Maestro.
+  app.put("/api/parlays/:id/boost", isAuthenticated, auditLog("parlay.set_boost", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlayId = Number(req.params.id);
+      const existing = await storage.getParlay(parlayId);
+      if (!existing) return res.status(404).json({ message: "Parlay not found" });
+      if (existing.userId !== userId && !(await storage.isLeagueAdmin(existing.leagueId, userId))) {
+        return res.status(403).json({ message: "Only the parlay's owner or the Parlay Maestro can change its boost" });
+      }
+      const { boostPct } = parlayBoostInputSchema.parse(req.body);
+      res.json(await storage.setParlayBoost(parlayId, boostPct));
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
   });
 
@@ -1575,6 +1601,21 @@ export async function registerRoutes(
     }
   });
 
+  // POST /api/admin/check-week-rollover — runs the daily active-week check
+  // now: advances to the next week (or the next season's Week 1) if the
+  // active one is over, and says why not otherwise.
+  app.post("/api/admin/check-week-rollover", isAuthenticated, auditLog("admin.week_rollover_check"), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      if (!(await storage.isSuperUser(userId))) {
+        return res.status(403).json({ message: "Super user access required" });
+      }
+      res.json(await runWeekRolloverCheckNow());
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
   // POST /api/admin/check-new-season — manually triggers the same nflverse
   // schedule check the weekly job runs automatically. Creates every
   // regular-season week (+ games) for the next season if its schedule has
@@ -1636,6 +1677,8 @@ export async function registerRoutes(
   app.get("/api/players", isAuthenticated, async (req, res) => {
     try {
       const q = typeof req.query.q === "string" ? req.query.q : "";
+      // Rank matches by how often the caller's own leagues have picked them.
+      const leagueIds = (await storage.getUserLeagues((req.user as any).claims.sub)).map(l => l.id);
       const gameId = Number(req.query.gameId);
       if (req.query.gameId != null && Number.isFinite(gameId)) {
         const game = await storage.getGame(gameId);
@@ -1643,9 +1686,9 @@ export async function registerRoutes(
         const teams = [...abbreviationsForTeam(game.homeTeam), ...abbreviationsForTeam(game.awayTeam)];
         // Unrecognized team names would otherwise match no one; fall back to
         // the unscoped search rather than an empty picker.
-        if (teams.length > 0) return res.json(await storage.searchPlayers(q, 25, { teams }));
+        if (teams.length > 0) return res.json(await storage.searchPlayers(q, 25, { teams, leagueIds }));
       }
-      const results = await storage.searchPlayers(q);
+      const results = await storage.searchPlayers(q, 20, { leagueIds });
       res.json(results);
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1856,8 +1899,11 @@ export async function registerRoutes(
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
       if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
 
-      const updates = updateLeagueSettingsSchema.parse(req.body);
-      const league = await storage.updateLeagueSettings(leagueId, updates);
+      const { createdAt, ...updates } = updateLeagueSettingsSchema.parse(req.body);
+      const league = await storage.updateLeagueSettings(leagueId, {
+        ...updates,
+        ...(createdAt ? { createdAt: new Date(createdAt) } : {}),
+      });
       res.json(league);
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
@@ -2108,7 +2154,7 @@ export async function registerRoutes(
 
       const legs = input.legs;
       const startedAt = Date.now();
-      const { parlay, legIds } = await storage.createMultiBetParlay(input.userId, leagueId, input.weekId, legs);
+      const { parlay, legIds } = await storage.createMultiBetParlay(input.userId, leagueId, input.weekId, legs, input.boostPct ?? null);
       const savedMs = Date.now() - startedAt;
 
       // enrichSingleLeg records its own failures in the returned log rather

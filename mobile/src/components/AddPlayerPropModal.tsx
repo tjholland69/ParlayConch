@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { View, Text, TextInput, Pressable, ScrollView, Modal, Alert, KeyboardAvoidingView, Platform, StyleSheet } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import type { Game } from "@shared/schema";
 import { PLAYER_PROP_TYPES } from "@shared/schema";
 import { YES_NO_PROP_TYPES } from "@shared/multiBetValidation";
 import { primaryPropType, propTypesForPosition } from "@shared/propPosition";
+import { stepLine } from "@shared/propLines";
 import { PlayerTypeahead } from "@/components/PlayerTypeahead";
 import { useAccentColor } from "@/hooks/use-accent-color";
 
@@ -152,15 +154,41 @@ export function AddPlayerPropModal({
           </View>
 
           <Text style={styles.label}>Line (optional)</Text>
-          <TextInput
-            style={styles.input}
-            value={line}
-            onChangeText={setLine}
-            placeholder="e.g. 74.5"
-            placeholderTextColor="#64748b"
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+          {/* Half-point steps either side of whatever's typed; the first
+              press on an empty box starts at the prop's usual line. */}
+          <View style={styles.lineRow}>
+            <Pressable
+              onPress={() => setLine((l) => stepLine(l, -1, propType))}
+              style={({ pressed }) => [styles.stepBtn, pressed && { opacity: 0.7 }]}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Lower line by half a point"
+              testID="button-prop-line-down"
+            >
+              <Ionicons name="remove" size={20} color="#f1f5f9" />
+            </Pressable>
+            <TextInput
+              style={[styles.input, styles.lineInput]}
+              value={line}
+              onChangeText={setLine}
+              placeholder="e.g. 74.5"
+              placeholderTextColor="#64748b"
+              keyboardType="decimal-pad"
+              autoCapitalize="none"
+              autoCorrect={false}
+              testID="input-prop-line"
+            />
+            <Pressable
+              onPress={() => setLine((l) => stepLine(l, 1, propType))}
+              style={({ pressed }) => [styles.stepBtn, pressed && { opacity: 0.7 }]}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Raise line by half a point"
+              testID="button-prop-line-up"
+            >
+              <Ionicons name="add" size={20} color="#f1f5f9" />
+            </Pressable>
+          </View>
 
           <View style={styles.actions}>
             <Pressable style={({ pressed }) => [styles.cancelBtn, pressed && { opacity: 0.7 }]} onPress={onClose}>
@@ -230,6 +258,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: "#f1f5f9",
     backgroundColor: "#141926",
+  },
+  lineRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+  lineInput: { flex: 1, textAlign: "center" },
+  stepBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: "#2a3447",
+    backgroundColor: "#141926",
+    alignItems: "center",
+    justifyContent: "center",
   },
   actions: { flexDirection: "row", gap: 10, marginTop: 20 },
   cancelBtn: { flex: 1, paddingVertical: 13, alignItems: "center", justifyContent: "center", borderRadius: 12 },

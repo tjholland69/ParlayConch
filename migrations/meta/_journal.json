@@ -162,6 +162,13 @@
       "when": 1790539993440,
       "tag": "0022_league_pokes",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1791165191294,
+      "tag": "0023_parlay_boost",
+      "breakpoints": true
     }
   ]
 }
