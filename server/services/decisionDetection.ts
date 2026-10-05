@@ -126,12 +126,13 @@ function playDelta(play: PbpRow, playerId: string, statKey: PropStatKey): number
   }
 }
 
-/** Walk a game's plays in order, accumulating a player's stat; return the first play where it exceeds the line. */
+/** Walk a game's plays in order, accumulating a player's stat; return the first play where it reaches the line
+ * (a prop over wins on the number — see shared/propGrading.ts). */
 export function findNumericPropDecision(plays: PbpRow[], playerId: string, statKey: PropStatKey, line: number): DecisionInfo | null {
   let cumulative = 0;
   for (const play of plays) {
     cumulative += playDelta(play, playerId, statKey);
-    if (cumulative > line) return toDecisionInfo(play);
+    if (cumulative >= line) return toDecisionInfo(play);
   }
   return null;
 }

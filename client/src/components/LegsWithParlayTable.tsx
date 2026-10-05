@@ -9,6 +9,42 @@ import { legMatchup } from "@/lib/legLabel";
 import { getSlate } from "@shared/slate";
 import type { ParlayLegWithParlayContext } from "@shared/schema";
 import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
+import { SortHeader } from "@/components/SortHeader";
+import { useColumnSort } from "@/hooks/use-column-sort";
+import { parseAmericanOdds } from "@shared/powerScore";
+
+type Leg = ParlayLegWithParlayContext;
+const kickoff = (leg: Leg) => (leg.game?.gameTime ? new Date(leg.game.gameTime).getTime() : null);
+const numeric = (raw: string | null | undefined) => {
+  const n = parseFloat(raw ?? "");
+  return Number.isNaN(n) ? null : n;
+};
+
+const COLUMNS = [
+  { key: "parlay", label: "Parlay" },
+  { key: "owner", label: "Bet Owner" },
+  { key: "matchup", label: "Matchup / Prop" },
+  { key: "type", label: "Type" },
+  { key: "pick", label: "Pick" },
+  { key: "line", label: "Line" },
+  { key: "odds", label: "Odds" },
+  { key: "date", label: "Date" },
+  { key: "kickoff", label: "Kickoff (ET)" },
+  { key: "slate", label: "Slate" },
+  { key: "result", label: "Result" },
+] as const;
+type ColumnKey = (typeof COLUMNS)[number]["key"];
+
+/** Minutes past midnight Eastern, so "Kickoff" sorts by time of day rather
+ * than repeating the Date column's order. */
+function kickoffMinutesEt(leg: Leg): number | null {
+  if (!leg.game?.gameTime) return null;
+  const [h, m] = new Date(leg.game.gameTime)
+    .toLocaleTimeString("en-US", { timeZone: "America/New_York", hour12: false, hour: "2-digit", minute: "2-digit" })
+    .split(":")
+    .map(Number);
+  return (h % 24) * 60 + m;
+}
 
 // Standard "lookthrough" grid for a set of parlay legs spanning multiple
 // parlays (History page tile drilldowns, League Records tile lookthrough).
@@ -20,6 +56,21 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
   // "Bet Owner" is who placed the leg, which on a group parlay is usually not
   // the member who started the parlay.
   const effectiveUserId = useEffectiveUserId();
+  // Rows arrive in each lookthrough's own default order; that's what an
+  // unsorted table (and the third click on a column) shows.
+  const { sorted, sortKey, sortDir, toggle } = useColumnSort<Leg, ColumnKey>(legs, {
+    parlay: (l) => (l.parlay.week ? l.parlay.week.season * 100 + l.parlay.week.weekNumber : l.parlay.weekId),
+    owner: (l) => (l.userId === effectiveUserId ? "You" : getDisplayName(l.user, "Member")),
+    matchup: (l) => legMatchup(l),
+    type: (l) => l.betType,
+    pick: (l) => formatPickLabel(l),
+    line: (l) => numeric(l.line),
+    odds: (l) => parseAmericanOdds(l.odds),
+    date: kickoff,
+    kickoff: kickoffMinutesEt,
+    slate: (l) => (l.game?.gameTime ? getSlate(new Date(l.game.gameTime)) : null),
+    result: (l) => l.result,
+  });
   if (legs.length === 0) {
     return <p className="text-sm text-muted-foreground italic py-2 px-1">No legs.</p>;
   }
@@ -28,22 +79,21 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
       <table className="w-full min-w-[980px] text-sm">
         <thead>
           <tr className="bg-muted/30 text-muted-foreground text-xs">
-            <th className="text-left px-3 py-2 font-medium">Parlay</th>
-            <th className="text-left px-3 py-2 font-medium">Bet Owner</th>
-            <th className="text-left px-3 py-2 font-medium">Matchup / Prop</th>
-            <th className="text-left px-3 py-2 font-medium">Type</th>
-            <th className="text-left px-3 py-2 font-medium">Pick</th>
-            <th className="text-left px-3 py-2 font-medium">Line</th>
-            <th className="text-left px-3 py-2 font-medium">Odds</th>
-            <th className="text-left px-3 py-2 font-medium">Date</th>
-            <th className="text-left px-3 py-2 font-medium">Kickoff (ET)</th>
-            <th className="text-left px-3 py-2 font-medium">Slate</th>
-            <th className="text-left px-3 py-2 font-medium">Result</th>
+            {COLUMNS.map((col) => (
+              <th key={col.key} className="text-left px-3 py-2 font-medium" aria-sort={sortKey === col.key ? (sortDir === "asc" ? "ascending" : "descending") : undefined}>
+                <SortHeader
+                  label={col.label}
+                  active={sortKey === col.key}
+                  dir={sortDir}
+                  onClick={() => toggle(col.key)}
+                />
+              </th>
+            ))}
             <th className="px-2 py-2 w-8" />
           </tr>
         </thead>
         <tbody>
-          {legs.map((leg, i) => (
+          {sorted.map((leg, i) => (
             <tr
               key={leg.id ?? i}
               className={cn(

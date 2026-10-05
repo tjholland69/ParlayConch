@@ -25,7 +25,7 @@ import { upToCurrentWeek } from "@/lib/weekFilters";
 import { format } from "date-fns";
 import { PageLoader } from "@/components/PageLoader";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
-import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
+import { ExpandCollapseControls, nextBulkSignal } from "@/components/ExpandCollapseControls";
 import { getDisplayName, shortId, sortByFirstName } from "@/lib/displayName";
 import { useAuth } from "@/hooks/use-auth";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
@@ -856,8 +856,8 @@ export default function DemoDataEditor() {
             <>
               <ExpandCollapseControls
                 className="flex items-center gap-2"
-                onCollapseAll={() => setCollapseSignal(s => s + 1)}
-                onExpandAll={() => setExpandSignal(s => s + 1)}
+                onCollapseAll={() => setCollapseSignal(nextBulkSignal())}
+                onExpandAll={() => setExpandSignal(nextBulkSignal())}
               />
               {selectMode ? (
                 <>

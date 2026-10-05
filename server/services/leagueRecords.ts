@@ -3,6 +3,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { leagueMembers, parlays, parlayLegs, games, weeks, leagues } from "@shared/db-schema";
 import { parseAmericanOdds } from "@shared/powerScore";
 import { getSlate } from "@shared/slate";
+import { applyBoost } from "@shared/parlayBoost";
 import { storage } from "../storage";
 
 /** Mirrors LOSER_LABEL_TEXT in client/src/components/ParlayRollupCard.tsx —
@@ -57,6 +58,10 @@ export type LeagueRecordEntry = {
    * Null when they have nothing in the category yet. A side note on the
    * tile, not the record itself. */
   viewerValue?: string | null;
+  /** Replaces the default "...and for you..." caption beside `viewerValue`
+   * on a tile whose bottom half isn't the viewer's own figure (Spice Melange
+   * shows the league's runner-up there instead). */
+  viewerLabel?: string | null;
   /** True when the requesting member holds this record, so the client can
    * say so instead of repeating the record's own value back to them. */
   viewerIsHolder?: boolean;
@@ -128,6 +133,7 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
       parlayUserId: parlays.userId,
       parlayStatus: parlays.status,
       parlayWeekId: parlays.weekId,
+      parlayBoostPct: parlays.boostPct,
       homeTeam: games.homeTeam,
       awayTeam: games.awayTeam,
       gameFinishedAt: games.finishedAt,
@@ -161,6 +167,8 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
   const records: LeagueRecordEntry[] = [];
   // The viewer's own figure per record key — attached to each record at the end.
   const viewerValues: Record<string, string | null> = {};
+  // Tiles whose bottom half shows something other than the viewer's own figure.
+  const viewerLabels: Record<string, string> = {};
   const americanLabel = (american: number) => (american > 0 ? `+${american}` : String(american));
   const countLabel = (n: number, unit: string) => `${n} ${unit}${n !== 1 ? "s" : ""}`;
 
@@ -225,8 +233,9 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
     if (arr) arr.push(r); else legsByParlay.set(r.parlayId, [r]);
   }
   let bestParlay: { decimal: number; userId: string | null; weekId: number; parlayId: number } | null = null;
-  // Best combined odds among parlays the viewer has a leg in.
-  let viewerBestParlay = 0;
+  // Runner-up to bestParlay — this tile's bottom half shows the league's
+  // second-highest parlay odds rather than the viewer's own best.
+  let secondBestParlay = 0;
   for (const [parlayId, legs] of legsByParlay) {
     let combined = 1;
     let any = false;
@@ -237,16 +246,19 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
       any = true;
     }
     if (!any) continue;
-    if (viewerUserId && combined > viewerBestParlay && legs.some(r => r.leg.userId === viewerUserId)) {
-      viewerBestParlay = combined;
-    }
+    // A promo boost raises what the parlay actually pays.
+    combined = applyBoost(combined, legs[0].parlayBoostPct);
     if (!bestParlay || combined > bestParlay.decimal) {
+      if (bestParlay) secondBestParlay = bestParlay.decimal;
       bestParlay = { decimal: combined, userId: legs[0].parlayUserId, weekId: legs[0].parlayWeekId, parlayId };
+    } else if (combined > secondBestParlay) {
+      secondBestParlay = combined;
     }
   }
-  viewerValues.highestParlayOdds = viewerBestParlay > 0
-    ? `${viewerBestParlay.toFixed(1)}x (${decimalToAmericanLabel(viewerBestParlay)})`
+  viewerValues.highestParlayOdds = secondBestParlay > 0
+    ? `${secondBestParlay.toFixed(1)}x (${decimalToAmericanLabel(secondBestParlay)})`
     : null;
+  viewerLabels.highestParlayOdds = "2nd Place";
   if (bestParlay) {
     records.push({
       key: "highestParlayOdds",
@@ -516,7 +528,10 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
     }
   }
   const viewerStat = eligibleStats.find(s => s.userId === viewerUserId);
-  viewerValues.weakLink = viewerStat ? `${Math.round(viewerStat.participationRate * 100)}%` : null;
+  const viewerParticipationPct = viewerStat ? Math.round(viewerStat.participationRate * 100) : null;
+  viewerValues.weakLink = viewerParticipationPct == null
+    ? null
+    : `${viewerParticipationPct}%${viewerParticipationPct === 100 ? " 💪" : ""}`;
   if (weakestLink) {
     records.push({
       key: "weakLink",
@@ -562,6 +577,9 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
   return records.map(record => ({
     ...record,
     viewerValue: viewerValues[record.key] ?? null,
-    viewerIsHolder: record.holderUserId === viewerUserId,
+    viewerLabel: viewerLabels[record.key] ?? null,
+    // A tile with its own bottom-half caption isn't about the viewer, so it
+    // never swaps to the "that's you" line.
+    viewerIsHolder: !viewerLabels[record.key] && record.holderUserId === viewerUserId,
   }));
 }

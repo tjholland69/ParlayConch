@@ -34,6 +34,8 @@ export interface LeagueRecordEntry {
   /** The signed-in member's own figure for this category; null when they
    * have nothing in it yet. */
   viewerValue?: string | null;
+  /** Caption beside viewerValue when it isn't the viewer's own figure (e.g. "2nd Place"). */
+  viewerLabel?: string | null;
   /** True when the signed-in member holds this record. */
   viewerIsHolder?: boolean;
 }

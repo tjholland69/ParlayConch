@@ -148,11 +148,28 @@ export function useCancelParlay(leagueId: number, weekId: number) {
   });
 }
 
-/** Finalizes a draft parlay — enforces minLegsPerParlay and flips it to 'pending'. */
+/** Sets or clears (null) a parlay's sportsbook promo boost. Works at any
+ * status, so a boost can be recorded after the bet is live. */
+export function useSetParlayBoost(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ parlayId, boostPct }: { parlayId: number; boostPct: number | null }) =>
+      apiRequest("PUT", `/api/parlays/${parlayId}/boost`, { boostPct }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "parlays"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+    },
+  });
+}
+
+/** Finalizes a draft parlay — enforces minLegsPerParlay and flips it to
+ * 'pending'. `boostPct` is the answer to the boost prompt (null = none). */
 export function useSubmitDraftParlay(leagueId: number, weekId: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (parlayId: number) => apiRequest<ParlayWithLegs>("POST", `/api/parlays/${parlayId}/submit`),
+    mutationFn: ({ parlayId, boostPct }: { parlayId: number; boostPct?: number | null }) =>
+      apiRequest<ParlayWithLegs>("POST", `/api/parlays/${parlayId}/submit`, boostPct !== undefined ? { boostPct } : undefined),
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data);
       queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });

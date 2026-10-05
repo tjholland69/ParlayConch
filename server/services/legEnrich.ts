@@ -9,6 +9,7 @@ import { syncDefensiveStatsFromEspn } from "./espnBoxscore";
 import { syncGameFinishTimesFromPlayByPlay } from "./playByPlay";
 import { getHistoricalGameLines } from "./historicalOddsCache";
 import { buildResultDetail } from "@shared/legJustification";
+import { gradePropOverUnder } from "@shared/propGrading";
 
 const DEFENSIVE_PROP_TYPES = new Set(["sacks", "tackles"]);
 
@@ -146,17 +147,14 @@ function calcPropResult(
     return { result: null, actual, note: `Line "${line}" is not a valid number (actual: ${actual})` };
   }
 
-  let result: "win" | "loss" | "push" | null;
-  if (pick === "over") {
-    result = actual > lineNum ? "win" : actual < lineNum ? "loss" : "push";
-  } else if (pick === "under") {
-    result = actual < lineNum ? "win" : actual > lineNum ? "loss" : "push";
-  } else {
+  // Landing exactly on the line wins the over — a prop never pushes.
+  const result = gradePropOverUnder(actual, lineNum, pick);
+  if (!result) {
     return { result: null, actual, note: `Unexpected pick "${pick}" for stat prop — use over/under/yes/no (actual: ${actual})` };
   }
 
   return {
-    result: result === "push" ? null : result,
+    result,
     actual,
     note: `${pick} ${lineNum} — actual ${statLabel}: ${actual} → ${result}`,
   };

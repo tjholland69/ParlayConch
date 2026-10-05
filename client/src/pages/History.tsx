@@ -33,7 +33,7 @@ import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
 import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
-import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
+import { ExpandCollapseControls, nextBulkSignal } from "@/components/ExpandCollapseControls";
 import { getSlate } from "@shared/slate";
 
 // AG Grid alone is ~1MB — only worth loading once someone actually asks
@@ -786,8 +786,8 @@ export default function History() {
               </ToggleGroup>
               {viewMode === "tiles" && (
                 <ExpandCollapseControls
-                  onCollapseAll={() => setCollapseSignal(s => s + 1)}
-                  onExpandAll={() => setExpandSignal(s => s + 1)}
+                  onCollapseAll={() => setCollapseSignal(nextBulkSignal())}
+                  onExpandAll={() => setExpandSignal(nextBulkSignal())}
                 />
               )}
             </div>

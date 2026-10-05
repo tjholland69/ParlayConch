@@ -252,6 +252,8 @@ export type WeekLockStatus = {
   submittedCount: number;
   totalMembers: number;
   allSubmitted: boolean;
+  /** Members with no leg in this week's parlay yet. */
+  missingMemberIds: string[];
 };
 
 export type ImportParlayLeg = Omit<InsertParlayLeg, 'parlayId'> & { result?: string | null };
@@ -326,6 +328,8 @@ export type ActiveWeekStatus = {
   allSubmitted: boolean;
   isLocked: boolean;
   currentUserSubmitted: boolean;
+  /** Members with no leg in this week's parlay yet. */
+  missingMemberIds: string[];
   hasPendingParlay: boolean;
   hasApprovedParlay: boolean;
   currentUserHasUnsubmittedDraft: boolean;

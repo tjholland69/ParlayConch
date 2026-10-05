@@ -155,7 +155,7 @@ export interface IStorage {
   isSuperUser(userId: string): Promise<boolean>;
   isLeagueAdmin(leagueId: number, userId: string): Promise<boolean>;
   isLeagueLieutenant(leagueId: number, userId: string): Promise<boolean>;
-  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'maxBetsPerGame' | 'insightsEnabled' | 'loserLabel' | 'heroLabel'>>): Promise<League>;
+  updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'maxBetsPerGame' | 'insightsEnabled' | 'loserLabel' | 'heroLabel' | 'createdAt'>>): Promise<League>;
   updateLieutenantPermissions(leagueId: number, permissions: LieutenantPermissions): Promise<League>;
   setMemberRole(leagueId: number, userId: string, role: string): Promise<LeagueMember>;
   getLieutenants(leagueId: number): Promise<LeagueMemberWithUser[]>;
@@ -179,7 +179,8 @@ export interface IStorage {
     maxBetsPerGame: number,
   ): Promise<Parlay>;
   removeDraftParlayLeg(userId: string, parlayId: number, legId: number): Promise<Parlay | null>;
-  submitDraftParlay(userId: string, parlayId: number, minLegsPerParlay: number, maxLegsPerParlay: number): Promise<Parlay>;
+  submitDraftParlay(userId: string, parlayId: number, minLegsPerParlay: number, maxLegsPerParlay: number, boostPct?: number | null): Promise<Parlay>;
+  setParlayBoost(parlayId: number, boostPct: number | null): Promise<Parlay>;
   getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(
@@ -312,7 +313,7 @@ export interface IStorage {
   getGamesForSeasonWeek(season: number, weekNumber: number): Promise<Game[]>;
   upsertPlayer(data: Omit<InsertPlayer, 'updatedAt'>): Promise<Player>;
   upsertPlayerByEspn(data: Omit<InsertPlayer, 'updatedAt' | 'nflverseId'> & { espnId: string }): Promise<Player>;
-  searchPlayers(query: string, limit?: number, opts?: { teams?: string[] }): Promise<Player[]>;
+  searchPlayers(query: string, limit?: number, opts?: { teams?: string[]; leagueIds?: number[] }): Promise<Player[]>;
   getAllTeams(): Promise<Team[]>;
   upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat>;
   bulkUpsertPlayers(rows: (Omit<InsertPlayer, 'updatedAt'> & { nflverseId: string })[]): Promise<Map<string, number>>;
@@ -346,8 +347,9 @@ export class DatabaseStorage implements IStorage {
   /** The only code path allowed to flip a week's isActive to true — deactivates every
    * other week first so at most one week is ever active at a time. */
   async setActiveWeek(weekId: number): Promise<void> {
-    await db.update(weeks).set({ isActive: false });
-    await db.update(weeks).set({ isActive: true }).where(eq(weeks.id, weekId));
+    // One statement, so there's never a moment with no active week (or, if
+    // the second of two updates failed, no active week at all).
+    await db.update(weeks).set({ isActive: sql`${weeks.id} = ${weekId}` });
   }
 
   async getGamesByWeek(weekId: number, userId?: string): Promise<GameWithBet[]> {
@@ -756,12 +758,36 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
+  /**
+   * Who is "in" for a week, per league: every member who has put a leg into a
+   * submitted (non-draft) parlay, plus whoever owns one. A league parlay is one
+   * row that members each add their leg to, so counting parlay rows would
+   * report a single member no matter how many have contributed.
+   */
+  private async getWeekContributors(leagueIds: number[], weekId: number): Promise<Map<number, Set<string>>> {
+    const submitted = and(eq(parlays.weekId, weekId), inArray(parlays.leagueId, leagueIds), not(eq(parlays.status, 'draft')));
+    const [owners, legOwners] = await Promise.all([
+      db.select({ leagueId: parlays.leagueId, userId: parlays.userId }).from(parlays).where(submitted),
+      db.selectDistinct({ leagueId: parlays.leagueId, userId: parlayLegs.userId })
+        .from(parlayLegs)
+        .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+        .where(submitted),
+    ]);
+    const byLeague = new Map<number, Set<string>>();
+    for (const row of [...owners, ...legOwners]) {
+      const set = byLeague.get(row.leagueId) ?? new Set<string>();
+      set.add(row.userId);
+      byLeague.set(row.leagueId, set);
+    }
+    return byLeague;
+  }
+
   async getActiveWeekParlayStatus(leagueIds: number[], userId: string): Promise<Record<number, ActiveWeekStatus>> {
     if (leagueIds.length === 0) return {};
     const [activeWeek] = await db.select().from(weeks).where(eq(weeks.isActive, true)).limit(1);
     if (!activeWeek) return {};
 
-    const [parlayRows, draftRows, lockRows, memberRows] = await Promise.all([
+    const [parlayRows, draftRows, lockRows, memberRows, contributors] = await Promise.all([
       // Exclude 'draft' — an in-progress, not-yet-submitted parlay must not
       // count toward submittedCount/allSubmitted/currentUserSubmitted, or a
       // user who only started a pick (but never submitted) would be shown
@@ -778,9 +804,10 @@ export class DatabaseStorage implements IStorage {
       db.select({ leagueId: leagueWeekLocks.leagueId })
         .from(leagueWeekLocks)
         .where(and(eq(leagueWeekLocks.weekId, activeWeek.id), inArray(leagueWeekLocks.leagueId, leagueIds))),
-      db.select({ leagueId: leagueMembers.leagueId })
+      db.select({ leagueId: leagueMembers.leagueId, userId: leagueMembers.userId })
         .from(leagueMembers)
         .where(inArray(leagueMembers.leagueId, leagueIds)),
+      this.getWeekContributors(leagueIds, activeWeek.id),
     ]);
 
     const lockedSet = new Set(lockRows.map(l => l.leagueId));
@@ -788,8 +815,13 @@ export class DatabaseStorage implements IStorage {
     const result: Record<number, ActiveWeekStatus> = {};
     for (const leagueId of leagueIds) {
       const leagueParlays = parlayRows.filter(p => p.leagueId === leagueId);
-      const submittedCount = leagueParlays.length;
-      const totalMembers = memberRows.filter(m => m.leagueId === leagueId).length;
+      // Members who've contributed a leg — not parlay rows, of which a league
+      // sharing one parlay has just the one.
+      const memberIds = memberRows.filter(m => m.leagueId === leagueId).map(m => m.userId);
+      const inIds = contributors.get(leagueId) ?? new Set<string>();
+      const missingMemberIds = memberIds.filter(id => !inIds.has(id));
+      const totalMembers = memberIds.length;
+      const submittedCount = totalMembers - missingMemberIds.length;
       result[leagueId] = {
         weekId: activeWeek.id,
         weekLabel: activeWeek.label,
@@ -797,7 +829,8 @@ export class DatabaseStorage implements IStorage {
         totalMembers,
         allSubmitted: submittedCount >= totalMembers && totalMembers > 0,
         isLocked: lockedSet.has(leagueId),
-        currentUserSubmitted: leagueParlays.some(p => p.userId === userId),
+        currentUserSubmitted: inIds.has(userId),
+        missingMemberIds,
         // Active week parlay status (for Quick Picks tile badges)
         hasPendingParlay: leagueParlays.some(p => p.status === 'pending'),
         hasApprovedParlay: leagueParlays.some(p => p.status === 'approved'),
@@ -992,7 +1025,7 @@ export class DatabaseStorage implements IStorage {
     return all.filter(m => m.role === 'lieutenant');
   }
 
-  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'maxBetsPerGame' | 'insightsEnabled' | 'loserLabel'>>): Promise<League> {
+  async updateLeagueSettings(leagueId: number, updates: Partial<Pick<League, 'name' | 'description' | 'maxParlaysPerWeek' | 'minLegsPerParlay' | 'maxLegsPerParlay' | 'maxBetsPerGame' | 'insightsEnabled' | 'loserLabel' | 'heroLabel' | 'createdAt'>>): Promise<League> {
     const [updated] = await db.update(leagues)
       .set(updates)
       .where(eq(leagues.id, leagueId))
@@ -1347,6 +1380,7 @@ export class DatabaseStorage implements IStorage {
     parlayId: number,
     minLegsPerParlay: number,
     maxLegsPerParlay: number,
+    boostPct?: number | null,
   ): Promise<Parlay> {
     const updated = await db.transaction(async (tx) => {
       const [existing] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
@@ -1369,12 +1403,20 @@ export class DatabaseStorage implements IStorage {
 
       const [record] = await tx
         .update(parlays)
-        .set({ status: "pending", createdAt: new Date() })
+        .set({ status: "pending", createdAt: new Date(), ...(boostPct !== undefined ? { boostPct } : {}) })
         .where(eq(parlays.id, parlayId))
         .returning();
       return record;
     });
 
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
+    return updated;
+  }
+
+  /** Sets or clears (null) a parlay's promo boost. Allowed at any status. */
+  async setParlayBoost(parlayId: number, boostPct: number | null): Promise<Parlay> {
+    const [updated] = await db.update(parlays).set({ boostPct }).where(eq(parlays.id, parlayId)).returning();
+    if (!updated) throw new Error("Parlay not found");
     emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
     return updated;
   }
@@ -2478,9 +2520,10 @@ export class DatabaseStorage implements IStorage {
     // being built, never hit submit) doesn't count, or allSubmitted could
     // go true from in-progress drafts alone and the lock action would skip
     // its "members without a pick will be void" warning for real non-submitters.
-    const submitted = await db.select().from(parlays)
-      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId), not(eq(parlays.status, 'draft'))));
-    const submittedCount = submitted.length;
+    // Counted per member who has a leg in (see getWeekContributors), not per
+    // parlay row.
+    const inIds = (await this.getWeekContributors([leagueId], weekId)).get(leagueId) ?? new Set<string>();
+    const submittedCount = members.filter(m => inIds.has(m.userId)).length;
 
     // Check for existing lock
     const [lock] = await db.select().from(leagueWeekLocks)
@@ -2494,6 +2537,7 @@ export class DatabaseStorage implements IStorage {
       submittedCount,
       totalMembers,
       allSubmitted: submittedCount >= totalMembers && totalMembers > 0,
+      missingMemberIds: members.filter(m => !inIds.has(m.userId)).map(m => m.userId),
     };
   }
 
@@ -2860,7 +2904,7 @@ export class DatabaseStorage implements IStorage {
    * an existing parlay: wiping someone's legs from a bulk-entry form would be
    * a nasty surprise, so the caller is told to edit the existing one instead.
    */
-  async createMultiBetParlay(ownerId: string, leagueId: number, weekId: number, legs: MultiBetLegInput[]): Promise<{ parlay: Parlay; legIds: number[] }> {
+  async createMultiBetParlay(ownerId: string, leagueId: number, weekId: number, legs: MultiBetLegInput[], boostPct: number | null = null): Promise<{ parlay: Parlay; legIds: number[] }> {
     const created = await db.transaction(async (tx) => {
       const existing = await tx
         .select({ id: parlays.id })
@@ -2869,7 +2913,7 @@ export class DatabaseStorage implements IStorage {
       if (existing.length > 0) throw new ParlayAlreadyExistsError();
 
       const [parlay] = await tx.insert(parlays).values({
-        userId: ownerId, leagueId, weekId, status: "approved", source: "imported",
+        userId: ownerId, leagueId, weekId, status: "approved", source: "imported", boostPct,
       }).returning();
       const inserted = await tx.insert(parlayLegs).values(legs.map(leg => ({
         parlayId: parlay.id,
@@ -2900,8 +2944,12 @@ export class DatabaseStorage implements IStorage {
    * punctuation, so "aj brown" finds "A.J. Brown". Names that only exist on
    * parlay legs (typed in by hand, never synced) are included too, with a
    * negative id, since filters match on the leg's player name.
+   *
+   * Once something is typed, matches are ranked by how often the player has
+   * been picked on a player-prop leg (in `leagueIds` when given, otherwise
+   * anywhere), most picked first; players level on picks sort alphabetically.
    */
-  async searchPlayers(query: string, limit = 20, opts: { teams?: string[] } = {}): Promise<Player[]> {
+  async searchPlayers(query: string, limit = 20, opts: { teams?: string[]; leagueIds?: number[] } = {}): Promise<Player[]> {
     // `teams` (abbreviations) scopes the search to those rosters — used by
     // the player-prop picker, which only offers players in the game.
     const teamScope = opts.teams?.map(t => t.toUpperCase());
@@ -2913,22 +2961,41 @@ export class DatabaseStorage implements IStorage {
 
     const playerHaystack = normalized(sql`coalesce(${players.displayName}, '') || ' ' || ${players.name}`);
     const displayNorm = normalized(sql`coalesce(${players.displayName}, ${players.name})`);
-    const playerRows = await db.select().from(players)
+    const legNorm = normalized(parlayLegs.playerName);
+    const propPicks = db
+      .select({ nameKey: legNorm.as("name_key"), picks: sql<number>`count(*)::int`.as("picks") })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(and(
+        eq(parlayLegs.betType, "player_prop"),
+        sql`${parlayLegs.playerName} is not null`,
+        opts.leagueIds?.length ? inArray(parlays.leagueId, opts.leagueIds) : undefined,
+      ))
+      .groupBy(legNorm)
+      .as("prop_picks");
+    const pickCount = sql<number>`coalesce(${propPicks.picks}, 0)`;
+    const alphabetical = sql`coalesce(${players.displayName}, ${players.name})`;
+    const rankedRows = await db.select({ player: players, picks: pickCount }).from(players)
+      .leftJoin(propPicks, eq(propPicks.nameKey, displayNorm))
       .where(and(
         matchesAll(playerHaystack),
         teamScope ? inArray(sql`upper(${players.team})`, teamScope) : undefined,
       ))
-      .orderBy(
-        // Names that start with what was typed, then ones where a later word does.
-        sql`case when ${displayNorm} like ${`${norm}%`} then 0 when ${displayNorm} like ${`% ${norm}%`} then 1 else 2 end`,
-        // Within a roster, the positions props are usually bet on come first,
-        // so the list is useful before anything is typed.
-        ...(teamScope
-          ? [sql`case ${players.position} when 'QB' then 0 when 'RB' then 1 when 'WR' then 2 when 'TE' then 3 when 'K' then 4 else 5 end`]
-          : []),
-        sql`coalesce(${players.displayName}, ${players.name})`,
-      )
+      .orderBy(...(tokens.length
+        // Typing: players already picked on a prop come first, most picked
+        // at the top, and ties go alphabetically.
+        ? [desc(pickCount), alphabetical]
+        : [
+            desc(pickCount),
+            // Nothing typed yet: within a roster, lead with the positions
+            // props are usually bet on so the list is useful as it opens.
+            ...(teamScope
+              ? [sql`case ${players.position} when 'QB' then 0 when 'RB' then 1 when 'WR' then 2 when 'TE' then 3 when 'K' then 4 else 5 end`]
+              : []),
+            alphabetical,
+          ]))
       .limit(limit);
+    const playerRows = rankedRows.map(r => r.player);
 
     // Names typed onto past legs have no team, so they can't be placed on a
     // roster. A player synced from two sources can have two rows; keep the
@@ -2949,29 +3016,37 @@ export class DatabaseStorage implements IStorage {
       .from(parlayLegs)
       .where(and(sql`${parlayLegs.playerName} is not null`, matchesAll(legHaystack)))
       .groupBy(legHaystack)
-      .orderBy(sql`count(*) desc`)
+      .orderBy(sql`count(*) desc`, sql`min(${parlayLegs.playerName})`)
       .limit(limit);
 
     const seen = new Set<string>();
-    const results: Player[] = [];
-    for (const p of playerRows) {
-      const key = normalizePlayerName(p.displayName || p.name);
+    const results: { player: Player; picks: number }[] = [];
+    for (const row of rankedRows) {
+      const key = normalizePlayerName(row.player.displayName || row.player.name);
       if (seen.has(key)) continue;
       seen.add(key);
-      results.push(p);
+      results.push(row);
     }
-    const legOnly: Player[] = [];
+    const legOnly: { player: Player; picks: number }[] = [];
     for (const row of legRows) {
       const key = normalizePlayerName(row.name);
       if (!key || seen.has(key)) continue;
       seen.add(key);
       legOnly.push({
-        id: -(legOnly.length + 1), nflverseId: null, espnId: null, name: row.name, displayName: row.name,
-        position: null, team: null, headshot: null, updatedAt: null,
+        picks: row.uses,
+        player: {
+          id: -(legOnly.length + 1), nflverseId: null, espnId: null, name: row.name, displayName: row.name,
+          position: null, team: null, headshot: null, updatedAt: null,
+        },
       });
     }
     // With nothing typed yet, lead with players the league has actually bet on.
-    return (tokens.length ? [...results, ...legOnly] : [...legOnly, ...results]).slice(0, limit);
+    if (!tokens.length) return [...legOnly, ...results].map(r => r.player).slice(0, limit);
+    const label = (p: Player) => p.displayName || p.name;
+    return [...results, ...legOnly]
+      .sort((a, b) => b.picks - a.picks || label(a.player).localeCompare(label(b.player)))
+      .map(r => r.player)
+      .slice(0, limit);
   }
 
   async upsertPlayerWeekStat(data: InsertPlayerWeekStat): Promise<PlayerWeekStat> {

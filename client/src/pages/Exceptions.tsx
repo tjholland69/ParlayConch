@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { EmptyState } from "@/components/SlidingCard";
 import { formatPickLabel } from "@/lib/formatPick";
+import { BackLink } from "@/components/BackLink";
 
 const REASON_LABELS: Record<string, string> = {
   result_wrong: "Result is wrong",
@@ -141,6 +142,7 @@ export default function Exceptions() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
+        <BackLink href="/admin" label="Admin" />
         <h1 className="text-2xl font-bold font-display tracking-tight flex items-center gap-2">
           <AlertOctagon className="w-6 h-6 text-accent" />
           Exceptions Queue

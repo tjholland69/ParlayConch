@@ -257,6 +257,8 @@ export type LeagueRecordEntry = {
   /** The signed-in member's own figure for this category; null when they
    * have nothing in it yet. */
   viewerValue?: string | null;
+  /** Caption beside viewerValue when it isn't the viewer's own figure (e.g. "2nd Place"). */
+  viewerLabel?: string | null;
   /** True when the signed-in member holds this record. */
   viewerIsHolder?: boolean;
 };
@@ -618,9 +620,11 @@ export function useSubmitDraftParlay() {
   const { toast } = useToast();
 
   return useMutation({
-    mutationFn: async (data: { parlayId: number; leagueId: number; weekId: number }) => {
+    mutationFn: async (data: { parlayId: number; leagueId: number; weekId: number; boostPct?: number | null }) => {
       const res = await fetch(`/api/parlays/${data.parlayId}/submit`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data.boostPct !== undefined ? { boostPct: data.boostPct } : {}),
         credentials: "include",
       });
       if (!res.ok) {
@@ -632,6 +636,42 @@ export function useSubmitDraftParlay() {
     onSuccess: (_, variables) => {
       invalidateDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);
       toast({ title: "Parlay Submitted!", description: "Good luck this week!" });
+    },
+    onError: (error) => {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+    },
+  });
+}
+
+/** Sets or clears (null) a parlay's sportsbook promo boost. Works at any
+ * status, so a boost can be recorded after the bet is live. */
+export function useSetParlayBoost() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  return useMutation({
+    mutationFn: async ({ parlayId, boostPct }: { parlayId: number; boostPct: number | null }) => {
+      const res = await fetch(`/api/parlays/${parlayId}/boost`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ boostPct }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.message || "Failed to save boost");
+      }
+      return res.json();
+    },
+    onSuccess: (_, { boostPct }) => {
+      // The parlay shows up in several lists (open, all, history, mine).
+      queryClient.invalidateQueries({
+        predicate: (q) => {
+          const root = String(q.queryKey[0] ?? "");
+          return root.startsWith("/api/parlays") || root.startsWith("/api/leagues");
+        },
+      });
+      toast({ title: boostPct ? "Boost saved" : "Boost removed" });
     },
     onError: (error) => {
       toast({ title: "Error", description: error.message, variant: "destructive" });
@@ -1553,7 +1593,7 @@ export function useAddMultiBetParlay(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   return useMutation({
-    mutationFn: async (body: { userId: string; weekId: number; legs: MultiBetLegInput[] }) => {
+    mutationFn: async (body: { userId: string; weekId: number; legs: MultiBetLegInput[]; boostPct?: number | null }) => {
       const res = await fetch(`/api/leagues/${leagueId}/parlays/multi-bet`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
+import { useLeagues, useUpdateLeagueSettings, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
 import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2, Award, Flame, Shield, User, Dices, TrendingUp, TrendingDown, Citrus } from "lucide-react";
+import { Trophy, Pencil, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2, Award, Flame, Shield, User, Dices, TrendingUp, TrendingDown, Citrus } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { format, formatDistanceToNow } from "date-fns";
@@ -25,7 +25,10 @@ import { AddPropLegDialog } from "@/components/AddPropLegDialog";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ParticipationLookthrough } from "@/components/ParticipationLookthrough";
-import { ExpandCollapseControls } from "@/components/ExpandCollapseControls";
+import { ExpandCollapseControls, nextBulkSignal } from "@/components/ExpandCollapseControls";
+import { SortHeader } from "@/components/SortHeader";
+import { BoostDialog } from "@/components/BoostDialog";
+import { useColumnSort } from "@/hooks/use-column-sort";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
 import { PageLoader } from "@/components/PageLoader";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -59,6 +62,7 @@ function AllParlaysList({
   memberCount,
   loserLabel,
   heroLabel,
+  canManage,
   shouldVirtualize,
   hasNextPage,
   isFetchingNextPage,
@@ -74,6 +78,7 @@ function AllParlaysList({
   memberCount: number;
   loserLabel: string | null | undefined;
   heroLabel: string | null | undefined;
+  canManage: boolean;
   shouldVirtualize: boolean;
   hasNextPage: boolean;
   isFetchingNextPage: boolean;
@@ -93,6 +98,7 @@ function AllParlaysList({
         parlay={parlay}
         leagueId={leagueId}
         readOnly
+        canManage={canManage}
         collapseSignal={allCollapseSignal}
         expandSignal={allExpandSignal}
         participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
@@ -106,8 +112,8 @@ function AllParlaysList({
     <div className="space-y-4">
       <div className="flex justify-end">
         <ExpandCollapseControls
-          onCollapseAll={() => setAllCollapseSignal((s) => s + 1)}
-          onExpandAll={() => setAllExpandSignal((s) => s + 1)}
+          onCollapseAll={() => setAllCollapseSignal(nextBulkSignal())}
+          onExpandAll={() => setAllExpandSignal(nextBulkSignal())}
         />
       </div>
       {shouldVirtualize ? (
@@ -154,27 +160,147 @@ function AllParlaysList({
   );
 }
 
+/** "League Created" figure on the League Data tab. The date is stamped when
+ * the league is made in the app; the Parlay Maestro can move it back for a
+ * league that's older than its history here. */
+function LeagueCreatedStat({
+  leagueId,
+  createdAt,
+  canEdit,
+}: {
+  leagueId: number;
+  createdAt: string | Date | null | undefined;
+  canEdit: boolean;
+}) {
+  const updateSettings = useUpdateLeagueSettings(leagueId);
+  const [draft, setDraft] = useState<string | null>(null);
+  const today = format(new Date(), "yyyy-MM-dd");
+
+  const save = () => {
+    if (!draft) return;
+    // Noon local time, so the day doesn't slip when it's stored in UTC.
+    updateSettings.mutate(
+      { createdAt: new Date(`${draft}T12:00:00`).toISOString() },
+      { onSuccess: () => setDraft(null) },
+    );
+  };
+
+  if (draft !== null) {
+    return (
+      <div className="flex flex-col items-center gap-1.5">
+        <Input
+          type="date"
+          value={draft}
+          max={today}
+          onChange={(e) => setDraft(e.target.value)}
+          className="h-8 w-40 text-sm"
+          aria-label="League created date"
+          data-testid="input-league-created"
+        />
+        <div className="flex gap-1">
+          <Button size="sm" className="h-7 px-2 text-xs" onClick={save} disabled={!draft || draft > today || updateSettings.isPending} data-testid="button-save-league-created">
+            Save
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => setDraft(null)} disabled={updateSettings.isPending}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="text-lg sm:text-xl font-bold whitespace-nowrap">
+        {createdAt ? format(new Date(createdAt), "MMM d, yyyy") : "—"}
+        {canEdit && (
+          <button
+            type="button"
+            className="ml-1.5 align-middle text-muted-foreground hover:text-foreground transition-colors"
+            onClick={() => setDraft(createdAt ? format(new Date(createdAt), "yyyy-MM-dd") : today)}
+            title="Change the league created date"
+            aria-label="Change the league created date"
+            data-testid="button-edit-league-created"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </p>
+      <p className="text-xs text-muted-foreground">League Created</p>
+    </div>
+  );
+}
+
+const STANDINGS_COLUMNS = [
+  { key: "record", label: "Record", width: "min-w-[52px]" },
+  { key: "winRate", label: "Win%", width: "min-w-[50px]" },
+  { key: "participation", label: "Part%", width: "min-w-[44px]" },
+  { key: "power", label: "Power", width: "min-w-[44px]" },
+  { key: "bar", label: "BAR", width: "min-w-[44px]" },
+] as const;
+type StandingsSortKey = "member" | (typeof STANDINGS_COLUMNS)[number]["key"];
+
 function StandingsList({ list }: { list: UserStat[] }) {
+  // Rank is always the BAR standing, whichever column the list is sorted by.
+  const rankByUser = useMemo(() => {
+    const byBar = [...list].sort((a, b) => (b.bar ?? 0) - (a.bar ?? 0));
+    return new Map(byBar.map((s, i) => [s.userId, i + 1]));
+  }, [list]);
+  const { sorted, sortKey, sortDir, toggle } = useColumnSort<UserStat, StandingsSortKey>(
+    list,
+    {
+      member: (s) => s.username,
+      record: (s) => s.wins - s.losses,
+      winRate: (s) => s.winRate,
+      participation: (s) => s.participationRate ?? 0,
+      power: (s) => s.powerScore ?? 0,
+      bar: (s) => s.bar ?? 0,
+    },
+    { initial: { key: "bar", dir: "desc" }, firstDir: "desc" },
+  );
   if (!list.length) {
     return <p className="text-muted-foreground text-center py-8 text-sm">No stats yet.</p>;
   }
-  const sorted = [...list].sort((a, b) => (b.bar ?? 0) - (a.bar ?? 0));
   return (
     <div className="space-y-2">
-      {sorted.map((stat, i) => (
+      <div className="flex items-center justify-between px-3 text-xs text-muted-foreground">
+        <SortHeader
+          label="Member"
+          className="pl-9"
+          active={sortKey === "member"}
+          dir={sortDir}
+          onClick={() => toggle("member")}
+        />
+        <div className="flex items-center gap-4">
+          {STANDINGS_COLUMNS.map((col) => (
+            <div key={col.key} className={cn("flex justify-end", col.width)}>
+              <SortHeader
+                label={col.label}
+                align="right"
+                active={sortKey === col.key}
+                dir={sortDir}
+                onClick={() => toggle(col.key)}
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+      {sorted.map((stat) => {
+        const rank = rankByUser.get(stat.userId) ?? 0;
+        return (
         <div
           key={stat.userId}
           className={cn(
             "flex items-center justify-between p-3 rounded-xl border border-transparent",
-            i === 0 ? "bg-primary/10 border-primary/20" : "hover:bg-white/5"
+            rank === 1 ? "bg-primary/10 border-primary/20" : "hover:bg-white/5"
           )}
         >
           <div className="flex items-center gap-3">
             <span className={cn(
               "font-mono font-bold w-6 text-center text-sm",
-              i === 0 ? "text-primary" : "text-muted-foreground"
+              rank === 1 ? "text-primary" : "text-muted-foreground"
             )}>
-              {i + 1}
+              {rank}
             </span>
             <div className="flex items-center gap-2">
               <UserAvatar
@@ -187,43 +313,29 @@ function StandingsList({ list }: { list: UserStat[] }) {
           </div>
 
           <div className="flex items-center gap-4">
-            <div className="text-right">
-              <p className="text-xs text-muted-foreground">Record</p>
-              <p className="font-mono text-xs">{stat.wins}-{stat.losses}-{stat.pushes}</p>
-            </div>
-            <div className="text-right min-w-[50px]">
-              <p className="text-xs text-muted-foreground">Win%</p>
-              <p className={cn(
-                "font-mono font-bold text-sm",
-                stat.winRate >= 50 ? "text-primary" : "text-muted-foreground"
-              )}>
-                {stat.winRate.toFixed(1)}%
-              </p>
-            </div>
-            <div className="text-right min-w-[44px]">
-              <p className="text-xs text-muted-foreground">Part%</p>
-              <p className="font-mono font-bold text-sm text-foreground">
-                {((stat.participationRate ?? 0) * 100).toFixed(0)}%
-              </p>
-            </div>
-            <div className="text-right min-w-[44px]">
-              <p className="text-xs text-muted-foreground">Power</p>
-              <p className="font-mono font-bold text-sm text-foreground">
-                {(stat.powerScore ?? 0).toFixed(2)}
-              </p>
-            </div>
-            <div className="text-right min-w-[44px]">
-              <p className="text-xs text-muted-foreground">BAR</p>
-              <p className={cn(
-                "font-mono font-bold text-sm",
-                (stat.bar ?? 0) > 0 ? "text-primary" : (stat.bar ?? 0) < 0 ? "text-destructive" : "text-muted-foreground"
-              )}>
-                {(stat.bar ?? 0) > 0 ? "+" : ""}{(stat.bar ?? 0).toFixed(2)}
-              </p>
-            </div>
+            <p className="font-mono text-xs text-right min-w-[52px]">{stat.wins}-{stat.losses}-{stat.pushes}</p>
+            <p className={cn(
+              "font-mono font-bold text-sm text-right min-w-[50px]",
+              stat.winRate >= 50 ? "text-primary" : "text-muted-foreground"
+            )}>
+              {stat.winRate.toFixed(1)}%
+            </p>
+            <p className="font-mono font-bold text-sm text-foreground text-right min-w-[44px]">
+              {((stat.participationRate ?? 0) * 100).toFixed(0)}%
+            </p>
+            <p className="font-mono font-bold text-sm text-foreground text-right min-w-[44px]">
+              {(stat.powerScore ?? 0).toFixed(2)}
+            </p>
+            <p className={cn(
+              "font-mono font-bold text-sm text-right min-w-[44px]",
+              (stat.bar ?? 0) > 0 ? "text-primary" : (stat.bar ?? 0) < 0 ? "text-destructive" : "text-muted-foreground"
+            )}>
+              {(stat.bar ?? 0) > 0 ? "+" : ""}{(stat.bar ?? 0).toFixed(2)}
+            </p>
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -582,9 +694,18 @@ export default function LeagueDetail() {
     );
   };
 
+  // Submitting first asks whether the sportsbook boosted this parlay.
+  const [submitBoostOpen, setSubmitBoostOpen] = useState(false);
   const submitParlay = () => {
     if (!activeWeekId || !leagueId || !myParlay) return;
-    submitDraftParlay.mutate({ parlayId: myParlay.id, leagueId, weekId: activeWeekId });
+    setSubmitBoostOpen(true);
+  };
+  const confirmSubmitParlay = (boostPct: number | null) => {
+    if (!activeWeekId || !leagueId || !myParlay) return;
+    submitDraftParlay.mutate(
+      { parlayId: myParlay.id, leagueId, weekId: activeWeekId, boostPct },
+      { onSuccess: () => setSubmitBoostOpen(false) },
+    );
   };
 
   if (!league) {
@@ -757,6 +878,16 @@ export default function LeagueDetail() {
                 {lockStatus?.allSubmitted && !lockStatus?.isLocked && (
                   <Badge className="bg-green-500/20 text-green-400 border-green-500/30 text-xs ml-1">All in</Badge>
                 )}
+                {!lockStatus?.isLocked && !!lockStatus?.missingMemberIds?.length && (
+                  <span className="basis-full text-xs" data-testid="text-waiting-on">
+                    Waiting on:{" "}
+                    {(members ?? [])
+                      .filter(m => lockStatus.missingMemberIds.includes(m.userId))
+                      .map(m => getDisplayName(m.user, "Member"))
+                      .sort((x, y) => x.localeCompare(y))
+                      .join(", ")}
+                  </span>
+                )}
                 {lockStatus?.isLocked && lockStatus?.hadMissingBets && (
                   <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-xs ml-1">
                     <AlertTriangle className="w-3 h-3 mr-1" />Locked with missing bets
@@ -925,8 +1056,8 @@ export default function LeagueDetail() {
                   <div className="space-y-4">
                     <div className="flex justify-end">
                       <ExpandCollapseControls
-                        onCollapseAll={() => setOpenCollapseSignal(s => s + 1)}
-                        onExpandAll={() => setOpenExpandSignal(s => s + 1)}
+                        onCollapseAll={() => setOpenCollapseSignal(nextBulkSignal())}
+                        onExpandAll={() => setOpenExpandSignal(nextBulkSignal())}
                       />
                     </div>
                     {openParlays.map(parlay => (
@@ -956,6 +1087,7 @@ export default function LeagueDetail() {
                             parlay={parlay}
                             leagueId={leagueId}
                             readOnly
+                            canManage={league.isAdmin}
                             collapseSignal={openCollapseSignal}
                             expandSignal={openExpandSignal}
                             participationRate={openParticipationRate}
@@ -1241,6 +1373,7 @@ export default function LeagueDetail() {
                 memberCount={memberCount}
                 loserLabel={league.loserLabel}
                 heroLabel={league.heroLabel}
+                canManage={!!league.isAdmin}
                 shouldVirtualize={shouldVirtualize}
                 hasNextPage={!!hasNextPage}
                 isFetchingNextPage={isFetchingNextPage}
@@ -1276,12 +1409,7 @@ export default function LeagueDetail() {
                     <p className="text-2xl font-bold">{(dataStats?.avgLegsPerParlay ?? 0).toFixed(1)}</p>
                     <p className="text-xs text-muted-foreground">Avg Legs / Parlay</p>
                   </div>
-                  <div>
-                    <p className="text-lg sm:text-xl font-bold whitespace-nowrap">
-                      {league.createdAt ? format(new Date(league.createdAt), "MMM d, yyyy") : "—"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">League Created</p>
-                  </div>
+                  <LeagueCreatedStat leagueId={leagueId} createdAt={league.createdAt} canEdit={!!league.isAdmin} />
                 </div>
               )}
             </CardContent>
@@ -1452,7 +1580,7 @@ export default function LeagueDetail() {
                               <span className="font-semibold truncate">That's You Silly!</span>
                             ) : (
                               <>
-                                <span className="uppercase tracking-wider text-sky-300/70 shrink-0">You</span>
+                                <span className="tracking-wider text-sky-300/70 shrink-0">{record.viewerLabel ?? "...and for you..."}</span>
                                 <span className="font-mono font-semibold truncate">{record.viewerValue ?? "—"}</span>
                               </>
                             )}
@@ -1654,6 +1782,16 @@ export default function LeagueDetail() {
           )}
         </DialogContent>
       </Dialog>
+
+      <BoostDialog
+        open={submitBoostOpen}
+        onOpenChange={setSubmitBoostOpen}
+        initialPct={myParlay?.boostPct}
+        isSaving={submitDraftParlay.isPending}
+        title="Before you submit"
+        confirmLabel="Submit Parlay"
+        onConfirm={confirmSubmitParlay}
+      />
 
       {/* Invite Members Dialog */}
       <Dialog open={inviteOpen} onOpenChange={(open) => { setInviteOpen(open); if (!open) setInviteResults(null); }}>
