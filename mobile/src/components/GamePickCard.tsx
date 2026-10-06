@@ -1,4 +1,5 @@
 import { View, Text, Image, Pressable, StyleSheet } from "react-native";
+import { useState } from "react";
 import { format } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import type { Game } from "@shared/schema";
@@ -114,6 +115,8 @@ export function GamePickCard({
   const totalTaken = !!takenBy?.total && selectedLeg?.betType !== "over" && selectedLeg?.betType !== "under";
   const showPointsControl = !past && !!selectedLeg && !!onAdjustPoints && canBuyPoints(selectedLeg.betType);
   const currentPoints = selectedLeg ? derivePointsMoved(game, selectedLeg.betType, selectedLeg.pick, selectedLeg.line) : 0;
+  // The +/- steppers stay out of the way until the Buy Points field is tapped.
+  const [pointsOpen, setPointsOpen] = useState(false);
 
   const { data: teams } = useTeams();
   const homeTeamData = teams?.find((t) => t.abbreviation === game.homeTeam);
@@ -289,13 +292,21 @@ export function GamePickCard({
 
       {showPointsControl && (
         <View style={styles.pointsRow}>
-          <View style={styles.pointsLabelBlock}>
+          <Pressable
+            onPress={() => setPointsOpen((v) => !v)}
+            style={({ pressed }) => [styles.pointsLabelBlock, pressed && { opacity: 0.7 }]}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: pointsOpen }}
+            accessibilityLabel={pointsOpen ? "Hide the buy points controls" : "Adjust points"}
+            testID={`button-buy-points-${game.id}`}
+          >
             <Text style={styles.pointsLabel}>Buy Points</Text>
             <Text style={styles.pointsValue}>
               {currentPoints === 0 ? "No points bought" : `+${currentPoints} pts → ${selectedLeg!.line ?? ""}`}
             </Text>
-          </View>
-          <View style={styles.pointsSteppers}>
+          </Pressable>
+          {!pointsOpen && <Ionicons name="options-outline" size={16} color="#64748b" />}
+          {pointsOpen && <View style={styles.pointsSteppers}>
             <Pressable
               onPress={() => onAdjustPoints!(Math.max(0, currentPoints - POINTS_STEP))}
               disabled={pointsPending || currentPoints <= 0}
@@ -324,7 +335,7 @@ export function GamePickCard({
             >
               <Ionicons name="add" size={16} color="#f1f5f9" />
             </Pressable>
-          </View>
+          </View>}
         </View>
       )}
 

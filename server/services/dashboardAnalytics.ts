@@ -27,9 +27,27 @@ export interface UserSummary {
   };
 }
 
+/** The Dash page's time filter: one NFL season, or a start/end date on the
+ * parlay's submission time. Season wins when both are set. */
+export type DashboardRange = { startDate?: Date; endDate?: Date; season?: number };
+
+const hasRange = (range?: DashboardRange) => !!range && (range.season != null || !!range.startDate || !!range.endDate);
+
+/** WHERE clauses for a range, for a query that joins `parlays` and `weeks`. */
+function rangeConditions(range?: DashboardRange) {
+  if (!range) return [];
+  // NFL seasons run Sept–Feb, so a season matches weeks.season rather than a
+  // calendar-year createdAt range (same rule as computeWinRateSeries).
+  if (range.season != null) return [eq(weeks.season, range.season)];
+  return [
+    ...(range.startDate ? [gte(parlays.createdAt, range.startDate)] : []),
+    ...(range.endDate ? [lte(parlays.createdAt, range.endDate)] : []),
+  ];
+}
+
 /** Unweighted average of the user's Power / Part / BAR across each league they belong to
  *  (or just the one league, when `leagueId` scopes the view to it). */
-async function getUserPowerMetrics(userId: string, leagueId?: number): Promise<{
+async function getUserPowerMetrics(userId: string, leagueId?: number, range?: DashboardRange): Promise<{
   powerScore: number;
   participationRate: number;
   bar: number;
@@ -47,9 +65,21 @@ async function getUserPowerMetrics(userId: string, leagueId?: number): Promise<{
     return { powerScore: 0, participationRate: 0, bar: 0 };
   }
 
+  // getLeagueStats filters by week, so a range becomes the weeks it covers.
+  let weekIds: number[] | undefined;
+  if (hasRange(range)) {
+    const weekRows = await db
+      .selectDistinct({ weekId: parlays.weekId })
+      .from(parlays)
+      .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+      .where(and(inArray(parlays.leagueId, memberships.map((m) => m.leagueId)), ...rangeConditions(range)));
+    weekIds = weekRows.map((w) => w.weekId);
+    if (weekIds.length === 0) return { powerScore: 0, participationRate: 0, bar: 0 };
+  }
+
   const rows = await Promise.all(
     memberships.map(async ({ leagueId }) => {
-      const stats = await storage.getLeagueStats(leagueId);
+      const stats = await storage.getLeagueStats(leagueId, weekIds);
       return stats.find((s) => s.userId === userId) ?? null;
     }),
   );
@@ -68,7 +98,7 @@ async function getUserPowerMetrics(userId: string, leagueId?: number): Promise<{
 }
 
 /** @param leagueId Scope every stat to a single league. Omitted/undefined = combined across all the user's leagues (the default view). */
-export async function getUserSummary(userId: string, leagueId?: number): Promise<UserSummary> {
+export async function getUserSummary(userId: string, leagueId?: number, range?: DashboardRange): Promise<UserSummary> {
   const [{ leagueCount }] = await db
     .select({ leagueCount: sql<number>`count(*)` })
     .from(leagueMembers)
@@ -81,11 +111,12 @@ export async function getUserSummary(userId: string, leagueId?: number): Promise
   const [{ parlaysPlaced }] = await db
     .select({ parlaysPlaced: sql<number>`count(*)` })
     .from(parlays)
-    .where(
-      leagueId
-        ? and(eq(parlays.userId, userId), eq(parlays.leagueId, leagueId))
-        : eq(parlays.userId, userId)
-    );
+    .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+    .where(and(
+      eq(parlays.userId, userId),
+      ...(leagueId ? [eq(parlays.leagueId, leagueId)] : []),
+      ...rangeConditions(range),
+    ));
 
   // Every leg that's either the user's own or sits in a parlay they started —
   // one pass yields both the counts and the lookthrough id lists.
@@ -93,9 +124,11 @@ export async function getUserSummary(userId: string, leagueId?: number): Promise
     .select({ id: parlayLegs.id, legUserId: parlayLegs.userId, parlayUserId: parlays.userId, result: parlayLegs.result })
     .from(parlayLegs)
     .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+    .innerJoin(weeks, eq(parlays.weekId, weeks.id))
     .where(and(
       or(eq(parlayLegs.userId, userId), eq(parlays.userId, userId)),
       ...(leagueId ? [eq(parlays.leagueId, leagueId)] : []),
+      ...rangeConditions(range),
     ));
 
   const mine = legRows.filter((r) => r.legUserId === userId);
@@ -104,7 +137,7 @@ export async function getUserSummary(userId: string, leagueId?: number): Promise
   const legWins = winLegIds.length;
   const legLosses = lossLegIds.length;
   const totalDecided = legWins + legLosses;
-  const powerMetrics = await getUserPowerMetrics(userId, leagueId);
+  const powerMetrics = await getUserPowerMetrics(userId, leagueId, range);
 
   return {
     leagueCount: Number(leagueCount ?? 0),
@@ -169,7 +202,7 @@ function topEntry(counts: Record<string, Bucket>): { key: string; count: number;
 }
 
 /** @param leagueId Scope every pattern to a single league. Omitted/undefined = combined across all the user's leagues (the default view). */
-export async function getUserPatterns(userId: string, leagueId?: number): Promise<UserPatterns> {
+export async function getUserPatterns(userId: string, leagueId?: number, range?: DashboardRange): Promise<UserPatterns> {
   const rows = await db
     .select({
       id: parlayLegs.id,
@@ -183,12 +216,13 @@ export async function getUserPatterns(userId: string, leagueId?: number): Promis
     })
     .from(parlayLegs)
     .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+    .innerJoin(weeks, eq(parlays.weekId, weeks.id))
     .leftJoin(games, eq(parlayLegs.gameId, games.id))
-    .where(
-      leagueId
-        ? and(eq(parlayLegs.userId, userId), eq(parlays.leagueId, leagueId))
-        : eq(parlayLegs.userId, userId)
-    );
+    .where(and(
+      eq(parlayLegs.userId, userId),
+      ...(leagueId ? [eq(parlays.leagueId, leagueId)] : []),
+      ...rangeConditions(range),
+    ));
 
   let wins = 0;
   let losses = 0;
@@ -479,7 +513,7 @@ export async function computeWinRateSeries(
 export async function getWinRateTimeSeries(
   userId: string,
   leagueId?: number,
-  dateRange?: { startDate?: Date; endDate?: Date; season?: number }
+  dateRange?: DashboardRange
 ): Promise<{ points: WinRateTimeSeriesPoint[] }> {
   return computeWinRateSeries(userId, {
     leagueIds: leagueId ? [leagueId] : undefined,

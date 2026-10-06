@@ -160,6 +160,11 @@ function calcPropResult(
   };
 }
 
+function gradeChangeNote(before: string | null, after: string): string {
+  if (!before) return `✓ Result set to "${after}"`;
+  return before === after ? `✓ Regraded: still "${after}"` : `✓ Result changed from "${before}" to "${after}"`;
+}
+
 async function saveLog(legId: number, log: EnrichLog): Promise<EnrichLog> {
   try {
     await storage.setLegEnrichmentLog(legId, JSON.stringify(log));
@@ -197,8 +202,12 @@ export async function linkPropLegToGame(
  * `skipScoreSync` grades against the scores already in the DB instead of
  * pulling the week again. For a caller enriching several legs from one week
  * back to back, where the first leg's pull already covered the rest.
+ *
+ * `force` regrades a leg that already has a result: the data is pulled again
+ * and the stored result is overwritten when the grade comes out different. A
+ * leg that can't be graded automatically keeps the result it has.
  */
-export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boolean } = {}): Promise<EnrichLog> {
+export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boolean; force?: boolean } = {}): Promise<EnrichLog> {
   const log: EnrichLog = { at: new Date().toISOString(), changes: [], warnings: [], errors: [] };
 
   try {
@@ -237,7 +246,7 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
     }
 
     // If a result is already recorded, skip the data fetch entirely
-    if (leg.result) {
+    if (leg.result && !opts.force) {
       if (needsGameLink) {
         log.warnings.push(`No game linked: "${leg.playerName}" has no stats for Season ${season} Week ${weekNumber}. Check the spelling, or set the game with the Edit button.`);
       }
@@ -303,17 +312,19 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
         const { result, actual, note } = calcPropResult(leg.propType, leg.pick, leg.line, playerStat);
         log.changes.push(note);
 
-        if (result && !leg.result) {
-          const resultDetail = buildResultDetail({ leg, stat: playerStat });
+        if (result && (!leg.result || opts.force)) {
+          const resultDetail = buildResultDetail({ leg: { ...leg, result }, stat: playerStat });
           await storage.updateParlayLeg(legId, { result, resultDetail });
-          log.changes.push(`✓ Result set to "${result}"`);
+          log.changes.push(gradeChangeNote(leg.result, result));
           // Roll up the parlay status now that this leg is resolved
-          await storage.rollupParlayStatus(leg.parlayId);
+          await storage.rollupParlayStatus(leg.parlayId, { recompute: opts.force });
           log.changes.push(`↑ Parlay status rolled up`);
         } else if (result && leg.result) {
           log.warnings.push(`Result already set to "${leg.result}" (re-calculated: "${result}") — no change made`);
         } else if (!result) {
-          log.warnings.push("Could not determine a result automatically — manual entry may be needed");
+          log.warnings.push(leg.result
+            ? `Could not regrade automatically — keeping "${leg.result}"`
+            : "Could not determine a result automatically — manual entry may be needed");
         }
       }
     } else {
@@ -411,14 +422,14 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
           log.changes.push(`Line already set to "${leg.line}" — no change`);
         }
 
-        if (!leg.result) {
+        if (!leg.result || opts.force) {
           const result = calculateLegResult(leg.betType, leg.pick, freshGame, resolvedLine);
           if (result) {
-            const resultDetail = buildResultDetail({ leg, game: freshGame });
+            const resultDetail = buildResultDetail({ leg: { ...leg, result }, game: freshGame });
             await storage.updateParlayLeg(legId, { result, resultDetail });
-            log.changes.push(`✓ Result set to "${result}" (graded against line: ${resolvedLine ?? "game default"})`);
+            log.changes.push(`${gradeChangeNote(leg.result, result)} (graded against line: ${resolvedLine ?? "game default"})`);
             // Roll up the parlay status now that this leg is resolved
-            await storage.rollupParlayStatus(leg.parlayId);
+            await storage.rollupParlayStatus(leg.parlayId, { recompute: opts.force });
             log.changes.push(`↑ Parlay status rolled up`);
           } else {
             log.warnings.push(`Could not calculate result for betType="${leg.betType}" pick="${leg.pick}" — check game scores are valid`);
@@ -433,4 +444,23 @@ export async function enrichSingleLeg(legId: number, opts: { skipScoreSync?: boo
   }
 
   return saveLog(legId, log);
+}
+
+/**
+ * Regrades every leg of a parlay from fresh data, overwriting results that
+ * come out different, then re-derives the parlay's own status. The legs share
+ * one week, so the scores are pulled once.
+ */
+export async function recalcParlay(parlayId: number): Promise<{ logs: Record<number, EnrichLog>; status: string | null }> {
+  const legs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
+  const logs: Record<number, EnrichLog> = {};
+  let scoresPulled = false;
+  for (const leg of legs) {
+    const needsScores = leg.betType !== "player_prop";
+    logs[leg.id] = await enrichSingleLeg(leg.id, { force: true, skipScoreSync: needsScores && scoresPulled });
+    if (needsScores) scoresPulled = true;
+  }
+  await storage.rollupParlayStatus(parlayId, { recompute: true });
+  const parlay = await storage.getParlay(parlayId);
+  return { logs, status: parlay?.status ?? null };
 }

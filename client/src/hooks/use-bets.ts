@@ -1528,12 +1528,37 @@ export function useEnrichParlayLeg(leagueId: number) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (legId: number): Promise<EnrichLog> => {
-      const res = await fetch(`/api/parlay-legs/${legId}/enrich`, { method: "POST", credentials: "include" });
+      // force: running this on a leg that already has a result regrades it.
+      const res = await fetch(`/api/parlay-legs/${legId}/enrich`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force: true }),
+        credentials: "include",
+      });
       if (!res.ok) { const e = await res.json(); throw new Error(e.message ?? "Enrichment failed"); }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+    },
+  });
+}
+
+/** Regrades every leg of a parlay from fresh data, results already set included. */
+export function useRecalcParlay(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (parlayId: number): Promise<{ logs: Record<number, EnrichLog>; status: string | null }> => {
+      const res = await fetch(`/api/parlays/${parlayId}/recalc`, { method: "POST", credentials: "include" });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message ?? "Recalc failed"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'parlays', 'all'] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Recalc failed", description: err.message, variant: "destructive" });
     },
   });
 }

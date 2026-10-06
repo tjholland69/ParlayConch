@@ -19,6 +19,10 @@ import { useMyParlay, useMyParlayHistory } from "@/hooks/use-parlays";
 import { format, formatDistanceToNow, isPast } from "date-fns";
 import type { ParlayWithLegs, Week } from "@shared/schema";
 import { CHIP_MIN_HEIGHT, shadows } from "@/lib/theme";
+import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
+import { LegRow, legOwnerName } from "@/components/LegLookthrough";
+import { estimateWeekDateRange } from "@shared/nflWeek";
+import { isParlayInProgress, legTally } from "@shared/parlayProgress";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -41,6 +45,8 @@ function ParlayTile({
   actionIcon,
   glow,
   ctaLabel,
+  tint,
+  children,
 }: {
   icon: IconName;
   iconColor: string;
@@ -58,6 +64,10 @@ function ParlayTile({
   /** Explicit CTA button below the tile's meta text — same action as tapping
    * the card, kept for tiles where the action shouldn't be implicit-only. */
   ctaLabel?: string;
+  /** Faint wash over the card, e.g. the red-to-green result color. */
+  tint?: string;
+  /** Shown under the tile's text, e.g. the expanded list of legs. */
+  children?: React.ReactNode;
 }) {
   const pulse = useSharedValue(0);
 
@@ -75,6 +85,7 @@ function ParlayTile({
     <Pressable onPress={onPress} style={({ pressed }) => [pressed && styles.pressed]}>
       <Animated.View style={[styles.shadowWrap, glow && styles.shadowWrapGlow, glowStyle]}>
         <View style={[styles.parlayCard, { backgroundColor: bg, borderColor: border }]}>
+          {tint ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} /> : null}
           {/* Left accent bar */}
           <View style={[styles.accentBar, { backgroundColor: iconColor }]} />
 
@@ -105,6 +116,8 @@ function ParlayTile({
                 <Text style={styles.tileCtaBtnText}>{ctaLabel}</Text>
               </View>
             ) : null}
+
+            {children}
           </View>
         </View>
       </Animated.View>
@@ -176,32 +189,78 @@ const STATUS_META: Record<string, { icon: IconName; iconColor: string; label: st
 
 function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueName: string }) {
   const router = useRouter();
+  const [expanded, setExpanded] = useState(false);
   const meta = STATUS_META[parlay.status ?? "pending"] ?? STATUS_META.pending;
-  const legCount = parlay.legs?.length ?? 0;
+  const legs = parlay.legs ?? [];
+  const legCount = legs.length;
   const isDraft = parlay.status === "draft";
+  const tally = legTally(legs);
+  // Once a leg is decided the tile takes the same red-to-green win % color
+  // as the league's rollup cards, instead of a flat color per status.
+  const scale = !isDraft && tally.pct !== null ? getParlayVisualStyle(tally.pct) : null;
+  const scaleColor = scale ? (([r, g, b]) => `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`)(getWinPctColor(tally.pct!)) : null;
+  const openLeague = () => router.push({ pathname: "/leagues/[id]", params: { id: String(parlay.leagueId) } });
 
   return (
     <ParlayTile
       icon={meta.icon}
-      iconColor={meta.iconColor}
+      iconColor={scaleColor ?? meta.iconColor}
       leagueName={leagueName}
-      statusLabel={meta.label}
+      statusLabel={isParlayInProgress(parlay) ? "In progress" : meta.label}
       metaLabel={
         isDraft
           ? `${legCount} ${legCount === 1 ? "leg" : "legs"} queued · Tap to continue`
-          : `${parlay.week?.label ?? "Week"} · ${legCount} ${legCount === 1 ? "leg" : "legs"}`
+          : [
+              parlay.week?.label ?? "Week",
+              `${legCount} ${legCount === 1 ? "leg" : "legs"}`,
+              tally.resolved > 0 || tally.pending < legCount ? tally.label : null,
+            ].filter(Boolean).join(" · ")
       }
-      bg={meta.bg}
-      border={meta.border}
+      bg={scale ? "#1c2538" : meta.bg}
+      border={scale?.borderColor ?? meta.border}
+      tint={scale?.tintColor}
       glow={parlay.status === "win" ? "pulse" : ACTIVE_STATUSES.has(parlay.status ?? "") ? "steady" : undefined}
-      actionIcon={isDraft ? "create-outline" : undefined}
+      actionIcon={isDraft ? "create-outline" : expanded ? "chevron-up" : "chevron-down"}
       onPress={() =>
         isDraft
           ? router.push({ pathname: "/leagues/[id]/build", params: { id: String(parlay.leagueId) } })
-          : router.push({ pathname: "/leagues/[id]", params: { id: String(parlay.leagueId) } })
+          : setExpanded((v) => !v)
       }
-    />
+    >
+      {expanded && !isDraft && (
+        <View style={styles.tileLegs} testID={`legs-parlay-${parlay.id}`}>
+          {legs.map((leg) => (
+            <LegRow key={leg.id} leg={leg} ownerName={legOwnerName(leg.user)} week={parlay.week} />
+          ))}
+          <Pressable
+            onPress={openLeague}
+            hitSlop={6}
+            style={({ pressed }) => [styles.tileLeagueLink, pressed && { opacity: 0.7 }]}
+            accessibilityRole="button"
+          >
+            <Text style={styles.tileLeagueLinkText}>Open league</Text>
+            <Ionicons name="chevron-forward" size={13} color="#93c5fd" />
+          </Pressable>
+        </View>
+      )}
+    </ParlayTile>
   );
+}
+
+const MONTH_NAMES = [
+  "JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
+  "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER",
+];
+
+/** When a parlay was played: its first kickoff, else its week's estimated
+ * dates. Used to file past parlays under a year and month. */
+function parlayDate(parlay: ParlayWithLegs): Date {
+  const kickoffs = (parlay.legs ?? [])
+    .map((l) => (l.game?.gameTime ? new Date(l.game.gameTime).getTime() : null))
+    .filter((t): t is number => t != null);
+  if (kickoffs.length > 0) return new Date(Math.min(...kickoffs));
+  if (parlay.week) return estimateWeekDateRange(parlay.week.season, parlay.week.weekNumber).start;
+  return parlay.createdAt ? new Date(parlay.createdAt) : new Date(0);
 }
 
 const RESULT_FILTERS: { key: string; label: string }[] = [
@@ -484,7 +543,8 @@ export default function PicksScreen() {
 
   type ListRow =
     | { kind: "need"; leagueId: number; weekId: number; leagueName: string; key: string }
-    | { kind: "history"; parlay: ParlayWithLegs; key: string };
+    | { kind: "history"; parlay: ParlayWithLegs; key: string }
+    | { kind: "label"; level: "year" | "month"; text: string; key: string };
 
   const sections = useMemo(() => {
     const result: { title: string; data: ListRow[] }[] = [];
@@ -508,14 +568,28 @@ export default function PicksScreen() {
       });
     }
     if (hasPast) {
-      result.push({
-        title: "PAST PARLAYS",
-        data: pastHistory.map((parlay) => ({
-          kind: "history" as const,
-          parlay,
-          key: `past-${parlay.id}`,
-        })),
-      });
+      // Newest first, with a quiet label wherever the year or month changes.
+      const dated = pastHistory
+        .map((parlay) => ({ parlay, date: parlayDate(parlay) }))
+        .sort((a, b) => b.date.getTime() - a.date.getTime());
+      const rows: ListRow[] = [];
+      let lastYear: number | null = null;
+      let lastMonth: number | null = null;
+      for (const { parlay, date } of dated) {
+        const year = date.getFullYear();
+        const month = date.getMonth();
+        if (year !== lastYear) {
+          rows.push({ kind: "label", level: "year", text: String(year), key: `year-${year}` });
+          lastMonth = null;
+        }
+        if (month !== lastMonth) {
+          rows.push({ kind: "label", level: "month", text: MONTH_NAMES[month], key: `month-${year}-${month}` });
+        }
+        lastYear = year;
+        lastMonth = month;
+        rows.push({ kind: "history", parlay, key: `past-${parlay.id}` });
+      }
+      result.push({ title: "PAST PARLAYS", data: rows });
     }
     return result;
   }, [hasOpen, hasPast, leaguesNeedingPick, openHistory, pastHistory, activeWeek]);
@@ -576,7 +650,12 @@ export default function PicksScreen() {
         </Text>
       )}
       renderItem={({ item }) =>
-        item.kind === "need" ? (
+        item.kind === "label" ? (
+          <View style={item.level === "year" ? styles.yearLabelRow : styles.monthLabelRow}>
+            <Text style={item.level === "year" ? styles.yearLabel : styles.monthLabel}>{item.text}</Text>
+            <View style={styles.groupLabelLine} />
+          </View>
+        ) : item.kind === "need" ? (
           <NeedsPickTile
             leagueId={item.leagueId}
             weekId={item.weekId}
@@ -769,6 +848,22 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sectionLabelSpaced: { marginTop: 8 },
+  yearLabelRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 18, marginBottom: 4 },
+  monthLabelRow: { flexDirection: "row", alignItems: "center", gap: 10, marginTop: 10, marginBottom: 12 },
+  yearLabel: { fontSize: 12, fontWeight: "700", color: "#64748b", letterSpacing: 1 },
+  monthLabel: { fontSize: 10, fontWeight: "700", color: "#475569", letterSpacing: 1 },
+  groupLabelLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: "#2a3447" },
+  tileLegs: { marginTop: 12 },
+  tileLeagueLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 4,
+    minHeight: 36,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: "#2a3447",
+  },
+  tileLeagueLinkText: { fontSize: 12, fontWeight: "600", color: "#93c5fd" },
   footerActions: { marginTop: 8, gap: 10 },
   loadMoreBtn: {
     flexDirection: "row",

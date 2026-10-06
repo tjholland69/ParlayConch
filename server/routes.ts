@@ -22,7 +22,7 @@ import { connectSessionRedis, isRedisConfigured } from "./redis-clients";
 import { registerRealtimeWebSocket } from "./realtime-ws";
 import { fetchNFLNews, fetchNFLInjuries, fetchNFLScores } from "./services/nflNews";
 import { getUserInsights, getLeagueInsights, type InsightFocus } from "./services/bettingInsights";
-import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries, getLeagueWeeklyWinRates } from "./services/dashboardAnalytics";
+import { getUserSummary, getUserPatterns, getWinRateTimeSeries, computeWinRateSeries, getLeagueWeeklyWinRates, type DashboardRange } from "./services/dashboardAnalytics";
 import { getLeagueRecords } from "./services/leagueRecords";
 import { getGameForecast } from "./services/weatherApi";
 import { cacheGetJson, cacheSetJson } from "./cache";
@@ -37,7 +37,7 @@ import { uploadDisputeScreenshot, getDisputeScreenshotUrl, deleteDisputeScreensh
 import { sendMemberAddedEmail, sendLeagueInviteEmail, sendBetHistoryExportEmail } from "./services/email";
 import { legsToCsv } from "@shared/legsCsv";
 import { enrichLeagueParlayLegs } from "./services/enrichment";
-import { enrichSingleLeg } from "./services/legEnrich";
+import { enrichSingleLeg, recalcParlay } from "./services/legEnrich";
 import { syncGameFinishTimesFromPlayByPlay } from "./services/playByPlay";
 import { detectExactDecisionMoments, detectHeuristicDecisionMoments } from "./services/decisionDetection";
 import { parseTicketImages } from "./services/screenshotParser";
@@ -262,14 +262,27 @@ export async function registerRoutes(
   });
 
   // ===== DASHBOARD =====
+  // The Dash filters shared by every dashboard endpoint: an NFL season, or a
+  // start/end date. Season wins when both are sent.
+  const dashboardRange = (query: Record<string, unknown>): DashboardRange => ({
+    startDate: typeof query.startDate === "string" && query.startDate ? new Date(query.startDate) : undefined,
+    endDate: typeof query.endDate === "string" && query.endDate ? new Date(query.endDate) : undefined,
+    season: typeof query.season === "string" && query.season ? Number(query.season) : undefined,
+  });
+  const dashboardRangeKey = (range: DashboardRange) =>
+    range.season != null
+      ? `s${range.season}`
+      : `${range.startDate?.toISOString() ?? ""}_${range.endDate?.toISOString() ?? ""}`;
+
   app.get("/api/dashboard/summary", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
+    const range = dashboardRange(req.query);
     // v2: summary now carries lookthrough leg ids.
-    const cacheKey = `dashboard:summary:v2:${userId}:${leagueId ?? "all"}`;
+    const cacheKey = `dashboard:summary:v2:${userId}:${leagueId ?? "all"}:${dashboardRangeKey(range)}`;
     const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserSummary>>>(cacheKey);
     if (cached) return res.json(cached);
-    const summary = await getUserSummary(userId, leagueId);
+    const summary = await getUserSummary(userId, leagueId, range);
     await cacheSetJson(cacheKey, summary, 60);
     res.json(summary);
   });
@@ -277,10 +290,11 @@ export async function registerRoutes(
   app.get("/api/dashboard/patterns", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
-    const cacheKey = `dashboard:patterns:v2:${userId}:${leagueId ?? "all"}`;
+    const range = dashboardRange(req.query);
+    const cacheKey = `dashboard:patterns:v2:${userId}:${leagueId ?? "all"}:${dashboardRangeKey(range)}`;
     const cached = await cacheGetJson<Awaited<ReturnType<typeof getUserPatterns>>>(cacheKey);
     if (cached) return res.json(cached);
-    const patterns = await getUserPatterns(userId, leagueId);
+    const patterns = await getUserPatterns(userId, leagueId, range);
     await cacheSetJson(cacheKey, patterns, 60);
     res.json(patterns);
   });
@@ -288,10 +302,7 @@ export async function registerRoutes(
   app.get("/api/dashboard/performance", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagueId = req.query.leagueId ? Number(req.query.leagueId) : undefined;
-    const startDate = typeof req.query.startDate === "string" && req.query.startDate ? new Date(req.query.startDate) : undefined;
-    const endDate = typeof req.query.endDate === "string" && req.query.endDate ? new Date(req.query.endDate) : undefined;
-    const season = typeof req.query.season === "string" && req.query.season ? Number(req.query.season) : undefined;
-    const series = await getWinRateTimeSeries(userId, leagueId, { startDate, endDate, season });
+    const series = await getWinRateTimeSeries(userId, leagueId, dashboardRange(req.query));
     res.json(series);
   });
 
@@ -2591,8 +2602,24 @@ export async function registerRoutes(
       if (!parlay) return res.status(404).json({ message: "Parlay not found" });
       const uid = await requireDemoAdmin(req, res, parlay.leagueId);
       if (!uid) return;
-      const log = await enrichSingleLeg(legId);
+      // `force` regrades a leg that already has a result.
+      const log = await enrichSingleLeg(legId, { force: req.body?.force === true });
       res.json(log);
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // POST /api/parlays/:id/recalc — regrades every leg of one parlay from
+  // fresh data, results already set included, then re-derives its status.
+  app.post("/api/parlays/:id/recalc", isAuthenticated, auditLog("parlay.recalc", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const parlayId = Number(req.params.id);
+      const parlay = await storage.getParlay(parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      const uid = await requireDemoAdmin(req, res, parlay.leagueId);
+      if (!uid) return;
+      res.json(await recalcParlay(parlayId));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
@@ -2742,6 +2769,11 @@ export async function registerRoutes(
 
       const canUnlock = await hasLeaguePermission(leagueId, userId, "unlockParlay");
       if (!canUnlock) return res.status(403).json({ message: "Only the Parlay Maestro (or a Lieutenant with Unlock permission) can unlock the parlay." });
+
+      const current = await storage.getWeekLockStatus(leagueId, weekId);
+      if (current.inProgress) {
+        return res.status(409).json({ message: "This week's parlay is in progress and can no longer be unlocked. Make changes in the Data Editor." });
+      }
 
       await storage.unlockWeekParlay(leagueId, weekId);
       res.json({ success: true });

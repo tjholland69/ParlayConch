@@ -32,6 +32,7 @@ import {
   takenMarketsByGame,
   correlatedMarketWarning,
   type SelectedLeg,
+  isGamePast,
 } from "@/lib/pickHelpers";
 import type { Game, GameWithBet, ParlayWithLegs } from "@shared/schema";
 import { BoostSheet } from "@/components/BoostSheet";
@@ -213,9 +214,15 @@ export default function BuildPickScreen() {
     [games, activeLegs],
   );
 
+  // A pick whose game kicked off before the parlay was submitted blocks the
+  // submit until it's removed (the server enforces the same rule).
+  const startedGame = isEditingSubmitted
+    ? undefined
+    : draftLegs.map((l) => gamesById.get(l.gameId)).find((g) => !!g && isGamePast(g));
+
   const canSubmit = isEditingSubmitted
     ? selectedLegs.length >= minLegs && selectedLegs.length <= maxLegs && !lockStatus?.isLocked
-    : pendingPicks.size === 0 && draftLegs.length >= minLegs && draftLegs.length <= maxLegs && !lockStatus?.isLocked;
+    : pendingPicks.size === 0 && draftLegs.length >= minLegs && draftLegs.length <= maxLegs && !lockStatus?.isLocked && !startedGame;
 
   function toggleLegSubmitted(game: Game, betType: string, pick: string) {
     const line = getLineForBet(game, betType, pick);
@@ -584,6 +591,12 @@ export default function BuildPickScreen() {
           </View>
         )}
 
+        {startedGame && (
+          <Text style={styles.startedWarning} testID="text-submit-blocked">
+            {startedGame.awayTeam} @ {startedGame.homeTeam} already started. Remove that pick to submit.
+          </Text>
+        )}
+
         <Pressable
           onPress={submit}
           disabled={!canSubmit || submitPending}
@@ -640,6 +653,7 @@ export default function BuildPickScreen() {
 }
 
 const styles = StyleSheet.create({
+  startedWarning: { fontSize: 12, color: "#fbbf24", fontWeight: "600", marginBottom: 8 },
   container: { flex: 1, backgroundColor: "#141926" },
   centered: {
     flex: 1,

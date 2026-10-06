@@ -246,6 +246,9 @@ export function customIndexFiltersEqual(a: Partial<CustomIndexFilters>, b: Parti
 
 export type WeekLockStatus = {
   isLocked: boolean;
+  /** Locked, and the first game the league has a pick on has kicked off:
+   * the lock can no longer be lifted. */
+  inProgress: boolean;
   lockedAt?: Date;
   lockedBy?: string;
   hadMissingBets?: boolean;

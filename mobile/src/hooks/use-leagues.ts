@@ -81,6 +81,15 @@ export function useLeagueStats(leagueId: number) {
   });
 }
 
+/** League totals plus the standings two ways: this season and all time. */
+export function useLeagueDataStats(leagueId: number) {
+  return useQuery<import("@shared/schema").LeagueDataStats>({
+    queryKey: ["/api/leagues", leagueId, "data-stats"],
+    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/data-stats`),
+    enabled: !!leagueId,
+  });
+}
+
 export function useLeagueMembersWithUsers(leagueId: number) {
   return useQuery<LeagueMemberWithUser[]>({
     queryKey: ["/api/leagues", leagueId, "members"],

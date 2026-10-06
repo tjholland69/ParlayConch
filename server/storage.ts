@@ -36,6 +36,7 @@ import {
 import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 import { impliedPointsMoved, MAX_POINTS_MOVE } from "@shared/buyPoints";
 import type { MultiBetLegInput } from "@shared/multiBetValidation";
+import { hasGameStarted } from "@shared/parlayProgress";
 import type { LegExportRow } from "@shared/legsCsv";
 
 /** Thrown by createMultiBetParlay when the owner already has a parlay that week. */
@@ -233,7 +234,7 @@ export interface IStorage {
   resolveDispute(id: number, resolverUserId: string, status: "resolved" | "dismissed", notes?: string): Promise<ParlayLegDispute>;
 
   // Parlay status rollup
-  rollupParlayStatus(parlayId: number): Promise<void>;
+  rollupParlayStatus(parlayId: number, opts?: { recompute?: boolean }): Promise<void>;
   rollupLeagueParlayStatuses(leagueId?: number, recomputeTerminal?: boolean): Promise<{ updated: number; skipped: number }>;
 
   // Imports
@@ -327,6 +328,15 @@ export interface IStorage {
   getStoryReportWithSections(id: number): Promise<StoryReportWithSections | undefined>;
   updateStoryReport(id: number, updates: UpdateStoryReport): Promise<StoryReport>;
   upsertStorySection(reportId: number, kind: StorySectionKind, order: number, data: { content?: string; generatedContent?: string; promptVersion?: string }): Promise<StorySection>;
+}
+
+/** A parlay is lost the moment one leg loses, even with legs still to play;
+ * it's won only once every leg has settled without a loss. */
+function parlayOutcome(results: (string | null)[]): "win" | "loss" | null {
+  if (results.length === 0) return null;
+  if (results.some((r) => r === "loss")) return "loss";
+  if (results.some((r) => !r)) return null;
+  return "win";
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1157,6 +1167,7 @@ export class DatabaseStorage implements IStorage {
     // addLegToDraftParlay, applied here too since this full-replace path
     // (editing an already-submitted parlay) is the other way a leg reaches
     // parlayLegs and would otherwise bypass both checks entirely.
+    await this.assertWeekUnlocked(parlay.leagueId, parlay.weekId);
     const takenByOthers = await this.getTakenPicksForWeek(parlay.leagueId, parlay.weekId, userId);
     const gameIds = [...new Set(legs.map(l => l.gameId).filter((id): id is number => id != null))];
     const legGames = gameIds.length > 0 ? await db.select().from(games).where(inArray(games.id, gameIds)) : [];
@@ -1351,6 +1362,7 @@ export class DatabaseStorage implements IStorage {
       const [existing] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
       if (!existing || existing.userId !== userId) throw new Error("Parlay not found");
       if (existing.status !== "draft") throw new Error("Only draft parlays can have legs removed this way");
+      await this.assertWeekUnlocked(existing.leagueId, existing.weekId);
 
       const deleted = await tx
         .delete(parlayLegs)
@@ -1399,6 +1411,15 @@ export class DatabaseStorage implements IStorage {
       }
       if (legs.length > maxLegsPerParlay) {
         throw new Error(`Parlay cannot have more than ${maxLegsPerParlay} legs`);
+      }
+
+      // A pick whose game kicked off while the parlay sat unsubmitted can't
+      // go in late.
+      const legGameIds = [...new Set(legs.map(l => l.gameId).filter((id): id is number => id != null))];
+      const legGames = legGameIds.length > 0 ? await tx.select().from(games).where(inArray(games.id, legGameIds)) : [];
+      const started = legGames.find(g => hasGameStarted(g));
+      if (started) {
+        throw new Error(`${started.awayTeam} @ ${started.homeTeam} has already started, so this parlay can't be submitted with that pick in it.`);
       }
 
       const [record] = await tx
@@ -1576,11 +1597,24 @@ export class DatabaseStorage implements IStorage {
     })) as ParlayWithLegs[];
   }
 
+  /**
+   * The parlays a member is part of: the ones they started, plus any
+   * submitted parlay they put a leg into. Most members never start one —
+   * they add their leg to a parlay someone else owns.
+   */
   async getUserParlayHistory(userId: string, leagueId?: number, weekIdFilter?: number[]): Promise<ParlayWithLegs[]> {
-    const conditions = [eq(parlays.userId, userId)];
-    if (leagueId) conditions.push(eq(parlays.leagueId, leagueId));
-    if (weekIdFilter && weekIdFilter.length > 0) conditions.push(inArray(parlays.weekId, weekIdFilter));
-    const userParlays = await db.select().from(parlays).where(and(...conditions));
+    const scope = [
+      ...(leagueId ? [eq(parlays.leagueId, leagueId)] : []),
+      ...(weekIdFilter && weekIdFilter.length > 0 ? [inArray(parlays.weekId, weekIdFilter)] : []),
+    ];
+    const [owned, contributed] = await Promise.all([
+      db.select().from(parlays).where(and(eq(parlays.userId, userId), ...scope)),
+      db.selectDistinct({ parlay: parlays })
+        .from(parlays)
+        .innerJoin(parlayLegs, eq(parlayLegs.parlayId, parlays.id))
+        .where(and(eq(parlayLegs.userId, userId), not(eq(parlays.userId, userId)), not(eq(parlays.status, 'draft')), ...scope)),
+    ]);
+    const userParlays = [...owned, ...contributed.map(c => c.parlay)];
 
     if (userParlays.length === 0) return [];
 
@@ -1588,17 +1622,18 @@ export class DatabaseStorage implements IStorage {
     const weekIds = [...new Set(userParlays.map(p => p.weekId))];
 
     const [allLegs, allWeeks] = await Promise.all([
-      db.select({ leg: parlayLegs, game: games })
+      db.select({ leg: parlayLegs, game: games, legUser: users })
         .from(parlayLegs)
         .leftJoin(games, eq(parlayLegs.gameId, games.id))
+        .leftJoin(users, eq(parlayLegs.userId, users.id))
         .where(inArray(parlayLegs.parlayId, parlayIds)),
       db.select().from(weeks).where(inArray(weeks.id, weekIds)),
     ]);
 
-    const legsByParlayId = new Map<number, (ParlayLeg & { game: Game | null })[]>();
-    for (const { leg, game } of allLegs) {
+    const legsByParlayId = new Map<number, ParlayWithLegs["legs"]>();
+    for (const { leg, game, legUser } of allLegs) {
       const existing = legsByParlayId.get(leg.parlayId) ?? [];
-      existing.push({ ...leg, game: normalizeJoinedGame(game) });
+      existing.push({ ...leg, game: normalizeJoinedGame(game), user: legOwnerSummary(legUser) ?? undefined });
       legsByParlayId.set(leg.parlayId, existing);
     }
 
@@ -1945,6 +1980,7 @@ export class DatabaseStorage implements IStorage {
     if (existing.status !== "draft" && existing.status !== "pending") {
       throw new Error("Only draft or pending parlays can be canceled");
     }
+    await this.assertWeekUnlocked(existing.leagueId, existing.weekId);
     await this.deleteParlay(parlayId);
   }
 
@@ -2289,7 +2325,14 @@ export class DatabaseStorage implements IStorage {
    * automatically-computed parlay status — it remains a manually-settable
    * override for admins, but the rollup never assigns it itself.
    */
-  async rollupParlayStatus(parlayId: number): Promise<void> {
+  /**
+   * Sets a parlay's status from its legs: lost the moment one leg loses, even
+   * with legs still to play, and won once every leg has settled without a
+   * loss. `recompute` also re-derives a parlay already marked win/loss/push
+   * (after a leg was regraded), reopening it as 'approved' when the regrade
+   * leaves it undecided.
+   */
+  async rollupParlayStatus(parlayId: number, opts: { recompute?: boolean } = {}): Promise<void> {
     const [parlay] = await db.select().from(parlays).where(eq(parlays.id, parlayId));
     if (!parlay) return;
 
@@ -2299,16 +2342,17 @@ export class DatabaseStorage implements IStorage {
     // confirms placement. 'draft' is excluded for the opposite reason: it's
     // not a resolution-pending state, it's not-yet-submitted — a draft must
     // never be auto-graded, even if its legs' games have already finished.
-    const terminalStatuses = ['draft', 'win', 'loss', 'push', 'rejected', 'void'];
+    const terminalStatuses = opts.recompute ? ['draft', 'rejected', 'void'] : ['draft', 'win', 'loss', 'push', 'rejected', 'void'];
     if (terminalStatuses.includes(parlay.status ?? '')) return;
 
     const legs = await db.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
-    if (legs.length === 0) return;
-    if (legs.some(l => !l.result)) return; // not all resolved yet
-
-    const newStatus = legs.some(l => l.result === 'loss') ? 'loss' : 'win';
+    const outcome = parlayOutcome(legs.map(l => l.result));
+    const wasDecided = ['win', 'loss', 'push'].includes(parlay.status ?? '');
+    const newStatus = outcome ?? (wasDecided && legs.length > 0 ? 'approved' : null);
+    if (!newStatus || newStatus === parlay.status) return;
 
     await db.update(parlays).set({ status: newStatus }).where(eq(parlays.id, parlayId));
+    emitLeague(parlay.leagueId, parlay.weekId, "parlays_updated");
   }
 
   /**
@@ -2358,12 +2402,12 @@ export class DatabaseStorage implements IStorage {
     let skipped = 0;
 
     for (const { id } of allParlays) {
-      const results = resultsByParlay.get(id) ?? [];
-      if (results.length === 0 || results.some((r) => !r)) {
+      const outcome = parlayOutcome(resultsByParlay.get(id) ?? []);
+      if (!outcome) {
         skipped++;
         continue;
       }
-      if (results.some((r) => r === "loss")) toLoss.push(id);
+      if (outcome === "loss") toLoss.push(id);
       else toWin.push(id);
     }
 
@@ -2531,6 +2575,7 @@ export class DatabaseStorage implements IStorage {
 
     return {
       isLocked: !!lock,
+      inProgress: !!lock && (await this.hasWeekParlayStarted(leagueId, weekId)),
       lockedAt: lock?.lockedAt,
       lockedBy: lock?.lockedBy,
       hadMissingBets: lock?.hadMissingBets,
@@ -2539,6 +2584,23 @@ export class DatabaseStorage implements IStorage {
       allSubmitted: submittedCount >= totalMembers && totalMembers > 0,
       missingMemberIds: members.filter(m => !inIds.has(m.userId)).map(m => m.userId),
     };
+  }
+
+  /** True once the first game the league has a submitted pick on has kicked off. */
+  private async hasWeekParlayStarted(leagueId: number, weekId: number): Promise<boolean> {
+    const rows = await db
+      .select({ gameTime: games.gameTime, isFinished: games.isFinished })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId), not(eq(parlays.status, 'draft'))));
+    return rows.some(g => hasGameStarted(g));
+  }
+
+  private async assertWeekUnlocked(leagueId: number, weekId: number): Promise<void> {
+    const [lock] = await db.select().from(leagueWeekLocks)
+      .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
+    if (lock) throw new Error("This week's picks are locked and can no longer be changed.");
   }
 
   async lockWeekParlay(leagueId: number, weekId: number, userId: string, hadMissingBets: boolean): Promise<LeagueWeekLock> {
@@ -2550,6 +2612,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async unlockWeekParlay(leagueId: number, weekId: number): Promise<void> {
+    if (await this.hasWeekParlayStarted(leagueId, weekId)) {
+      throw new Error("This week's parlay is in progress and can no longer be unlocked. Make changes in the Data Editor.");
+    }
     await db.delete(leagueWeekLocks)
       .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
     emitLeague(leagueId, weekId, "lock_updated");
