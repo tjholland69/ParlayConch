@@ -29,7 +29,8 @@ export function getWinPctColor(pct: number): RGB {
 
 export type ParlayVisualStyle = {
   borderColor: string;
-  glowColor?: string;
+  /** Faint wash over the whole card, so the result reads without a loud fill. */
+  tintColor?: string;
   /** Solid fill color for the header progress bar — RN has no cheap CSS-gradient
    * equivalent without pulling in a native module, so this is a flat fill instead
    * of the web's gradient. */
@@ -46,12 +47,14 @@ export function getParlayVisualStyle(pct: number | null, participationRate = 1):
   }
   const [r, g, b] = getWinPctColor(pct);
   const rate = Math.max(0, Math.min(1, participationRate));
-  const alpha = 0.25 + rate * 0.5;
+  // Kept light and see-through: white text sits on top of these, and a
+  // strong red or orange fill behind it is hard on the eyes.
+  const strength = 0.5 + rate * 0.5;
 
   return {
-    borderColor: `rgba(${r}, ${g}, ${b}, ${(alpha + 0.15).toFixed(2)})`,
-    glowColor: `rgba(${r}, ${g}, ${b}, ${(alpha * 0.45).toFixed(2)})`,
-    barColor: `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`,
+    borderColor: `rgba(${r}, ${g}, ${b}, ${(0.45 * strength).toFixed(2)})`,
+    tintColor: `rgba(${r}, ${g}, ${b}, ${(0.06 * strength).toFixed(2)})`,
+    barColor: `rgba(${r}, ${g}, ${b}, ${(0.16 * strength).toFixed(2)})`,
   };
 }
 

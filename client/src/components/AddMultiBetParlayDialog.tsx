@@ -98,12 +98,14 @@ type GamePickerProps = {
   /** Bets already entered on the other rows, with their 1-based row numbers. */
   others: { row: number; leg: MultiBetLegInput }[];
   onPick: (game: Game, pick: string) => void;
+  /** Clicking the current pick again takes it back off the row. */
+  onClear: () => void;
   testId: string;
 };
 
 /** Every game that week. Spread and moneyline rows show both teams and you
  * click the side you took; totals rows pick the game. */
-function GamePicker({ row, games, disabled, others, onPick, testId }: GamePickerProps) {
+function GamePicker({ row, games, disabled, others, onPick, onClear, testId }: GamePickerProps) {
   const [open, setOpen] = useState(false);
   const selected = games?.find(g => g.id === row.gameId);
   const candidate = (game: Game, pick: string): MultiBetLegInput => ({ ...toLeg(row), gameId: game.id, pick });
@@ -120,7 +122,11 @@ function GamePicker({ row, games, disabled, others, onPick, testId }: GamePicker
         type="button"
         disabled={!!conflict}
         title={conflict ?? undefined}
-        onClick={() => { onPick(game, pick); setOpen(false); }}
+        onClick={() => {
+          if (isSelected) { onClear(); return; }
+          onPick(game, pick);
+          setOpen(false);
+        }}
         className={cn(
           "flex-1 min-w-0 rounded-md border px-2 py-1.5 text-left text-xs transition-colors",
           isSelected ? "border-primary bg-primary/15 text-foreground" : "border-white/10 hover:border-primary/50 hover:bg-primary/5",
@@ -168,7 +174,11 @@ function GamePicker({ row, games, disabled, others, onPick, testId }: GamePicker
                     key={game.id}
                     type="button"
                     disabled={!!conflict}
-                    onClick={() => { onPick(game, row.betType); setOpen(false); }}
+                    onClick={() => {
+                      if (row.gameId === game.id) { onClear(); return; }
+                      onPick(game, row.betType);
+                      setOpen(false);
+                    }}
                     className={cn(
                       "flex w-full items-center justify-between gap-2 rounded-md border px-2 py-1.5 text-left text-xs transition-colors",
                       row.gameId === game.id ? "border-primary bg-primary/15" : "border-white/10 hover:border-primary/50 hover:bg-primary/5",
@@ -327,6 +337,8 @@ export function AddMultiBetParlayDialog({
   const startingRows = Math.max(1, Math.min(minLegs, members.length || minLegs));
   const [rows, setRows] = useState<Row[]>(() => Array.from({ length: startingRows }, () => blankRow(nextKey.current++)));
   const [submitted, setSubmitted] = useState(false);
+  // The spread's +/- buttons only show while that row's Line field has focus.
+  const [focusedLineKey, setFocusedLineKey] = useState<number | null>(null);
   const [serverErrors, setServerErrors] = useState<MultiBetSaveError | null>(null);
   const [hasBoost, setHasBoost] = useState(false);
   const [boostPctText, setBoostPctText] = useState("");
@@ -542,6 +554,7 @@ export function AddMultiBetParlayDialog({
                             disabled={!weekId}
                             others={others}
                             onPick={(g, pick) => updateRow(row.key, { gameId: g.id, pick, ...gameMarket(g, row.betType, pick) })}
+                            onClear={() => updateRow(row.key, { gameId: null, line: "", odds: "", pick: isTotal(row.betType) ? row.betType : "" })}
                             testId={`button-multi-bet-game-${i}`}
                           />
                         )}
@@ -580,10 +593,11 @@ export function AddMultiBetParlayDialog({
                       <td className="px-2 py-2">
                         {/* Spreads sit on the half point, so the quick-change
                             buttons move a whole point (4.5 to 5.5), not half. */}
-                        {row.betType === "spread" && (
+                        {row.betType === "spread" && focusedLineKey === row.key && (
                           <button
                             type="button"
                             className={SPREAD_NUDGE_CLASS}
+                            onMouseDown={e => e.preventDefault()}
                             onClick={() => updateRow(row.key, { line: nudgeSpread(row.line, 1) })}
                             disabled={!canNudgeSpread(row.line)}
                             aria-label="Raise spread by 1 point"
@@ -593,17 +607,20 @@ export function AddMultiBetParlayDialog({
                           </button>
                         )}
                         <Input
-                          className={cn("h-8 px-2 text-xs", row.betType === "spread" && "rounded-none text-center")}
+                          className={cn("h-8 px-2 text-xs", row.betType === "spread" && focusedLineKey === row.key && "rounded-none text-center")}
                           value={row.line}
+                          onFocus={() => setFocusedLineKey(row.key)}
+                          onBlur={() => setFocusedLineKey(k => (k === row.key ? null : k))}
                           disabled={row.betType === "moneyline" || yesNo}
                           onChange={e => updateRow(row.key, { line: e.target.value })}
                           placeholder={row.betType === "moneyline" || yesNo ? "—" : isProp ? "74.5" : "-3.5"}
                           data-testid={`input-multi-bet-line-${i}`}
                         />
-                        {row.betType === "spread" && (
+                        {row.betType === "spread" && focusedLineKey === row.key && (
                           <button
                             type="button"
                             className={cn(SPREAD_NUDGE_CLASS, "rounded-b-md rounded-t-none border-t-0 border-b")}
+                            onMouseDown={e => e.preventDefault()}
                             onClick={() => updateRow(row.key, { line: nudgeSpread(row.line, -1) })}
                             disabled={!canNudgeSpread(row.line)}
                             aria-label="Lower spread by 1 point"

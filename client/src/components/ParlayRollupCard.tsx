@@ -1,5 +1,5 @@
 import React, { useState, memo } from "react";
-import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useSplitParlayLegs, useCloneParlay, useSetParlayBoost, type EnrichLog } from "@/hooks/use-bets";
+import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useRecalcParlay, useSplitParlayLegs, useCloneParlay, useSetParlayBoost, type EnrichLog } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, ChevronDown, ChevronUp, Scissors, Info, Copy, Check, Clock, Megaphone } from "lucide-react";
+import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, ChevronDown, ChevronUp, Scissors, Info, Copy, Check, Clock, Megaphone, RefreshCw } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
@@ -32,6 +32,7 @@ import { boostLabel } from "@shared/parlayBoost";
 import { BoostDialog } from "@/components/BoostDialog";
 import { ShameReportDialog } from "@/components/ShameReportDialog";
 import { buildShameReport } from "@shared/shameReport";
+import { isParlayInProgress, legTally } from "@shared/parlayProgress";
 
 export { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 
@@ -322,6 +323,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const updateStatus = useUpdateParlayStatus(leagueId);
   const addLeg = useAddParlayLeg(leagueId);
   const enrichLeg = useEnrichParlayLeg(leagueId);
+  const recalcParlay = useRecalcParlay(leagueId);
   const cloneParlay = useCloneParlay(leagueId);
   const effectiveUserId = useEffectiveUserId();
   const { toast } = useToast();
@@ -494,6 +496,11 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                   </Badge>
                 )}
               </div>
+              {isParlayInProgress(parlay) && (
+                <Badge variant="outline" className="text-xs px-1.5 py-0 font-normal w-fit border-sky-400/40 text-sky-300" data-testid={`badge-in-progress-${parlay.id}`}>
+                  In Progress
+                </Badge>
+              )}
               {bustedLeg || heroLeg ? (
                 <div className="flex items-center gap-2 flex-wrap">
                   {readOnly && parlay.status === "win" && (
@@ -529,12 +536,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
 
             {/* ── Parlay leg stats summary ─────────────────────── */}
             {(() => {
-              const wins    = parlay.legs.filter(l => l.result === "win").length;
-              const losses  = parlay.legs.filter(l => l.result === "loss").length;
-              const pushes  = parlay.legs.filter(l => l.result === "push").length;
-              const resolved = wins + losses + pushes;
-              const pending  = parlay.legs.filter(l => !l.result).length;
-              const pct      = resolved > 0 ? Math.round((wins / resolved) * 100) : null;
+              const { pct, label } = legTally(parlay.legs);
               const fractionColor = pct === null ? undefined : (() => {
                 const [r, g, b] = getWinPctColor(pct);
                 return `rgb(${r}, ${g}, ${b})`;
@@ -545,13 +547,8 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                     className={cn("font-semibold tabular-nums", pct === null && "text-muted-foreground/50")}
                     style={fractionColor ? { color: fractionColor } : undefined}
                   >
-                    {wins}/{resolved}{pct !== null && ` (${pct}%)`}
+                    {label}
                   </span>
-                  {pending > 0 && (
-                    <span className="text-muted-foreground/50">
-                      · <span className="text-muted-foreground/70">{pending} pending</span>
-                    </span>
-                  )}
                 </div>
               );
             })()}
@@ -563,9 +560,12 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                 type="button"
                 disabled={!boostEditable}
                 onClick={e => { e.stopPropagation(); setBoostOpen(true); }}
-                title={boostEditable ? (parlay.boostPct ? "Change boost" : "Add a sportsbook boost") : undefined}
+                title={parlay.boostPct
+                  ? `Parlay Boost: ${boostLabel(parlay.boostPct)}${boostEditable ? " (click to change)" : ""}`
+                  : "Add a Parlay Boost"}
+                aria-label={parlay.boostPct ? `Parlay Boost: ${boostLabel(parlay.boostPct)}` : "Add a Parlay Boost"}
                 className={cn(
-                  "shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-medium leading-none transition-colors",
+                  "shrink-0 rounded-full border px-1.5 py-0.5 text-xs leading-none transition-colors",
                   parlay.boostPct
                     ? "border-amber-400/40 bg-amber-400/10 text-amber-300"
                     : "border-dashed border-white/15 text-muted-foreground/70",
@@ -573,7 +573,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                 )}
                 data-testid={`button-parlay-boost-${parlay.id}`}
               >
-                🚀 {boostLabel(parlay.boostPct) ?? "Add boost"}
+                🚀
               </button>
             )}
 
@@ -660,6 +660,25 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                           : `${fetchAllState.total}/${fetchAllState.total}`
                       : "All"
                     }
+                  </Button>
+                )}
+
+                {/* Regrades every leg, results already set included. Used rarely,
+                    so the whole-parlay pull is fine. */}
+                {parlay.legs.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Recalc parlay: pull fresh data and regrade every leg"
+                    disabled={recalcParlay.isPending}
+                    className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-primary"
+                    onClick={() => recalcParlay.mutate(parlay.id, {
+                      onSuccess: ({ logs }) => setEnrichResults(r => ({ ...r, ...logs })),
+                    })}
+                    data-testid={`button-recalc-parlay-${parlay.id}`}
+                  >
+                    {recalcParlay.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    Recalc
                   </Button>
                 )}
 
@@ -916,7 +935,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  title="Fetch historical data"
+                                  title={leg.result ? "Refetch data and regrade this leg" : "Fetch historical data"}
                                   className="h-6 w-6 p-0 text-muted-foreground hover:text-primary"
                                   disabled={isFetching}
                                   onClick={() => enrichLeg.mutate(leg.id, {

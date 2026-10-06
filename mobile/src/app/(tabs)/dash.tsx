@@ -12,8 +12,8 @@ import { InfoButton } from "@/components/InfoTip";
 import { Button } from "@/components/ui/Button";
 import { shadows } from "@/lib/theme";
 import { useAccentColor } from "@/hooks/use-accent-color";
-import { abbreviatePlayerName, awaySpreadDisplay } from "@/lib/pickHelpers";
-import type { ParlayLegWithParlayContext } from "@shared/schema";
+import { abbreviatePlayerName } from "@/lib/pickHelpers";
+import { LegLookthroughSheet } from "@/components/LegLookthrough";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
@@ -24,6 +24,7 @@ function StatTile({
   valueColor,
   info,
   glowColor,
+  onPress,
 }: {
   icon: IconName;
   label: string;
@@ -32,9 +33,19 @@ function StatTile({
   info?: { title: string; description: string };
   /** Hero stats (Power Score, BAR) get a colored glow instead of a flat shadow. */
   glowColor?: string;
+  /** Present when this stat has underlying legs to drill into ("lookthrough"). */
+  onPress?: () => void;
 }) {
   return (
-    <View style={[styles.statTile, glowColor ? shadows.glow(glowColor, 0.3) : shadows.card]}>
+    <Pressable
+      onPress={onPress}
+      disabled={!onPress}
+      style={({ pressed }) => [
+        styles.statTile,
+        glowColor ? shadows.glow(glowColor, 0.3) : shadows.card,
+        onPress && pressed && { opacity: 0.7 },
+      ]}
+    >
       {info && (
         <View style={styles.statTileInfo}>
           <InfoButton title={info.title} description={info.description} />
@@ -47,28 +58,47 @@ function StatTile({
         </Text>
       </View>
       <Text style={[styles.statTileValue, valueColor ? { color: valueColor } : null]}>{value}</Text>
-    </View>
+    </Pressable>
   );
 }
 
-function SummarySlide({ leagueId }: { leagueId?: number }) {
+function SummarySlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
   const accent = useAccentColor();
-  const { data, isLoading, error } = useDashboardSummary(leagueId);
+  const { data, isLoading, error } = useDashboardSummary(leagueId, dateRange);
+  const [lookthrough, setLookthrough] = useState<Lookthrough | null>(null);
 
   if (isLoading) return <DashboardLoading message="Loading summary…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load your summary right now." />;
 
   const bar = data.bar ?? 0;
+  const ids = data.lookthrough;
+  const open = (title: string, legIds: number[] | undefined) =>
+    legIds && legIds.length > 0 ? () => setLookthrough({ title, legIds }) : undefined;
 
   return (
     <View>
       <Text style={styles.slideTitle}>Summary</Text>
       <View style={styles.statGrid}>
         <StatTile icon="people-outline" label="Leagues" value={String(data.leagueCount)} />
-        <StatTile icon="checkmark-done-outline" label="Parlays Owned" value={String(data.parlaysPlaced)} />
-        <StatTile icon="trophy-outline" label="Leg Wins" value={String(data.legWins)} />
-        <StatTile icon="close-circle-outline" label="Leg Losses" value={String(data.legLosses)} />
-        <StatTile icon="trending-up-outline" label="Leg Win Rate" value={`${data.legWinRate.toFixed(1)}%`} />
+        <StatTile
+          icon="checkmark-done-outline"
+          label="Parlays Owned"
+          value={String(data.parlaysPlaced)}
+          onPress={open("Parlays Owned", ids?.ownedParlayLegIds)}
+        />
+        <StatTile icon="trophy-outline" label="Leg Wins" value={String(data.legWins)} onPress={open("Leg Wins", ids?.winLegIds)} />
+        <StatTile
+          icon="close-circle-outline"
+          label="Leg Losses"
+          value={String(data.legLosses)}
+          onPress={open("Leg Losses", ids?.lossLegIds)}
+        />
+        <StatTile
+          icon="trending-up-outline"
+          label="Leg Win Rate"
+          value={`${data.legWinRate.toFixed(1)}%`}
+          onPress={open("Decided Legs", ids && [...ids.winLegIds, ...ids.lossLegIds])}
+        />
         <StatTile icon="pulse-outline" label="Participation" value={`${(data.participationRate * 100).toFixed(0)}%`} />
         <StatTile
           icon="flash-outline"
@@ -94,6 +124,7 @@ function SummarySlide({ leagueId }: { leagueId?: number }) {
           }}
         />
       </View>
+      <DashLookthrough lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
     </View>
   );
 }
@@ -148,87 +179,25 @@ const BET_TYPE_LABELS: Record<string, string> = {
   player_prop: "Player Prop",
 };
 
-/** A settled leg from history can carry a null gameId (player props aren't
- * linked to a game row) — a lighter-weight label than pickHelpers' SelectedLeg/
- * shortLegLabel, which assume a non-null gameId from the live picks board. */
-function lookthroughLegLabel(leg: ParlayLegWithParlayContext): string {
-  if (leg.betType === "player_prop") {
-    const line = leg.line ? ` ${leg.line}` : "";
-    return `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"} ${leg.pick}${line}`.trim();
-  }
-  const game = leg.game;
-  if (!game) return leg.pick;
-  if (leg.betType === "spread") {
-    const line = leg.pick === "home" ? game.spread : awaySpreadDisplay(game.spread);
-    const team = leg.pick === "home" ? game.homeTeam : game.awayTeam;
-    return `${team} ${line ?? ""}`.trim();
-  }
-  if (leg.betType === "moneyline") {
-    const team = leg.pick === "home" ? game.homeTeam : game.awayTeam;
-    return `${team} ML`;
-  }
-  if (leg.betType === "over" || leg.betType === "under") {
-    return `${leg.betType === "over" ? "O" : "U"} ${game.overUnder ?? ""}`.trim();
-  }
-  return leg.pick;
-}
+type Lookthrough = { title: string; legIds: number[] };
 
-/** One row of a lookthrough bottom sheet — a compact leg summary. */
-function LookthroughLegRow({ leg }: { leg: ParlayLegWithParlayContext }) {
-  const resultColor =
-    leg.result === "win" ? "#22c55e" : leg.result === "loss" ? "#ef4444" : leg.result === "push" ? "#94a3b8" : "#64748b";
-  const resultLabel = leg.result ? leg.result.toUpperCase() : "PENDING";
-  return (
-    <View style={styles.lookthroughRow}>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={styles.lookthroughRowLabel} numberOfLines={1}>
-          {lookthroughLegLabel(leg)}
-        </Text>
-        <Text style={styles.lookthroughRowMeta} numberOfLines={1}>
-          {leg.parlay.week.label}
-        </Text>
-      </View>
-      <Text style={[styles.lookthroughRowResult, { color: resultColor }]}>{resultLabel}</Text>
-    </View>
-  );
-}
-
-/** Bottom sheet showing the legs behind a tapped "My Analytics" stat. */
-function LookthroughSheet({
-  lookthrough,
-  onClose,
-}: {
-  lookthrough: { title: string; legIds: number[] } | null;
-  onClose: () => void;
-}) {
-  const insets = useSafeAreaInsets();
+/** The legs behind a tapped Dash number, in the app-wide lookthrough sheet. */
+function DashLookthrough({ lookthrough, onClose }: { lookthrough: Lookthrough | null; onClose: () => void }) {
   const { data: legs, isLoading } = useMyParlayLegsByIds(lookthrough?.legIds ?? []);
-
   return (
-    <Modal visible={lookthrough !== null} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.modalWrap}>
-        <Pressable style={styles.modalBackdrop} onPress={onClose} />
-        <View style={[styles.sheet, { maxHeight: "75%", paddingBottom: insets.bottom + 24 }]}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>{lookthrough?.title}</Text>
-          {isLoading ? (
-            <DashboardLoading message="Loading…" />
-          ) : (
-            <ScrollView style={{ flexGrow: 0 }}>
-              {(legs ?? []).map((leg) => (
-                <LookthroughLegRow key={leg.id} leg={leg} />
-              ))}
-            </ScrollView>
-          )}
-        </View>
-      </View>
-    </Modal>
+    <LegLookthroughSheet
+      visible={lookthrough !== null}
+      title={lookthrough?.title ?? ""}
+      legs={legs}
+      isLoading={isLoading}
+      onClose={onClose}
+    />
   );
 }
 
-function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
-  const { data, isLoading, error } = useDashboardPatterns(leagueId);
-  const [lookthrough, setLookthrough] = useState<{ title: string; legIds: number[] } | null>(null);
+function AnalyticsSlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
+  const { data, isLoading, error } = useDashboardPatterns(leagueId, dateRange);
+  const [lookthrough, setLookthrough] = useState<Lookthrough | null>(null);
 
   if (isLoading) return <DashboardLoading message="Loading analytics…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load your analytics right now." />;
@@ -314,7 +283,7 @@ function AnalyticsSlide({ leagueId }: { leagueId?: number }) {
         )}
       </View>
 
-      <LookthroughSheet lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
+      <DashLookthrough lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
     </View>
   );
 }
@@ -750,8 +719,8 @@ export default function DashScreen() {
 
         <DashboardStack
           slides={[
-            { label: "Summary", content: <SummarySlide leagueId={selectedLeagueId} /> },
-            { label: "My Analytics", content: <AnalyticsSlide leagueId={selectedLeagueId} /> },
+            { label: "Summary", content: <SummarySlide leagueId={selectedLeagueId} dateRange={dateRange} /> },
+            { label: "My Analytics", content: <AnalyticsSlide leagueId={selectedLeagueId} dateRange={dateRange} /> },
             { label: "Performance", content: <PerformanceSlide leagueId={selectedLeagueId} dateRange={dateRange} selectedIndexId={selectedIndexId} /> },
             { label: "Weekly", content: <WeekOverWeekSlide leagueId={selectedLeagueId} dateRange={dateRange} selectedIndexId={selectedIndexId} /> },
           ]}
@@ -818,19 +787,6 @@ const styles = StyleSheet.create({
   slateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 },
   slateRowLabel: { fontSize: 13, color: "#94a3b8" },
   slateRowValue: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
-
-  lookthroughRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: "#2a3447",
-  },
-  lookthroughRowLabel: { fontSize: 14, fontWeight: "600", color: "#f1f5f9" },
-  lookthroughRowMeta: { fontSize: 12, color: "#64748b", marginTop: 2 },
-  lookthroughRowResult: { fontSize: 12, fontWeight: "700", flexShrink: 0 },
 
   leagueFilterWrap: {
     width: "100%",

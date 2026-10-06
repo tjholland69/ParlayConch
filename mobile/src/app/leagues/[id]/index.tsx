@@ -18,7 +18,6 @@ import { useLocalSearchParams, Stack, useRouter } from "expo-router";
 import { useState, useMemo } from "react";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
-import Animated, { FadeIn, FadeOut } from "react-native-reanimated";
 import * as WebBrowser from "expo-web-browser";
 import { apiRequest, API_BASE_URL } from "@/lib/api";
 import {
@@ -31,6 +30,7 @@ import {
   useLockWeekParlay,
   useUnlockWeekParlay,
   useInviteByEmail,
+  useLeagueDataStats,
   type LeagueRecordEntry,
 } from "@/hooks/use-leagues";
 import {
@@ -52,8 +52,9 @@ import { useAppResume } from "@/hooks/use-app-resume";
 import { format } from "date-fns";
 import { SPORTSBOOK_PROVIDERS, pickDeepLinkGames, type SportsbookProvider, type DeepLinkGame } from "@shared/sportsbook-providers";
 import type { ParlayWithLegs } from "@shared/schema";
-import { resolveResultDetail } from "@shared/legJustification";
 import { getSlate } from "@shared/slate";
+import { isParlayInProgress, legTally } from "@shared/parlayProgress";
+import { LegRow, LegLookthroughSheet, legOwnerName } from "@/components/LegLookthrough";
 import { webLeagueSettingsUrl } from "@/lib/pickHelpers";
 import { shadows } from "@/lib/theme";
 import { getOpenParlayVisualStyle, getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
@@ -61,7 +62,6 @@ import { getBustedLeg } from "@/lib/parlayLoser";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 import { DisputeLegBadge } from "@/components/DisputeLegSheet";
-import { InfoButton } from "@/components/InfoTip";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 type MCIIconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
@@ -119,13 +119,13 @@ function ParlayCard({
   const approveParlay = useApproveParlay(leagueId, weekId);
   const rejectParlay = useRejectParlay(leagueId, weekId);
   const markParlaySent = useMarkParlaySent(leagueId, weekId);
-  const [expandedLegIndex, setExpandedLegIndex] = useState<number | null>(null);
   const [collapsed, setCollapsed] = useState(true);
   const [boostOpen, setBoostOpen] = useState(false);
   const setBoost = useSetParlayBoost(leagueId, weekId);
   // Same rule the server enforces: the parlay's owner or the Parlay Maestro.
   const boostEditable = isAdmin || parlay.userId === effectiveUserId;
-  const showBoostChip = parlay.status !== "void" && (!!parlay.boostPct || boostEditable);
+  // The boost control only shows once the card is expanded to its legs.
+  const showBoostChip = !collapsed && parlay.status !== "void" && (!!parlay.boostPct || boostEditable);
   const [shameOpen, setShameOpen] = useState(false);
   // Multi-game "Send to Sportsbook" walkthrough — set only when the parlay
   // spans 2+ distinct games, since a single game keeps the original one-shot
@@ -143,12 +143,7 @@ function ParlayCard({
     "Unknown";
 
   const legs = parlay.legs ?? [];
-  const wins = legs.filter((l) => l.result === "win").length;
-  const losses = legs.filter((l) => l.result === "loss").length;
-  const pushes = legs.filter((l) => l.result === "push").length;
-  const resolved = wins + losses + pushes;
-  const pending = legs.length - resolved;
-  const pct = resolved > 0 ? Math.round((wins / resolved) * 100) : null;
+  const { pct, label: tallyLabel } = legTally(legs);
   const visual = getParlayVisualStyle(pct, 1);
   // Until a leg is decided there's no win % to color by, so an open parlay
   // shows its status instead: light blue while pending, a glow once active.
@@ -206,8 +201,10 @@ function ParlayCard({
       ? "#22c55e"
       : "#f59e0b";
 
-  const statusLabel =
-    parlay.status === "sent"
+  // Once a game on the ticket kicks off, an open parlay is simply in progress.
+  const statusLabel = isParlayInProgress(parlay)
+    ? "In progress"
+    : parlay.status === "sent"
       ? "Sent — awaiting confirmation"
       : parlay.status === "placed"
       ? "Placed"
@@ -308,6 +305,10 @@ function ParlayCard({
         openVisual?.backgroundColor && { backgroundColor: openVisual.backgroundColor },
       ]}
     >
+      {/* Faint result-colored wash over the whole card. */}
+      {!openVisual && visual.tintColor && (
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: visual.tintColor }]} />
+      )}
       <Pressable
         onPress={() => setCollapsed((c) => !c)}
         style={({ pressed }) => [styles.parlayCardHeader, pressed && styles.headerPressed]}
@@ -367,11 +368,7 @@ function ParlayCard({
         </View>
 
         {pct !== null && (
-          <Text style={[styles.parlayCardFraction, { color: pctColor }]}>
-            {wins}/{resolved}
-            {pct !== null ? ` (${pct}%)` : ""}
-            {pending > 0 ? ` · ${pending} pending` : ""}
-          </Text>
+          <Text style={[styles.parlayCardFraction, { color: pctColor }]}>{tallyLabel}</Text>
         )}
 
         <Ionicons name={statusIcon} size={22} color={statusColor} />
@@ -382,8 +379,8 @@ function ParlayCard({
         <ParlayMixBar legs={legs} />
       </View>
 
-      {/* Promo boost: shown when set, and a way in for whoever can set it —
-          at any status, since boosts are often recorded after the fact. */}
+      {/* Promo boost: a rocket, on the expanded card only. Lit when a boost
+          is set; tapping it opens the boost sheet for whoever can set it. */}
       {(showBoostChip || !!bustedLeg) && (
         <View style={styles.cardChipRow}>
           {showBoostChip && (
@@ -397,12 +394,10 @@ function ParlayCard({
               ]}
               hitSlop={6}
               accessibilityRole="button"
-              accessibilityLabel={parlay.boostPct ? "Change boost" : "Add a sportsbook boost"}
+              accessibilityLabel={parlay.boostPct ? `Parlay Boost: ${boostLabel(parlay.boostPct)}` : "Add a Parlay Boost"}
               testID={`button-parlay-boost-${parlay.id}`}
             >
-              <Text style={[styles.boostChipText, !!parlay.boostPct && styles.boostChipTextActive]}>
-                🚀 {boostLabel(parlay.boostPct) ?? "Add boost"}
-              </Text>
+              <Text style={styles.boostChipText}>🚀</Text>
             </Pressable>
           )}
           {bustedLeg && (
@@ -440,40 +435,15 @@ function ParlayCard({
 
       {!collapsed && legs.length > 0 && (
         <View style={styles.legsSection}>
-          {legs.map((leg: ParlayLegWithGame, i: number) => {
-            const isWin = leg.result === "win";
-            const isLoss = leg.result === "loss";
-            const resultColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#cbd5e1";
-            const label = legMatchupLabel(leg);
-            const expanded = expandedLegIndex === i;
-
-            return (
-              <View key={i}>
-                <Pressable
-                  onPress={() => leg.result && setExpandedLegIndex(expanded ? null : i)}
-                  style={({ pressed }) => [styles.legRow, pressed && styles.pressed]}
-                >
-                  <View style={[styles.legDot, { backgroundColor: resultColor }]} />
-                  <Text style={[styles.legText, { color: resultColor }]} numberOfLines={1} ellipsizeMode="tail">
-                    {label}
-                  </Text>
-                  {/* leg.line already carries its own sign (e.g. "+3.5" for
-                      underdog spreads, from game.spread) — don't add another. */}
-                  {leg.line != null && <Text style={styles.legLine}>{leg.line}</Text>}
-                  {leg.userId === effectiveUserId && <DisputeLegBadge legId={leg.id} />}
-                </Pressable>
-                {expanded && leg.result && (
-                  <Animated.View
-                    entering={FadeIn.duration(150)}
-                    exiting={FadeOut.duration(100)}
-                    style={styles.legDetailRow}
-                  >
-                    <Text style={styles.legDetailText}>{resolveResultDetail(leg, leg.game)}</Text>
-                  </Animated.View>
-                )}
-              </View>
-            );
-          })}
+          {legs.map((leg: ParlayLegWithGame) => (
+            <LegRow
+              key={leg.id}
+              leg={leg}
+              ownerName={legOwnerName(leg.user)}
+              week={parlay.week}
+              trailing={leg.userId === effectiveUserId ? <DisputeLegBadge legId={leg.id} /> : undefined}
+            />
+          ))}
         </View>
       )}
 
@@ -556,28 +526,6 @@ function ParlayCard({
     </View>
     </View>
   );
-}
-
-/** "TeamA vs TeamB — <pick>" for a leg, resolving a spread/moneyline pick's
- * raw "home"/"away" to the actual team name rather than printing it as-is —
- * ticket displays elsewhere (build.tsx, GamePickCard.tsx) already do this
- * via shortLegLabel; this is the equivalent for this file's two-team,
- * both-sides-shown format. */
-function legMatchupLabel(leg: {
-  betType: string;
-  pick: string;
-  playerName?: string | null;
-  propType?: string | null;
-  game?: { homeTeam?: string | null; awayTeam?: string | null } | null;
-}): string {
-  if (leg.betType === "player_prop") {
-    return `${leg.playerName ?? "Player"} — ${leg.propType ?? "prop"}`;
-  }
-  const pickLabel =
-    leg.betType === "spread" || leg.betType === "moneyline"
-      ? (leg.pick === "home" ? leg.game?.homeTeam : leg.pick === "away" ? leg.game?.awayTeam : null) ?? leg.pick
-      : leg.pick;
-  return `${leg.game?.homeTeam ?? "?"} vs ${leg.game?.awayTeam ?? "?"} — ${pickLabel}`;
 }
 
 function memberDisplayName(member: any): string {
@@ -688,6 +636,13 @@ function MemberRow({
     </View>
   );
 }
+
+type StandingsScope = "season" | "all";
+
+const STANDINGS_SCOPES: { key: StandingsScope; label: string }[] = [
+  { key: "season", label: "Current Year" },
+  { key: "all", label: "All Time" },
+];
 
 function MembersTable({
   members,
@@ -881,6 +836,8 @@ export default function LeagueDetailScreen() {
   const [memberFilter, setMemberFilter] = useState("all");
   const [betTypeFilter, setBetTypeFilter] = useState("all");
   const [resultFilter, setResultFilter] = useState("all");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [standingsScope, setStandingsScope] = useState<StandingsScope>("season");
   const activeWeek = useActiveWeek();
   const effectiveUserId = useEffectiveUserId();
   const { user } = useAuth();
@@ -906,6 +863,8 @@ export default function LeagueDetailScreen() {
   // Settings screen edits.
   const preferredSportsbook = (user?.settings as any)?.preferredSportsbook as SportsbookProvider | undefined;
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useLeagueStats(leagueId);
+  const { data: dataStats, refetch: refetchDataStats } = useLeagueDataStats(leagueId);
+  const memberStats = standingsScope === "season" ? dataStats?.currentSeasonStandings : dataStats?.allTimeStandings ?? stats;
   const { data: leagueRecords, isLoading: recordsLoading } = useLeagueRecords(leagueId);
   const [lookthroughRecord, setLookthroughRecord] = useState<LeagueRecordEntry | null>(null);
   const isParticipationLookthrough = lookthroughRecord?.lookthroughKind === "participation";
@@ -941,7 +900,14 @@ export default function LeagueDetailScreen() {
 
   const leagueName = league?.name ?? "League";
   const isLocked = !!lockStatus?.isLocked;
+  // Locked and the first game has kicked off: the lock can't be lifted.
+  const inProgress = !!lockStatus?.inProgress;
   const canBuild = !!activeWeek && !isLocked;
+  // Members put their legs into one shared parlay, so "did I get a pick in"
+  // is about having a leg in it — for whoever is being acted for, when a
+  // super user is acting for someone.
+  const missedLock = isLocked && !!effectiveUserId && !!lockStatus?.missingMemberIds?.includes(effectiveUserId);
+  const activeFilterCount = [memberFilter, betTypeFilter, resultFilter].filter((f) => f !== "all").length;
 
   const memberOptions = [
     { key: "all", label: "All Members" },
@@ -1102,7 +1068,12 @@ export default function LeagueDetailScreen() {
                 <Text style={styles.weekPillText}>{activeWeek.label}</Text>
               </View>
             )}
-            {isLocked ? (
+            {inProgress ? (
+              <View style={styles.progressPill}>
+                <Ionicons name="play-circle-outline" size={12} color="#38bdf8" />
+                <Text style={styles.progressPillText}>In Progress</Text>
+              </View>
+            ) : isLocked ? (
               <View style={styles.lockPill}>
                 <Ionicons name="lock-closed" size={12} color="#ef4444" />
                 <Text style={styles.lockPillText}>Locked</Text>
@@ -1146,7 +1117,9 @@ export default function LeagueDetailScreen() {
                 </Text>
               )}
             </View>
-            {isLocked ? (
+            {inProgress ? (
+              <Text style={styles.adminBarWaiting} testID="text-lock-final">Picks are final</Text>
+            ) : isLocked ? (
               <Pressable
                 onPress={handleUnlockPress}
                 disabled={unlockWeek.isPending}
@@ -1225,6 +1198,7 @@ export default function LeagueDetailScreen() {
                   refetchLock();
                 } else if (activeTab === "members") {
                   refetchMembers();
+                  refetchDataStats();
                 } else {
                   refetchStats();
                 }
@@ -1252,7 +1226,7 @@ export default function LeagueDetailScreen() {
                   </Text>
                 </Pressable>
               )}
-              {isLocked && !myParlay && (
+              {missedLock && (
                 <View style={styles.missedBanner}>
                   <Ionicons name="alert-circle-outline" size={16} color="#f59e0b" />
                   <Text style={styles.missedBannerText}>
@@ -1263,7 +1237,21 @@ export default function LeagueDetailScreen() {
               {!parlaysLoading && parlays && parlays.length > 0 && (
                 <View style={styles.filterSection}>
                   <View style={styles.filterSectionHeader}>
-                    <Text style={styles.filterSectionTitle}>Filter</Text>
+                    <Pressable
+                      onPress={() => setFiltersOpen((v) => !v)}
+                      hitSlop={8}
+                      style={({ pressed }) => [styles.filterToggle, pressed && { opacity: 0.7 }]}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: filtersOpen }}
+                      testID="button-toggle-parlay-filters"
+                    >
+                      <Ionicons name="filter-outline" size={14} color={filtersActive ? "#93c5fd" : "#94a3b8"} />
+                      <Text style={[styles.filterToggleText, filtersActive && { color: "#93c5fd" }]}>
+                        {filtersOpen ? "Hide filters" : "Filters"}
+                        {activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+                      </Text>
+                      <Ionicons name={filtersOpen ? "chevron-up" : "chevron-down"} size={14} color="#64748b" />
+                    </Pressable>
                     {filtersActive && (
                       <Pressable
                         onPress={() => {
@@ -1278,11 +1266,15 @@ export default function LeagueDetailScreen() {
                       </Pressable>
                     )}
                   </View>
-                  <FilterChipRow options={memberOptions} selected={memberFilter} onSelect={setMemberFilter} />
-                  <View style={styles.filterRowDivider} />
-                  <FilterChipRow options={BET_TYPE_FILTERS} selected={betTypeFilter} onSelect={setBetTypeFilter} />
-                  <View style={styles.filterRowDivider} />
-                  <FilterChipRow options={RESULT_FILTERS} selected={resultFilter} onSelect={setResultFilter} />
+                  {filtersOpen && (
+                    <>
+                      <FilterChipRow options={memberOptions} selected={memberFilter} onSelect={setMemberFilter} />
+                      <View style={styles.filterRowDivider} />
+                      <FilterChipRow options={BET_TYPE_FILTERS} selected={betTypeFilter} onSelect={setBetTypeFilter} />
+                      <View style={styles.filterRowDivider} />
+                      <FilterChipRow options={RESULT_FILTERS} selected={resultFilter} onSelect={setResultFilter} />
+                    </>
+                  )}
                 </View>
               )}
               {parlaysLoading ? (
@@ -1344,7 +1336,26 @@ export default function LeagueDetailScreen() {
                   <Text style={styles.emptySubtitle}>No members found</Text>
                 </View>
               ) : (
-                <MembersTable members={members} stats={stats} />
+                <>
+                  <View style={styles.scopeRow}>
+                    {STANDINGS_SCOPES.map((scope) => {
+                      const active = standingsScope === scope.key;
+                      return (
+                        <Pressable
+                          key={scope.key}
+                          onPress={() => setStandingsScope(scope.key)}
+                          style={[styles.scopeBtn, active && styles.scopeBtnActive]}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: active }}
+                          testID={`button-standings-${scope.key}`}
+                        >
+                          <Text style={[styles.scopeBtnText, active && styles.scopeBtnTextActive]}>{scope.label}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <MembersTable members={members} stats={memberStats} />
+                </>
               )}
               <Pressable
                 style={({ pressed }) => [styles.webLinkRow, pressed && { opacity: 0.7 }]}
@@ -1453,88 +1464,29 @@ export default function LeagueDetailScreen() {
       </Modal>
 
       {/* League Record lookthrough — the specific parlay legs behind whichever
-          tile was tapped. */}
-      {lookthroughRecord && (
-        <Modal visible transparent animationType="slide" onRequestClose={() => setLookthroughRecord(null)}>
-          <View style={styles.modalOverlay}>
-            <Pressable style={styles.modalBackdrop} onPress={() => setLookthroughRecord(null)} />
-            <View style={[styles.modalSheet, styles.lookthroughSheet]}>
-              <Text style={styles.modalTitle}>{lookthroughRecord.title ?? lookthroughRecord.label}</Text>
-              {isParticipationLookthrough ? (
-                loadingMissedWeeks ? (
-                  <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
-                ) : !missedWeeksData?.weeks || missedWeeksData.weeks.length === 0 ? (
-                  <Text style={styles.modalSubtitle}>No missed weeks — full participation!</Text>
-                ) : (
-                  <ScrollView style={styles.lookthroughScroll}>
-                    {missedWeeksData.weeks.map((w) => (
-                      <View key={w.weekId} style={styles.lookthroughRow}>
-                        <Text style={styles.legText} numberOfLines={1}>
-                          {w.label}
-                        </Text>
-                        <Text style={styles.lookthroughMeta} numberOfLines={1}>{w.season}</Text>
-                      </View>
-                    ))}
-                  </ScrollView>
-                )
-              ) : loadingLookthrough ? (
-                <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
-              ) : !lookthroughLegs || lookthroughLegs.length === 0 ? (
-                <Text style={styles.modalSubtitle}>No legs found.</Text>
-              ) : (
-                <ScrollView style={styles.lookthroughScroll}>
-                  {lookthroughLegs.map((leg) => {
-                    const isWin = leg.result === "win";
-                    const isLoss = leg.result === "loss";
-                    const resultColor = isWin ? "#22c55e" : isLoss ? "#ef4444" : "#cbd5e1";
-                    const matchupLabel = legMatchupLabel(leg);
-                    const dateLabel = leg.game?.gameTime
-                      ? new Date(leg.game.gameTime).toLocaleDateString("en-US", { timeZone: "America/New_York", month: "2-digit", day: "2-digit", year: "2-digit" })
-                      : null;
-                    const slateLabel = leg.game?.gameTime ? getSlate(new Date(leg.game.gameTime)) : null;
-                    return (
-                      <View key={leg.id} style={styles.lookthroughRow}>
-                        <View style={styles.lookthroughRowHeader}>
-                          <Text style={styles.lookthroughParlay} numberOfLines={1}>
-                            {leg.parlay.week?.label ?? `Week ${leg.parlay.weekId}`}
-                          </Text>
-                          <View style={styles.lookthroughOwnerRow}>
-                            <Text style={styles.lookthroughOwner} numberOfLines={1}>
-                              {leg.parlay.isOwnParlay ? "You" : memberDisplayName({ user: leg.parlay.owner })}
-                            </Text>
-                            <InfoButton
-                              title="Debug Info"
-                              description={`parlay_id: ${leg.parlay.id}\nparlay_leg_id: ${leg.id}\ngame_id: ${leg.gameId ?? "—"}\nuser_id: ${leg.userId ?? "—"}`}
-                            />
-                          </View>
-                        </View>
-                        <Text style={[styles.legText, { color: resultColor }]} numberOfLines={1} ellipsizeMode="tail">
-                          {matchupLabel}
-                        </Text>
-                        <Text style={styles.lookthroughMeta} numberOfLines={1}>
-                          {(leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase()) || "—"}
-                          {leg.line ? ` · ${leg.line}` : ""}
-                          {leg.odds ? ` · ${leg.odds}` : ""}
-                          {dateLabel ? ` · ${dateLabel}` : ""}
-                          {slateLabel ? ` · ${slateLabel}` : ""}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </ScrollView>
-              )}
-              <View style={styles.modalActions}>
-                <Pressable
-                  style={({ pressed }) => [styles.modalCancel, { flex: 1 }, pressed && { opacity: 0.7 }]}
-                  onPress={() => setLookthroughRecord(null)}
-                >
-                  <Text style={styles.modalCancelText}>Close</Text>
-                </Pressable>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      )}
+          tile was tapped, in the same sheet the Dash page uses. */}
+      <LegLookthroughSheet
+        visible={lookthroughRecord !== null}
+        title={lookthroughRecord?.title ?? lookthroughRecord?.label ?? ""}
+        legs={lookthroughLegs}
+        isLoading={isParticipationLookthrough ? loadingMissedWeeks : loadingLookthrough}
+        onClose={() => setLookthroughRecord(null)}
+      >
+        {isParticipationLookthrough ? (
+          !missedWeeksData?.weeks || missedWeeksData.weeks.length === 0 ? (
+            <Text style={styles.modalSubtitle}>No missed weeks — full participation!</Text>
+          ) : (
+            <ScrollView style={styles.lookthroughScroll}>
+              {missedWeeksData.weeks.map((w) => (
+                <View key={w.weekId} style={styles.lookthroughRow}>
+                  <Text style={styles.lookthroughWeek} numberOfLines={1}>{w.label}</Text>
+                  <Text style={styles.lookthroughMeta} numberOfLines={1}>{w.season}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          )
+        ) : undefined}
+      </LegLookthroughSheet>
     </>
   );
 }
@@ -1579,6 +1531,16 @@ const styles = StyleSheet.create({
     paddingVertical: 3,
   },
   lockPillText: { fontSize: 11, color: "#ef4444", fontWeight: "600" },
+  progressPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#10283a",
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  progressPillText: { fontSize: 11, color: "#38bdf8", fontWeight: "600" },
   openPill: {
     flexDirection: "row",
     alignItems: "center",
@@ -1622,7 +1584,6 @@ const styles = StyleSheet.create({
   },
   boostChipActive: { borderStyle: "solid", borderColor: "rgba(251, 191, 36, 0.4)", backgroundColor: "rgba(251, 191, 36, 0.1)" },
   boostChipText: { fontSize: 11, fontWeight: "600", color: "#64748b" },
-  boostChipTextActive: { color: "#fcd34d" },
   adminBarWaiting: { fontSize: 11, color: "#64748b", marginTop: 2 },
   adminActionBtn: {
     flexDirection: "row",
@@ -1716,7 +1677,6 @@ const styles = StyleSheet.create({
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#f1f5f9" },
   modalSubtitle: { fontSize: 13, color: "#94a3b8", marginBottom: 4 },
   walkthroughMatchup: { fontSize: 16, fontWeight: "700", color: "#f1f5f9" },
-  lookthroughSheet: { maxHeight: "80%" },
   lookthroughScroll: { flexGrow: 0 },
   lookthroughRow: {
     paddingVertical: 10,
@@ -1724,10 +1684,7 @@ const styles = StyleSheet.create({
     borderColor: "#2a3447",
     gap: 2,
   },
-  lookthroughRowHeader: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
-  lookthroughParlay: { fontSize: 11, fontWeight: "600", color: "#64748b" },
-  lookthroughOwnerRow: { flexDirection: "row", alignItems: "center", gap: 2 },
-  lookthroughOwner: { fontSize: 11, color: "#64748b" },
+  lookthroughWeek: { fontSize: 13, fontWeight: "600", color: "#cbd5e1" },
   lookthroughMeta: { fontSize: 12, color: "#94a3b8" },
   codeRow: {
     flexDirection: "row",
@@ -1774,7 +1731,21 @@ const styles = StyleSheet.create({
   modalConfirmText: { fontSize: 15, fontWeight: "700", color: "#ffffff" },
   filterSection: { marginBottom: 14, gap: 6 },
   filterSectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
-  filterSectionTitle: { fontSize: 11, fontWeight: "700", color: "#475569", letterSpacing: 0.6, textTransform: "uppercase" },
+  filterToggle: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 44 },
+  filterToggleText: { fontSize: 12, fontWeight: "700", color: "#94a3b8", letterSpacing: 0.4 },
+  scopeRow: {
+    flexDirection: "row",
+    backgroundColor: "#1c2538",
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    borderRadius: 10,
+    padding: 3,
+    marginBottom: 12,
+  },
+  scopeBtn: { flex: 1, minHeight: 38, borderRadius: 8, alignItems: "center", justifyContent: "center" },
+  scopeBtnActive: { backgroundColor: "#1e2a3b", borderWidth: 1, borderColor: "#2563eb" },
+  scopeBtnText: { fontSize: 13, fontWeight: "600", color: "#94a3b8" },
+  scopeBtnTextActive: { color: "#93c5fd" },
   clearFiltersBtn: {
     backgroundColor: "#1c2538",
     borderWidth: 1,
@@ -1885,27 +1856,9 @@ const styles = StyleSheet.create({
   resultChipTextSuccess: { color: "#22c55e" },
   mixBarWrap: { paddingHorizontal: 14, paddingBottom: 12 },
   legsSection: {
-    borderTopWidth: 1,
-    borderTopColor: "#2a3447",
     paddingHorizontal: 14,
-    paddingVertical: 10,
-    gap: 8,
-  },
-  legRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  legDot: { width: 7, height: 7, borderRadius: 4 },
-  legText: { flex: 1, fontSize: 13, fontWeight: "600" },
-  legLine: { fontSize: 12, color: "#475569", fontWeight: "600" },
-  pressed: { opacity: 0.6 },
-  legDetailRow: {
-    paddingLeft: 15,
-    paddingRight: 4,
     paddingBottom: 4,
   },
-  legDetailText: { fontSize: 11, color: "#64748b", fontStyle: "italic" },
   moderationRow: {
     flexDirection: "row",
     borderTopWidth: 1,

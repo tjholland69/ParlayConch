@@ -35,6 +35,8 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { getDisplayName, shortId } from "@/lib/displayName";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
+import { hasGameStarted } from "@shared/parlayProgress";
 import { getBuildingVerb } from "@/lib/parlaySlang";
 import { getLineForBet, spreadLabels } from "@/lib/gameOdds";
 import { legChipLabel } from "@/lib/legLabel";
@@ -374,6 +376,9 @@ export default function LeagueDetail() {
   const [, params] = useRoute("/leagues/:id");
   const leagueId = Number(params?.id);
   const { user } = useAuth();
+  // The member whose picks these are, which is the acted-for user when a
+  // super user is acting for someone.
+  const effectiveUserId = useEffectiveUserId();
   
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
@@ -714,7 +719,16 @@ export default function LeagueDetail() {
 
   const minLegs = league.minLegsPerParlay || 3;
   const maxLegs = league.maxLegsPerParlay || 5;
-  const canSubmit = myLegs.length >= minLegs && myLegs.length <= maxLegs && !lockStatus?.isLocked;
+  // A pick whose game kicked off before the parlay was submitted blocks the
+  // submit until it's removed.
+  const allSlateGames = [...(games ?? []), ...laterWeekRowGames];
+  const startedLegGames = myLegs
+    .map(l => allSlateGames.find(g => g.id === l.gameId))
+    .filter((g): g is Game => !!g && hasGameStarted(g));
+  const canSubmit = myLegs.length >= minLegs && myLegs.length <= maxLegs && !lockStatus?.isLocked && startedLegGames.length === 0;
+  // Members put their legs into one shared parlay, so "did I get a pick in"
+  // is about having a leg in it, not about owning a parlay row.
+  const iAmMissing = !!effectiveUserId && !!lockStatus?.missingMemberIds?.includes(effectiveUserId);
 
   return (
     <div className="max-w-screen-2xl mx-auto space-y-6 pb-12">
@@ -894,13 +908,19 @@ export default function LeagueDetail() {
                   </Badge>
                 )}
                 <span className="basis-full text-xs">
-                  {lockStatus?.isLocked
-                    ? "Submissions are closed. Anyone without a submitted parlay is Void this week."
+                  {lockStatus?.inProgress
+                    ? "The first game has kicked off, so the lock is permanent. Make any changes in the Data Editor."
+                    : lockStatus?.isLocked
+                    ? "Submissions are closed and picks can't be changed until it's unlocked. Anyone without a pick in is Void this week."
                     : "Locking closes the week: no new picks or submissions, and anyone who hasn't submitted is marked Void."}
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                {lockStatus?.isLocked ? (
+                {lockStatus?.inProgress ? (
+                  <Badge className="bg-sky-500/20 text-sky-300 border-sky-500/30" data-testid="badge-parlay-in-progress">
+                    <Lock className="w-3 h-3 mr-1" />In Progress
+                  </Badge>
+                ) : lockStatus?.isLocked ? (
                   <>
                     <Badge className="bg-red-500/20 text-red-400 border-red-500/30" data-testid="badge-parlay-locked">
                       <Lock className="w-3 h-3 mr-1" />Locked
@@ -946,18 +966,22 @@ export default function LeagueDetail() {
             <div className="flex items-start gap-3 px-4 py-3 rounded-xl bg-red-500/5 border border-red-500/20" data-testid="banner-parlay-locked">
               <Lock className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
               <div className="text-sm">
-                <p className="font-semibold">This week's parlay is locked</p>
+                <p className="font-semibold">
+                  {lockStatus.inProgress ? "This week's parlay is in progress" : "This week's parlay is locked"}
+                </p>
                 <p className="text-muted-foreground">
-                  {myParlay && myParlay.status !== "draft"
-                    ? "Your submission is locked in. "
-                    : "You didn't submit before the lock, so you're marked Void this week. "}
-                  No new picks or submissions until it's unlocked.
+                  {iAmMissing
+                    ? "You didn't get a pick in before the lock, so you're marked Void this week. "
+                    : "Your pick is locked in. "}
+                  {lockStatus.inProgress
+                    ? "Games have started, so picks are final."
+                    : "No new picks or submissions until it's unlocked."}
                 </p>
               </div>
             </div>
           )}
 
-          {!lockStatus?.isLocked && (!myParlay || myParlay.status === "draft") ? (
+          {!lockStatus?.isLocked && (!myParlay || myParlay.status === "draft") && (!!myParlay || iAmMissing || !lockStatus) ? (
             <>
               {/* Selection Summary */}
               {myLegs.length > 0 && (
@@ -974,8 +998,10 @@ export default function LeagueDetail() {
                   </CardHeader>
                   <CardContent>
                     {!canSubmit && (
-                      <p className="text-sm text-muted-foreground mb-3">
-                        {myLegs.length < minLegs
+                      <p className="text-sm text-muted-foreground mb-3" data-testid="text-submit-blocked">
+                        {startedLegGames.length > 0
+                          ? `${startedLegGames.map(g => `${g.awayTeam} @ ${g.homeTeam}`).join(", ")} already started. Remove that pick to submit.`
+                          : myLegs.length < minLegs
                           ? `Select at least ${minLegs} games`
                           : `Maximum ${maxLegs} games allowed`}
                       </p>
@@ -1101,13 +1127,11 @@ export default function LeagueDetail() {
                 );
               })()}
 
-              {/* Void cards — members who didn't submit when parlay is locked.
-                  A 'draft' parlay (still being built, never hit submit) doesn't
-                  count as having submitted — without this check, someone who
-                  only started a pick would be silently excluded from the void
-                  list instead of correctly landing on it. */}
+              {/* Void cards — members with no leg in the week's parlay when it
+                  locked. Not everyone starts a parlay: most add their leg to
+                  one someone else owns, and they get no card here. */}
               {lockStatus?.isLocked && league.members
-                ?.filter(m => !leagueParlays?.some(p => p.userId === m.userId && p.status !== 'draft'))
+                ?.filter(m => lockStatus.missingMemberIds.includes(m.userId))
                 .map(m => (
                   <Card key={m.userId} className="bg-card/30 border-white/10 opacity-60" data-testid={`card-void-${m.userId}`}>
                     <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
@@ -1117,7 +1141,7 @@ export default function LeagueDetail() {
                         </div>
                         <div>
                           <p className="font-bold text-muted-foreground">{getDisplayName(m.user)}</p>
-                          <p className="text-xs text-muted-foreground">No submission</p>
+                          <p className="text-xs text-muted-foreground">No pick submitted</p>
                         </div>
                       </div>
                       <Badge variant="outline" className="text-muted-foreground border-white/10">
@@ -1158,7 +1182,8 @@ export default function LeagueDetail() {
                     {(() => {
                       const freq = new Map<string, { label: string; count: number }>();
                       for (const p of myParlayHistory ?? []) {
-                        for (const leg of p.legs) {
+                        // A shared parlay carries everyone's legs; count only this member's.
+                        for (const leg of p.legs.filter(l => l.userId === effectiveUserId)) {
                           const key = leg.betType === 'player_prop'
                             ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
                             : `bet:${leg.betType}:${leg.pick}`;

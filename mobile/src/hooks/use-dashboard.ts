@@ -13,6 +13,13 @@ export interface UserSummary {
   powerScore: number;
   participationRate: number;
   bar: number;
+  /** Leg ids behind the tappable summary tiles. */
+  lookthrough?: {
+    ownedParlayLegIds: number[];
+    placedLegIds: number[];
+    winLegIds: number[];
+    lossLegIds: number[];
+  };
 }
 
 export interface UserPatterns {
@@ -39,30 +46,6 @@ export interface WinRateTimeSeriesPoint {
   allWeekWinRate: number | null;
 }
 
-/** `leagueId` scopes every stat to one league; omitted/undefined = combined
- * across all the user's leagues (the default view). */
-export function useDashboardSummary(leagueId?: number) {
-  return useQuery<UserSummary>({
-    queryKey: [api.dashboard.summary.path, leagueId ?? "all"],
-    queryFn: () =>
-      apiRequest<UserSummary>(
-        "GET",
-        leagueId ? `${api.dashboard.summary.path}?leagueId=${leagueId}` : api.dashboard.summary.path
-      ),
-  });
-}
-
-export function useDashboardPatterns(leagueId?: number) {
-  return useQuery<UserPatterns>({
-    queryKey: [api.dashboard.patterns.path, leagueId ?? "all"],
-    queryFn: () =>
-      apiRequest<UserPatterns>(
-        "GET",
-        leagueId ? `${api.dashboard.patterns.path}?leagueId=${leagueId}` : api.dashboard.patterns.path
-      ),
-  });
-}
-
 export interface DashboardDateRange {
   startDate?: string;
   endDate?: string;
@@ -73,7 +56,9 @@ export interface DashboardDateRange {
   season?: number;
 }
 
-export function useDashboardPerformance(leagueId?: number, dateRange?: DashboardDateRange) {
+/** The Dash page's league + date filters as a query string and cache key,
+ * shared by every dashboard endpoint so each slide answers to the same filters. */
+function dashboardFilters(leagueId?: number, dateRange?: DashboardDateRange) {
   const params = new URLSearchParams();
   if (leagueId) params.set("leagueId", String(leagueId));
   if (dateRange?.season != null) {
@@ -83,14 +68,35 @@ export function useDashboardPerformance(leagueId?: number, dateRange?: Dashboard
     if (dateRange?.endDate) params.set("endDate", dateRange.endDate);
   }
   const query = params.toString();
+  return {
+    url: (path: string) => (query ? `${path}?${query}` : path),
+    key: [leagueId ?? "all", dateRange?.season ?? null, dateRange?.startDate ?? null, dateRange?.endDate ?? null],
+  };
+}
 
+/** `leagueId` scopes every stat to one league; omitted/undefined = combined
+ * across all the user's leagues (the default view). */
+export function useDashboardSummary(leagueId?: number, dateRange?: DashboardDateRange) {
+  const filters = dashboardFilters(leagueId, dateRange);
+  return useQuery<UserSummary>({
+    queryKey: [api.dashboard.summary.path, ...filters.key],
+    queryFn: () => apiRequest<UserSummary>("GET", filters.url(api.dashboard.summary.path)),
+  });
+}
+
+export function useDashboardPatterns(leagueId?: number, dateRange?: DashboardDateRange) {
+  const filters = dashboardFilters(leagueId, dateRange);
+  return useQuery<UserPatterns>({
+    queryKey: [api.dashboard.patterns.path, ...filters.key],
+    queryFn: () => apiRequest<UserPatterns>("GET", filters.url(api.dashboard.patterns.path)),
+  });
+}
+
+export function useDashboardPerformance(leagueId?: number, dateRange?: DashboardDateRange) {
+  const filters = dashboardFilters(leagueId, dateRange);
   return useQuery<{ points: WinRateTimeSeriesPoint[] }>({
-    queryKey: [api.dashboard.performance.path, leagueId ?? "all", dateRange?.season ?? null, dateRange?.startDate ?? null, dateRange?.endDate ?? null],
-    queryFn: () =>
-      apiRequest<{ points: WinRateTimeSeriesPoint[] }>(
-        "GET",
-        query ? `${api.dashboard.performance.path}?${query}` : api.dashboard.performance.path
-      ),
+    queryKey: [api.dashboard.performance.path, ...filters.key],
+    queryFn: () => apiRequest<{ points: WinRateTimeSeriesPoint[] }>("GET", filters.url(api.dashboard.performance.path)),
   });
 }
 

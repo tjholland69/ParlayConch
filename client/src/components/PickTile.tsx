@@ -23,7 +23,8 @@ export function PickTile({
   testId: string;
 }) {
   const isTaken = !!takenBy;
-  const disabled = isPast || !hasOdds || (!isSelected && (isTaken || capReached));
+  // A pick on a game that has since started stays clickable, so it can be removed.
+  const disabled = isSelected ? false : isPast || !hasOdds || isTaken || capReached;
   return (
     <Button
       size="sm"
