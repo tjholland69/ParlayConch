@@ -1,22 +1,23 @@
 /**
- * "Buy points" / points-slider math — lets a bettor move a Spread or
- * Over/Under line in their own favor (safer bet) in exchange for worse
- * odds, the same trade-off real sportsbooks offer. Not derived from live
+ * Alternate lines: lets a bettor move a Spread or Over/Under line off the
+ * market number, the same trade-off real sportsbooks offer. Buying points
+ * (a positive move) makes the bet safer at worse odds; selling points (a
+ * negative move) makes it riskier at better odds. Not derived from live
  * alternate-line market data (this app doesn't fetch that) — instead uses a
- * standard, fixed cents-per-half-point cost, the simplified model most
+ * standard, fixed cents-per-half-point price, the simplified model most
  * "buy points" features use in place of real per-line market pricing.
  *
- * Shared between server (sanity-checking a submitted line) and mobile
- * (computing the live preview as the user steps the slider) so both sides
+ * Shared between server (sanity-checking a submitted line) and the clients
+ * (computing the live preview as the member steps the line) so both sides
  * agree on the exact same numbers.
  */
 
-/** Half-point steps, so the max move is 6 points — the common single-leg
+/** Half-point steps, up to 6 points either way — the common single-leg
  * buy-points/teaser cap most books apply. */
 export const MAX_POINTS_MOVE = 6;
 export const POINTS_STEP = 0.5;
 
-/** Standard "buy points" price: 10 cents of American odds per half point. */
+/** Standard alternate-line price: 10 cents of American odds per half point. */
 const CENTS_PER_HALF_POINT = 10;
 
 export function canBuyPoints(betType: string): boolean {
@@ -35,36 +36,19 @@ export function adjustedLine(betType: string, baseLine: number, pointsMoved: num
   return baseLine + pointsMoved; // spread (either side, once baseLine is side-signed) and "under"
 }
 
-function americanToDecimal(american: number): number {
-  return american > 0 ? 1 + american / 100 : 1 + 100 / Math.abs(american);
-}
-
-function decimalToAmerican(decimal: number): number {
-  if (decimal >= 2) return Math.round((decimal - 1) * 100);
-  return Math.round(-100 / (decimal - 1));
-}
-
 /**
- * Worsens `baseOdds` by `pointsMoved * CENTS_PER_HALF_POINT`, added directly
- * in American-odds terms while odds stay negative (the common range for
- * spread/total prices), then continues the same cost scale through the
- * +100/-100 "pick'em" boundary via decimal odds so a rare plus-money base
- * (e.g. +105) still comes out worse, not wrapped/undefined.
+ * Moves `baseOdds` by 10 cents per half point: worse when points are bought,
+ * better when they're sold. American odds skip from -100 straight to +100,
+ * so the move is made on a scale with that gap closed (-110 is -10, +105 is
+ * +5) and converted back: 20 cents worse than -110 is -130, 20 cents better
+ * is +110, and 10 cents worse than +105 is -105.
  */
 export function adjustedOdds(baseOdds: number, pointsMoved: number): number {
-  const totalCost = pointsMoved * 2 * CENTS_PER_HALF_POINT; // 2 half-points per point
-  if (totalCost === 0) return baseOdds;
-
-  if (baseOdds <= -100) {
-    return baseOdds - totalCost;
-  }
-  // Plus-money base: spend the cost walking down through 0 toward -100 first...
-  const remainingAfterZero = totalCost - baseOdds; // baseOdds > 0 here
-  if (remainingAfterZero <= 0) {
-    return baseOdds - totalCost; // stayed positive
-  }
-  // ...then keep spending on the negative side starting from -100.
-  return -100 - remainingAfterZero;
+  const cents = pointsMoved * 2 * CENTS_PER_HALF_POINT; // 2 half-points per point
+  if (cents === 0) return baseOdds;
+  const closed = baseOdds <= -100 ? baseOdds + 100 : baseOdds - 100;
+  const moved = closed - cents;
+  return moved < 0 ? moved - 100 : moved + 100;
 }
 
 export type BoughtLine = { line: number; odds: number };
@@ -82,10 +66,10 @@ export function formatAmericanOdds(odds: number): string {
 }
 
 /**
- * Reverse-engineers how many points a stored leg line was bought by,
- * relative to a game's own current market spread/total — there's no
- * dedicated "points bought" column, so both the mobile display (clamped to
- * the valid [0, MAX_POINTS_MOVE] range) and the server's submission sanity
+ * Reverse-engineers how many points a stored leg line was moved by (bought
+ * if positive, sold if negative), relative to a game's own current market
+ * spread/total — there's no dedicated "points moved" column, so both the
+ * clients' display (clamped to ±MAX_POINTS_MOVE) and the server's sanity
  * check (unclamped, to catch an out-of-range value) derive it from here.
  */
 export function impliedPointsMoved(
@@ -95,7 +79,8 @@ export function impliedPointsMoved(
   storedLine: string | null | undefined,
 ): number {
   if (!storedLine || !canBuyPoints(betType)) return 0;
-  const stored = parseFloat(storedLine);
+  // A total is stored with its side in front ("O47.5 (-110)").
+  const stored = parseFloat(storedLine.replace(/^[ou]\s*/i, ""));
   if (Number.isNaN(stored)) return 0;
 
   let baseLine: number | null = null;
@@ -109,4 +94,52 @@ export function impliedPointsMoved(
 
   const diff = betType === "over" ? baseLine - stored : stored - baseLine;
   return Math.round(diff / POINTS_STEP) * POINTS_STEP;
+}
+
+type LineGame = {
+  spread?: string | null;
+  spreadOdds?: string | null;
+  overUnder?: string | null;
+  overOdds?: string | null;
+  underOdds?: string | null;
+  moneylineHome?: string | null;
+  moneylineAway?: string | null;
+};
+
+/** A pick's line as it's stored on a leg: "-3.5 (-110)", "O47.5 (-110)", or
+ * the moneyline price. Same formatting as web's getLineForBet. `pointsMoved`
+ * (0 by default, no behavior change for a plain pick) moves a Spread or
+ * Over/Under off the market number: positive buys points (safer line, worse
+ * odds), negative sells them. Moneyline has no line to move and ignores it. */
+export function lineForBet(game: LineGame, betType: string, pick: string, pointsMoved = 0): string | undefined {
+  if (betType === "spread") {
+    const rawLine =
+      pick === "home"
+        ? game.spread
+        : game.spread
+          ? game.spread.startsWith("-")
+            ? `+${game.spread.slice(1)}`
+            : `-${game.spread.slice(1)}`
+          : null;
+    if (!rawLine) return undefined;
+    const baseOdds = parseFloat(game.spreadOdds || "-110");
+    if (pointsMoved === 0) return `${rawLine} (${game.spreadOdds || "-110"})`;
+    const line = adjustedLine("spread", parseFloat(rawLine), pointsMoved);
+    const odds = adjustedOdds(baseOdds, pointsMoved);
+    return `${line > 0 ? "+" : ""}${line} (${formatAmericanOdds(odds)})`;
+  }
+  if (betType === "moneyline") {
+    return pick === "home" ? game.moneylineHome || undefined : game.moneylineAway || undefined;
+  }
+  if (betType === "over" || betType === "under") {
+    if (!game.overUnder) return undefined;
+    const prefix = betType === "over" ? "O" : "U";
+    const baseOddsRaw = betType === "over" ? game.overOdds : game.underOdds;
+    const baseOdds = parseFloat(baseOddsRaw || "-110");
+    if (pointsMoved === 0) return `${prefix}${game.overUnder} (${baseOddsRaw || "-110"})`;
+    const line = adjustedLine(betType, parseFloat(game.overUnder), pointsMoved);
+    const odds = adjustedOdds(baseOdds, pointsMoved);
+    return `${prefix}${line} (${formatAmericanOdds(odds)})`;
+  }
+  return undefined;
 }

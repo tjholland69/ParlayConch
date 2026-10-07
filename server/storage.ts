@@ -20,7 +20,7 @@ import {
   type LeagueWeekLock, type WeekLockStatus,
   type Player, type PlayerWeekStat, type InsertPlayer, type InsertPlayerWeekStat,
   type UserSettings,
-  type ActiveWeekStatus, type LeagueDataStats, type PopularPick, type TakenPick,
+  type ActiveWeekStatus, type LeagueDataStats, type PopularPick, type TakenPick, type MemberWeekParlay,
 } from "@shared/schema";
 import { normalizeJoinedGame, normalizeParlayLegPatch } from "@shared/dataIntegrity";
 import { countParlayOutcomes, mergeUserSettings, buildUserStat, normalizeOutcomeCounts } from "@shared/statsAggregation";
@@ -37,6 +37,9 @@ import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 import { impliedPointsMoved, MAX_POINTS_MOVE } from "@shared/buyPoints";
 import type { MultiBetLegInput } from "@shared/multiBetValidation";
 import { hasGameStarted } from "@shared/parlayProgress";
+import {
+  PickRuleError, canStartParlay, currentParlayFor, findMarketConflict, isOpenForPicks, marketLabel, openParlayFor,
+} from "@shared/weekParlays";
 import type { LegExportRow } from "@shared/legsCsv";
 
 /** Thrown by createMultiBetParlay when the owner already has a parlay that week. */
@@ -68,30 +71,31 @@ function emitUser(userId: string, kind: string) {
 // Discriminates a leg by what it actually bets on, independent of which
 // parlay it belongs to — game legs key on (gameId, betType, pick); player
 // props have no gameId-scoped odds, so they key on (playerName, propType,
-// pick) instead. Shared by getPopularPicksForWeek, getTakenPicksForWeek, and
-// addLegToDraftParlay's cross-user exclusivity check so all three agree on
-// what counts as "the same pick."
+// pick) instead. Shared by getPopularPicksForWeek and the taken-picks lists
+// so they agree on what counts as "the same pick."
 function pickKey(leg: { betType: string; gameId?: number | null; pick: string; playerName?: string | null; propType?: string | null }): string {
   return leg.betType === 'player_prop'
     ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
     : `game:${leg.gameId}:${leg.betType}:${leg.pick}`;
 }
 
-// Cross-user exclusivity, used only by addLegToDraftParlay/createParlay — a
-// stricter, betType-aware variant of pickKey. Moneyline is never exclusive
-// (any number of members can each take either side); spread/over-under are
-// exclusive per game regardless of SIDE (once one member has the spread on a
-// game, no one else may take the spread on that game at all, home or away —
-// same for over/under). Player props keep pickKey's exact-side exclusivity,
-// unchanged. Returns null for a leg that's never exclusive.
-function exclusivityKey(leg: { betType: string; gameId?: number | null; pick: string; playerName?: string | null; propType?: string | null }): string | null {
-  if (leg.betType === 'moneyline') return null;
-  if (leg.betType === 'player_prop') return pickKey(leg);
-  // 'over' and 'under' are stored as two distinct betType values (not two
-  // sides of one type) — group them under one key so taking either side of
-  // the total locks out the other, the same way spread's home/away do.
-  const market = leg.betType === 'over' || leg.betType === 'under' ? 'total' : leg.betType;
-  return `game:${leg.gameId}:${market}`;
+type PickTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type LegWithOwner = ParlayLeg & { owner: typeof users.$inferSelect | null };
+
+function toTakenPick(leg: LegWithOwner): TakenPick {
+  return {
+    gameId: leg.gameId,
+    betType: leg.betType,
+    pick: leg.pick,
+    playerName: leg.playerName,
+    propType: leg.propType,
+    takenBy: formatPickOwnerLabel({
+      firstName: leg.owner?.firstName,
+      lastName: leg.owner?.lastName,
+      email: leg.owner?.email,
+      settings: leg.owner?.settings as UserSettings | null,
+    }),
+  };
 }
 
 // Lowercase, strip common suffixes (Jr, Sr, II–IV) and punctuation, collapse
@@ -171,18 +175,17 @@ export interface IStorage {
   // Parlays
   getParlay(id: number): Promise<Parlay | undefined>;
   createParlay(userId: string, parlay: InsertParlay, legs: Omit<InsertParlayLeg, "parlayId" | "userId">[]): Promise<Parlay>;
-  addLegToDraftParlay(
+  setDraftPick(
     userId: string,
     leagueId: number,
     weekId: number,
     leg: Omit<InsertParlayLeg, "parlayId" | "userId">,
-    maxLegsPerParlay: number,
-    maxBetsPerGame: number,
+    opts?: { parlayId?: number; startNew?: boolean },
   ): Promise<Parlay>;
-  removeDraftParlayLeg(userId: string, parlayId: number, legId: number): Promise<Parlay | null>;
-  submitDraftParlay(userId: string, parlayId: number, minLegsPerParlay: number, maxLegsPerParlay: number, boostPct?: number | null): Promise<Parlay>;
+  getMemberWeekParlay(userId: string, leagueId: number, weekId: number, preferParlayId?: number): Promise<MemberWeekParlay | null>;
+  removeDraftParlayLeg(userId: string, parlayId: number, legId: number, opts?: { canRemoveOthers?: boolean }): Promise<Parlay | null>;
+  submitDraftParlay(userId: string, parlayId: number, boostPct?: number | null, opts?: { canSubmitAny?: boolean }): Promise<Parlay>;
   setParlayBoost(parlayId: number, boostPct: number | null): Promise<Parlay>;
-  getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(
     leagueId: number,
@@ -205,7 +208,7 @@ export interface IStorage {
   getLegExportRows(userId: string, opts?: { leagueId?: number; mineOnly?: boolean }): Promise<LegExportRow[]>;
   updateParlay(parlayId: number, updates: { status?: string; legs?: { id: number; result?: string | null; notes?: string | null }[] }): Promise<Parlay>;
   deleteParlay(parlayId: number): Promise<void>;
-  cancelOwnParlay(parlayId: number, userId: string): Promise<void>;
+  cancelOwnParlay(parlayId: number, userId: string, opts?: { isAdmin?: boolean }): Promise<void>;
   deleteParlayLeg(legId: number): Promise<void>;
   updateParlayLeg(legId: number, updates: Partial<Pick<ParlayLeg, 'gameId' | 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'resultDetail' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>>): Promise<ParlayLeg>;
   bulkUpdateParlayLegs(legIds: number[], field: keyof Pick<ParlayLeg, 'betType' | 'pick' | 'line' | 'odds' | 'oddsSource' | 'result' | 'playerName' | 'propType' | 'notes' | 'gameSegment' | 'userId'>, value: string | null): Promise<ParlayLeg[]>;
@@ -266,7 +269,7 @@ export interface IStorage {
   getActiveWeekParlayStatus(leagueIds: number[], userId: string): Promise<Record<number, ActiveWeekStatus>>;
   getLeagueDataStats(leagueId: number): Promise<LeagueDataStats>;
   getPopularPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<PopularPick[]>;
-  getTakenPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<TakenPick[]>;
+  getTakenPicksForWeek(leagueId: number, weekId: number, excludeUserId: string, parlayId?: number): Promise<TakenPick[]>;
 
   // Aggregate win/loss stats per league (for My Leagues tile)
   getLeagueOverviewStats(leagueIds: number[]): Promise<Record<number, { wins: number; losses: number; winRate: number; totalDecided: number; parlaysWon: number }>>;
@@ -769,19 +772,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * Who is "in" for a week, per league: every member who has put a leg into a
-   * submitted (non-draft) parlay, plus whoever owns one. A league parlay is one
-   * row that members each add their leg to, so counting parlay rows would
-   * report a single member no matter how many have contributed.
+   * Who is "in" for a week, per league: every member with a pick in one of
+   * the week's parlays, open or submitted, plus whoever owns a submitted one.
+   * A league parlay is one row that members each add their pick to, so
+   * counting parlay rows would report a single member no matter how many
+   * have contributed. A pick is saved the moment it's made, so one in a
+   * parlay that hasn't been submitted yet still counts as in.
    */
   private async getWeekContributors(leagueIds: number[], weekId: number): Promise<Map<number, Set<string>>> {
-    const submitted = and(eq(parlays.weekId, weekId), inArray(parlays.leagueId, leagueIds), not(eq(parlays.status, 'draft')));
+    const thisWeek = and(eq(parlays.weekId, weekId), inArray(parlays.leagueId, leagueIds));
     const [owners, legOwners] = await Promise.all([
-      db.select({ leagueId: parlays.leagueId, userId: parlays.userId }).from(parlays).where(submitted),
+      db.select({ leagueId: parlays.leagueId, userId: parlays.userId }).from(parlays)
+        .where(and(thisWeek, not(eq(parlays.status, 'draft')))),
       db.selectDistinct({ leagueId: parlays.leagueId, userId: parlayLegs.userId })
         .from(parlayLegs)
         .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
-        .where(submitted),
+        .where(thisWeek),
     ]);
     const byLeague = new Map<number, Set<string>>();
     for (const row of [...owners, ...legOwners]) {
@@ -797,20 +803,15 @@ export class DatabaseStorage implements IStorage {
     const [activeWeek] = await db.select().from(weeks).where(eq(weeks.isActive, true)).limit(1);
     if (!activeWeek) return {};
 
-    const [parlayRows, draftRows, lockRows, memberRows, contributors] = await Promise.all([
-      // Exclude 'draft' — an in-progress, not-yet-submitted parlay must not
-      // count toward submittedCount/allSubmitted/currentUserSubmitted, or a
-      // user who only started a pick (but never submitted) would be shown
-      // as having picked, and hide the "you still need to pick" prompt.
-      db.select({ leagueId: parlays.leagueId, userId: parlays.userId, status: parlays.status })
+    const thisWeek = and(eq(parlays.weekId, activeWeek.id), inArray(parlays.leagueId, leagueIds));
+    const [parlayRows, legRows, lockRows, memberRows, contributors, leagueRows] = await Promise.all([
+      db.select({ id: parlays.id, leagueId: parlays.leagueId, userId: parlays.userId, status: parlays.status })
         .from(parlays)
-        .where(and(eq(parlays.weekId, activeWeek.id), inArray(parlays.leagueId, leagueIds), not(eq(parlays.status, 'draft')))),
-      // Caller's own in-progress drafts — surfaced separately so the UI can
-      // remind them a built-but-unsubmitted parlay won't count anywhere
-      // above until they hit Submit.
-      db.select({ leagueId: parlays.leagueId })
-        .from(parlays)
-        .where(and(eq(parlays.weekId, activeWeek.id), inArray(parlays.leagueId, leagueIds), eq(parlays.userId, userId), eq(parlays.status, 'draft'))),
+        .where(thisWeek),
+      db.select({ parlayId: parlayLegs.parlayId, userId: parlayLegs.userId })
+        .from(parlayLegs)
+        .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+        .where(and(thisWeek, eq(parlays.status, 'draft'))),
       db.select({ leagueId: leagueWeekLocks.leagueId })
         .from(leagueWeekLocks)
         .where(and(eq(leagueWeekLocks.weekId, activeWeek.id), inArray(leagueWeekLocks.leagueId, leagueIds))),
@@ -818,13 +819,22 @@ export class DatabaseStorage implements IStorage {
         .from(leagueMembers)
         .where(inArray(leagueMembers.leagueId, leagueIds)),
       this.getWeekContributors(leagueIds, activeWeek.id),
+      db.select({ id: leagues.id, maxParlaysPerWeek: leagues.maxParlaysPerWeek }).from(leagues).where(inArray(leagues.id, leagueIds)),
     ]);
 
     const lockedSet = new Set(lockRows.map(l => l.leagueId));
-    const draftSet = new Set(draftRows.map(d => d.leagueId));
+    const maxParlaysByLeague = new Map(leagueRows.map(l => [l.id, l.maxParlaysPerWeek]));
     const result: Record<number, ActiveWeekStatus> = {};
     for (const leagueId of leagueIds) {
       const leagueParlays = parlayRows.filter(p => p.leagueId === leagueId);
+      const weekParlays = leagueParlays.map(p => ({
+        ...p,
+        legs: legRows.filter(l => l.parlayId === p.id).map(l => ({ userId: l.userId, betType: "", pick: "" })),
+      }));
+      // The open parlay this member would pick into, if there is one.
+      const open = openParlayFor(weekParlays, userId);
+      const hasLegInOpen = !!open && open.legs.some(l => l.userId === userId);
+      const isLocked = lockedSet.has(leagueId);
       // Members who've contributed a leg — not parlay rows, of which a league
       // sharing one parlay has just the one.
       const memberIds = memberRows.filter(m => m.leagueId === leagueId).map(m => m.userId);
@@ -838,13 +848,18 @@ export class DatabaseStorage implements IStorage {
         submittedCount,
         totalMembers,
         allSubmitted: submittedCount >= totalMembers && totalMembers > 0,
-        isLocked: lockedSet.has(leagueId),
+        isLocked,
         currentUserSubmitted: inIds.has(userId),
         missingMemberIds,
         // Active week parlay status (for Quick Picks tile badges)
         hasPendingParlay: leagueParlays.some(p => p.status === 'pending'),
         hasApprovedParlay: leagueParlays.some(p => p.status === 'approved'),
-        currentUserHasUnsubmittedDraft: draftSet.has(leagueId),
+        currentUserHasUnsubmittedDraft: hasLegInOpen,
+        hasOpenParlay: !!open,
+        openParlayLegCount: open?.legs.length ?? 0,
+        currentUserNeedsPick: !isLocked && (open
+          ? !hasLegInOpen
+          : canStartParlay(leagueParlays, maxParlaysByLeague.get(leagueId))),
       };
     }
     return result;
@@ -885,44 +900,28 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * The exclusivity set for the picks grid: every distinct pick some OTHER
-   * league member has already locked in (submitted — status !== 'draft')
-   * for this league/week. Unlike getPopularPicksForWeek, a still-drafting
-   * opponent's picks don't appear here (they haven't locked anything in
-   * yet), and this returns every taken pick, not just a top-10 ranking.
+   * Every pick another member already has in a parlay: the parlay given, or
+   * any of the week's when none is. Open (unsubmitted) parlays count — a
+   * pick is taken as soon as it's saved. The picks grid grays these out.
    */
-  async getTakenPicksForWeek(leagueId: number, weekId: number, excludeUserId: string): Promise<TakenPick[]> {
+  async getTakenPicksForWeek(leagueId: number, weekId: number, excludeUserId: string, parlayId?: number): Promise<TakenPick[]> {
     const rows = await db
       .select({ leg: parlayLegs, owner: users })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
-      .innerJoin(users, eq(parlayLegs.userId, users.id))
+      .leftJoin(users, eq(parlayLegs.userId, users.id))
       .where(and(
         eq(parlays.leagueId, leagueId),
         eq(parlays.weekId, weekId),
-        not(eq(parlays.status, 'draft')),
         not(eq(parlayLegs.userId, excludeUserId)),
+        ...(parlayId != null ? [eq(parlays.id, parlayId)] : []),
       ));
 
     const taken = new Map<string, TakenPick>();
     for (const { leg, owner } of rows) {
       const key = pickKey(leg);
-      if (taken.has(key)) continue;
-      taken.set(key, {
-        gameId: leg.gameId,
-        betType: leg.betType,
-        pick: leg.pick,
-        playerName: leg.playerName,
-        propType: leg.propType,
-        takenBy: formatPickOwnerLabel({
-          firstName: owner.firstName,
-          lastName: owner.lastName,
-          email: owner.email,
-          settings: owner.settings as UserSettings | null,
-        }),
-      });
+      if (!taken.has(key)) taken.set(key, toTakenPick({ ...leg, owner }));
     }
-
     return [...taken.values()];
   }
 
@@ -1168,18 +1167,14 @@ export class DatabaseStorage implements IStorage {
     // (editing an already-submitted parlay) is the other way a leg reaches
     // parlayLegs and would otherwise bypass both checks entirely.
     await this.assertWeekUnlocked(parlay.leagueId, parlay.weekId);
-    const takenByOthers = await this.getTakenPicksForWeek(parlay.leagueId, parlay.weekId, userId);
+    const takenByOthers = (await this.getTakenPicksForWeek(parlay.leagueId, parlay.weekId, userId))
+      .map(t => ({ ...t, userId: "" }));
     const gameIds = [...new Set(legs.map(l => l.gameId).filter((id): id is number => id != null))];
     const legGames = gameIds.length > 0 ? await db.select().from(games).where(inArray(games.id, gameIds)) : [];
     const gameById = new Map(legGames.map(g => [g.id, g]));
     for (const leg of legs) {
-      const legExclusivityKey = exclusivityKey(leg);
-      if (legExclusivityKey != null && takenByOthers.some(t => exclusivityKey(t) === legExclusivityKey)) {
-        throw new Error(
-          leg.betType === 'player_prop'
-            ? "This pick has already been taken by another player."
-            : "Someone else in the league already has this bet type on this game.",
-        );
+      if (findMarketConflict(takenByOthers, leg, userId)) {
+        throw new Error(`Someone else in the league already has ${marketLabel(leg)}.`);
       }
       if (leg.gameId != null) {
         const game = gameById.get(leg.gameId);
@@ -1244,106 +1239,102 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * Adds one leg to the caller's in-progress `status: 'draft'` parlay for
-   * this league/week, creating the draft row if none exists yet. Unlike
-   * `createParlay` (which always fully-replaces a parlay's legs in one
-   * call), this lets a user build a parlay one tap at a time — draft
-   * parlays may have fewer legs than `minLegsPerParlay`; that's only
-   * enforced at final submit (`submitDraftParlay`). `maxLegsPerParlay` is
-   * still enforced here since there's no useful reason to let a draft grow
-   * past what could ever be submitted. `maxBetsPerGame` caps how many of
-   * those legs can share one `gameId` (e.g. only one of the 6 spread/
-   * ML/total tiles per game, by default).
-   *
-   * Also rejects a leg that exactly matches (same gameId/betType/pick, or
-   * same playerName/propType/pick for a prop) a leg already locked in by a
-   * DIFFERENT user's non-draft parlay this week — cross-user exclusivity.
-   * This is a plain read-then-insert check, not lock-protected across users
-   * (two different users' draft rows can't share one FOR UPDATE lock the
-   * way same-user double-taps below can) — an accepted, low-probability
-   * race in this low-concurrency friend-group app.
+   * Row-locks the league so every pick write in it runs one at a time: two
+   * members picking at the same moment can't both start "the" parlay, take
+   * the same bet, or squeeze past the leg limit. NO KEY UPDATE leaves
+   * unrelated inserts that reference the league (new members, imports) alone.
    */
-  async addLegToDraftParlay(
+  private async lockLeagueForPicks(tx: PickTx, leagueId: number): Promise<League> {
+    const [league] = await tx.select().from(leagues).where(eq(leagues.id, leagueId)).for("no key update");
+    if (!league) throw new PickRuleError("League not found");
+    return league;
+  }
+
+  /** A league's parlays for one week, each with its legs and their owners. */
+  private async loadWeekParlays(tx: PickTx | typeof db, leagueId: number, weekId: number) {
+    const rows = await tx.select().from(parlays)
+      .where(and(eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)));
+    const legRows = rows.length === 0 ? [] : await tx
+      .select({ leg: parlayLegs, owner: users })
+      .from(parlayLegs)
+      .leftJoin(users, eq(parlayLegs.userId, users.id))
+      .where(inArray(parlayLegs.parlayId, rows.map(p => p.id)));
+    return rows.map(p => ({
+      ...p,
+      legs: legRows.filter(r => r.leg.parlayId === p.id).map((r): LegWithOwner => ({ ...r.leg, owner: r.owner })),
+    }));
+  }
+
+  /**
+   * Saves a member's one pick in a league's open parlay for the week,
+   * replacing the pick they already had in it. See shared/weekParlays.ts for
+   * the rules. Everything is checked and written in one transaction under
+   * the league's row lock, so the result is the same whatever order two
+   * members' taps arrive in.
+   *
+   * The pick goes into `opts.parlayId` when given, otherwise the open parlay
+   * still missing this member's pick. With none open (or `opts.startNew`) it
+   * starts a new one, while the league's parlays-per-week limit allows.
+   */
+  async setDraftPick(
     userId: string,
     leagueId: number,
     weekId: number,
     leg: Omit<InsertParlayLeg, "parlayId" | "userId">,
-    maxLegsPerParlay: number,
-    maxBetsPerGame: number,
+    opts: { parlayId?: number; startNew?: boolean } = {},
   ): Promise<Parlay> {
-    // The three pre-checks read independent rows, so they run together —
-    // this is on the per-tap path, where each sequential query is felt.
-    const legExclusivityKey = exclusivityKey(leg);
-    const [[existingLock], takenByOthers, [game]] = await Promise.all([
-      db.select().from(leagueWeekLocks)
-        .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId))),
-      legExclusivityKey != null ? this.getTakenPicksForWeek(leagueId, weekId, userId) : [],
-      leg.gameId != null ? db.select().from(games).where(eq(games.id, leg.gameId)) : [],
-    ]);
-    if (existingLock) {
-      throw new Error("This week's picks are locked and can no longer be changed.");
-    }
-
-    if (legExclusivityKey != null) {
-      if (takenByOthers.some(t => exclusivityKey(t) === legExclusivityKey)) {
-        throw new Error(
-          leg.betType === 'player_prop'
-            ? "This pick has already been taken by another player."
-            : "Someone else in the league already has this bet type on this game.",
-        );
-      }
-    }
-
-    if (leg.gameId != null) {
-      if (game && (game.isFinished || (game.gameTime && new Date(game.gameTime) < new Date()))) {
-        throw new Error("This game has already started and can no longer be picked.");
-      }
-      if (game) {
-        const pointsMoved = impliedPointsMoved(leg.betType, leg.pick, game, leg.line);
-        if (pointsMoved > MAX_POINTS_MOVE + 0.01) {
-          throw new Error(`Points bought can't exceed ${MAX_POINTS_MOVE}.`);
-        }
-      }
-    }
-
     const parlayRecord = await db.transaction(async (tx) => {
-      // FOR UPDATE: without a row lock here, two concurrent adds (double-tap,
-      // two devices) can both read the same existingLegs count below, both
-      // pass the maxLegsPerParlay check, and both insert — overshooting the
-      // cap. Locking the parlay row serializes concurrent adds to the same
-      // draft so the second one always sees the first's insert.
-      const [existing] = await tx
-        .select()
-        .from(parlays)
-        .where(and(eq(parlays.userId, userId), eq(parlays.leagueId, leagueId), eq(parlays.weekId, weekId)))
-        .for("update");
+      const league = await this.lockLeagueForPicks(tx, leagueId);
 
-      let record: Parlay;
-      if (existing) {
-        if (existing.status !== "draft") {
-          throw new Error("You already have a submitted parlay for this week.");
-        }
-        record = existing;
-      } else {
-        const [created] = await tx
-          .insert(parlays)
-          .values({ userId, leagueId, weekId, status: "draft" })
-          .returning();
-        record = created;
-      }
+      const [lock] = await tx.select({ id: leagueWeekLocks.id }).from(leagueWeekLocks)
+        .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
+      if (lock) throw new PickRuleError("This week's picks are locked and can no longer be changed.");
 
-      const existingLegs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, record.id));
-      if (existingLegs.length >= maxLegsPerParlay) {
-        throw new Error(`Parlay cannot have more than ${maxLegsPerParlay} legs`);
-      }
       if (leg.gameId != null) {
-        const legsOnThisGame = existingLegs.filter(l => l.gameId === leg.gameId).length;
-        if (legsOnThisGame >= maxBetsPerGame) {
-          throw new Error(`You can only pick ${maxBetsPerGame} bet${maxBetsPerGame === 1 ? "" : "s"} on this game.`);
+        const [game] = await tx.select().from(games).where(eq(games.id, leg.gameId));
+        if (game && hasGameStarted(game)) {
+          throw new PickRuleError("This game has already started and can no longer be picked.");
+        }
+        if (game && Math.abs(impliedPointsMoved(leg.betType, leg.pick, game, leg.line)) > MAX_POINTS_MOVE + 0.01) {
+          throw new PickRuleError(`A line can only move ${MAX_POINTS_MOVE} points off the market number.`);
         }
       }
 
-      await tx.insert(parlayLegs).values({ ...leg, parlayId: record.id, userId });
+      const weekParlays = await this.loadWeekParlays(tx, leagueId, weekId);
+      let target: (typeof weekParlays)[number] | undefined;
+      if (opts.parlayId != null) {
+        target = weekParlays.find(p => p.id === opts.parlayId);
+        if (!target) throw new PickRuleError("That parlay isn't part of this week.");
+        if (!isOpenForPicks(target)) {
+          throw new PickRuleError("That parlay has already been submitted, so its picks can't change.");
+        }
+      } else if (!opts.startNew) {
+        target = openParlayFor(weekParlays, userId);
+      }
+      if (!target) {
+        const maxParlays = Math.max(1, league.maxParlaysPerWeek ?? 1);
+        if (!canStartParlay(weekParlays, maxParlays)) {
+          throw new PickRuleError(maxParlays === 1
+            ? "This week's parlay has already been submitted, so picks are closed."
+            : `This league already has its ${maxParlays} parlays for the week.`);
+        }
+        const [created] = await tx.insert(parlays).values({ userId, leagueId, weekId, status: "draft" }).returning();
+        target = { ...created, legs: [] };
+      }
+
+      const conflict = findMarketConflict(target.legs, leg, userId);
+      if (conflict) {
+        throw new PickRuleError(`${toTakenPick(conflict).takenBy.mobile} already has ${marketLabel(leg)} in this parlay. Pick something else.`);
+      }
+      const mine = target.legs.filter(l => l.userId === userId);
+      const maxLegs = league.maxLegsPerParlay || 5;
+      if (mine.length === 0 && target.legs.length >= maxLegs) {
+        throw new PickRuleError(`This parlay is full (${maxLegs} legs).`);
+      }
+
+      if (mine.length > 0) await tx.delete(parlayLegs).where(inArray(parlayLegs.id, mine.map(l => l.id)));
+      await tx.insert(parlayLegs).values({ ...leg, parlayId: target.id, userId });
+      const { legs: _legs, ...record } = target;
       return record;
     });
 
@@ -1352,25 +1343,35 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * Removes one leg from the caller's own draft parlay. If that was the
-   * last leg, the empty draft row is deleted too (so a fresh draft can be
-   * started cleanly rather than leaving a lingering 0-leg parlay around).
-   * Returns the updated parlay, or null if the draft was deleted.
+   * Removes a pick from an open parlay: the caller's own, or anyone's when
+   * `canRemoveOthers` (the Parlay Maestro, or a lieutenant allowed to
+   * unselect picks). If that was the last leg the empty parlay is deleted
+   * too. Returns the parlay, or null if it was deleted.
    */
-  async removeDraftParlayLeg(userId: string, parlayId: number, legId: number): Promise<Parlay | null> {
+  async removeDraftParlayLeg(userId: string, parlayId: number, legId: number, opts: { canRemoveOthers?: boolean } = {}): Promise<Parlay | null> {
+    const [found] = await db.select({ leagueId: parlays.leagueId }).from(parlays).where(eq(parlays.id, parlayId));
+    if (!found) throw new PickRuleError("Parlay not found");
+
     const { parlay, leagueId, weekId } = await db.transaction(async (tx) => {
+      await this.lockLeagueForPicks(tx, found.leagueId);
       const [existing] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
-      if (!existing || existing.userId !== userId) throw new Error("Parlay not found");
-      if (existing.status !== "draft") throw new Error("Only draft parlays can have legs removed this way");
-      await this.assertWeekUnlocked(existing.leagueId, existing.weekId);
+      if (!existing) throw new PickRuleError("Parlay not found");
+      if (!isOpenForPicks(existing)) throw new PickRuleError("This parlay has already been submitted, so its picks can't change.");
+      const [lock] = await tx.select({ id: leagueWeekLocks.id }).from(leagueWeekLocks)
+        .where(and(eq(leagueWeekLocks.leagueId, existing.leagueId), eq(leagueWeekLocks.weekId, existing.weekId)));
+      if (lock) throw new PickRuleError("This week's picks are locked and can no longer be changed.");
 
-      const deleted = await tx
-        .delete(parlayLegs)
-        .where(and(eq(parlayLegs.id, legId), eq(parlayLegs.parlayId, parlayId)))
-        .returning({ id: parlayLegs.id });
-      if (deleted.length === 0) throw new Error("Leg not found on this parlay");
+      const [leg] = await tx.select().from(parlayLegs)
+        .where(and(eq(parlayLegs.id, legId), eq(parlayLegs.parlayId, parlayId)));
+      // Already gone (a double tap, or a second device): nothing left to do.
+      if (leg) {
+        if (leg.userId !== userId && !opts.canRemoveOthers) {
+          throw new PickRuleError("You can only remove your own pick.");
+        }
+        await tx.delete(parlayLegs).where(eq(parlayLegs.id, legId));
+      }
 
-      const remaining = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
+      const remaining = await tx.select({ id: parlayLegs.id }).from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
       if (remaining.length === 0) {
         await tx.delete(parlays).where(eq(parlays.id, parlayId));
         return { parlay: null, leagueId: existing.leagueId, weekId: existing.weekId };
@@ -1383,34 +1384,44 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * Finalizes a draft parlay: enforces the league's min/max leg count (the
-   * min was deferred until now — see `addLegToDraftParlay`) and flips it to
-   * `status: 'pending'`, entering the normal approve/reject workflow.
+   * Submits an open parlay once enough members have a pick in it: checks
+   * the league's min/max leg count and flips it to `status: 'pending'`,
+   * entering the normal approve/reject workflow. Open to whoever started
+   * the parlay, and to anyone when `canSubmitAny` (the Parlay Maestro, or a
+   * lieutenant who can approve parlays).
    */
   async submitDraftParlay(
     userId: string,
     parlayId: number,
-    minLegsPerParlay: number,
-    maxLegsPerParlay: number,
     boostPct?: number | null,
+    opts: { canSubmitAny?: boolean } = {},
   ): Promise<Parlay> {
+    const [found] = await db.select({ leagueId: parlays.leagueId }).from(parlays).where(eq(parlays.id, parlayId));
+    if (!found) throw new PickRuleError("Parlay not found");
+
     const updated = await db.transaction(async (tx) => {
+      const league = await this.lockLeagueForPicks(tx, found.leagueId);
       const [existing] = await tx.select().from(parlays).where(eq(parlays.id, parlayId));
-      if (!existing || existing.userId !== userId) throw new Error("Parlay not found");
-      if (existing.status !== "draft") throw new Error("This parlay has already been submitted");
+      if (!existing) throw new PickRuleError("Parlay not found");
+      if (!isOpenForPicks(existing)) throw new PickRuleError("This parlay has already been submitted");
+      if (existing.userId !== userId && !opts.canSubmitAny) {
+        throw new PickRuleError("Only the member who started this parlay or the Parlay Maestro can submit it.");
+      }
 
       const [existingLock] = await tx.select().from(leagueWeekLocks)
         .where(and(eq(leagueWeekLocks.leagueId, existing.leagueId), eq(leagueWeekLocks.weekId, existing.weekId)));
       if (existingLock) {
-        throw new Error("This week's picks are locked and can no longer be submitted.");
+        throw new PickRuleError("This week's picks are locked and can no longer be submitted.");
       }
 
+      const minLegs = league.minLegsPerParlay || 3;
+      const maxLegs = league.maxLegsPerParlay || 5;
       const legs = await tx.select().from(parlayLegs).where(eq(parlayLegs.parlayId, parlayId));
-      if (legs.length < minLegsPerParlay) {
-        throw new Error(`Parlay must have at least ${minLegsPerParlay} legs`);
+      if (legs.length < minLegs) {
+        throw new PickRuleError(`Parlay must have at least ${minLegs} legs (${legs.length} so far)`);
       }
-      if (legs.length > maxLegsPerParlay) {
-        throw new Error(`Parlay cannot have more than ${maxLegsPerParlay} legs`);
+      if (legs.length > maxLegs) {
+        throw new PickRuleError(`Parlay cannot have more than ${maxLegs} legs`);
       }
 
       // A pick whose game kicked off while the parlay sat unsubmitted can't
@@ -1419,7 +1430,7 @@ export class DatabaseStorage implements IStorage {
       const legGames = legGameIds.length > 0 ? await tx.select().from(games).where(inArray(games.id, legGameIds)) : [];
       const started = legGames.find(g => hasGameStarted(g));
       if (started) {
-        throw new Error(`${started.awayTeam} @ ${started.homeTeam} has already started, so this parlay can't be submitted with that pick in it.`);
+        throw new PickRuleError(`${started.awayTeam} @ ${started.homeTeam} has already started, so this parlay can't be submitted with that pick in it.`);
       }
 
       const [record] = await tx
@@ -1442,30 +1453,35 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getUserParlayForWeek(userId: string, leagueId: number, weekId: number): Promise<ParlayWithLegs | null> {
-    const [parlay] = await db.select().from(parlays)
-      .where(and(
-        eq(parlays.userId, userId),
-        eq(parlays.leagueId, leagueId),
-        eq(parlays.weekId, weekId)
-      ));
+  /**
+   * The parlay a member is looking at for the week (see currentParlayFor):
+   * every leg in it with who picked it, the picks other members have taken,
+   * and whether the league has room to start another. One read, so the legs
+   * and the taken list always agree. Null when no parlay has been started.
+   */
+  async getMemberWeekParlay(userId: string, leagueId: number, weekId: number, preferParlayId?: number): Promise<MemberWeekParlay | null> {
+    const [weekParlays, [league], [week]] = await Promise.all([
+      this.loadWeekParlays(db, leagueId, weekId),
+      db.select({ maxParlaysPerWeek: leagues.maxParlaysPerWeek }).from(leagues).where(eq(leagues.id, leagueId)),
+      db.select().from(weeks).where(eq(weeks.id, weekId)),
+    ]);
+    const current = currentParlayFor(weekParlays, userId, preferParlayId);
+    if (!current) return null;
 
-    if (!parlay) return null;
-
-    const legs = await db.select({
-      leg: parlayLegs,
-      game: games
-    })
-    .from(parlayLegs)
-    .leftJoin(games, eq(parlayLegs.gameId, games.id))
-    .where(eq(parlayLegs.parlayId, parlay.id));
-
-    const [week] = await db.select().from(weeks).where(eq(weeks.id, parlay.weekId));
+    const gameIds = [...new Set(current.legs.map(l => l.gameId).filter((id): id is number => id != null))];
+    const legGames = gameIds.length > 0 ? await db.select().from(games).where(inArray(games.id, gameIds)) : [];
+    const gameById = new Map(legGames.map(g => [g.id, g]));
 
     return {
-      ...parlay,
-      legs: legs.map(l => ({ ...l.leg, game: normalizeJoinedGame(l.game) })),
-      week
+      ...current,
+      legs: current.legs.map(({ owner, ...leg }) => ({
+        ...leg,
+        game: normalizeJoinedGame(leg.gameId != null ? gameById.get(leg.gameId) ?? null : null),
+        user: legOwnerSummary(owner) ?? undefined,
+      })),
+      week,
+      taken: current.legs.filter(l => l.userId !== userId).map(toTakenPick),
+      canStartAnother: canStartParlay(weekParlays, league?.maxParlaysPerWeek),
     };
   }
 
@@ -1598,9 +1614,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   /**
-   * The parlays a member is part of: the ones they started, plus any
-   * submitted parlay they put a leg into. Most members never start one —
-   * they add their leg to a parlay someone else owns.
+   * The parlays a member is part of: the ones they started, plus any they
+   * put a pick into, open or submitted. Most members never start one — they
+   * add their pick to a parlay someone else started.
    */
   async getUserParlayHistory(userId: string, leagueId?: number, weekIdFilter?: number[]): Promise<ParlayWithLegs[]> {
     const scope = [
@@ -1612,7 +1628,7 @@ export class DatabaseStorage implements IStorage {
       db.selectDistinct({ parlay: parlays })
         .from(parlays)
         .innerJoin(parlayLegs, eq(parlayLegs.parlayId, parlays.id))
-        .where(and(eq(parlayLegs.userId, userId), not(eq(parlays.userId, userId)), not(eq(parlays.status, 'draft')), ...scope)),
+        .where(and(eq(parlayLegs.userId, userId), not(eq(parlays.userId, userId)), ...scope)),
     ]);
     const userParlays = [...owned, ...contributed.map(c => c.parlay)];
 
@@ -1973,12 +1989,21 @@ export class DatabaseStorage implements IStorage {
   // cancel their OWN parlay, and only before an admin has approved it (once
   // approved/sent/placed, a real sportsbook bet may already be at risk, so
   // cancellation from here stays admin-only past that point).
-  async cancelOwnParlay(parlayId: number, userId: string): Promise<void> {
+  async cancelOwnParlay(parlayId: number, userId: string, opts: { isAdmin?: boolean } = {}): Promise<void> {
     const existing = await this.getParlay(parlayId);
-    if (!existing) throw new Error("Parlay not found");
-    if (existing.userId !== userId) throw new Error("You can only cancel your own parlay");
+    if (!existing) throw new PickRuleError("Parlay not found");
+    if (existing.userId !== userId && !opts.isAdmin) throw new PickRuleError("Only the member who started this parlay or the Parlay Maestro can discard it");
     if (existing.status !== "draft" && existing.status !== "pending") {
-      throw new Error("Only draft or pending parlays can be canceled");
+      throw new PickRuleError("Only open or pending parlays can be discarded");
+    }
+    // Discarding takes everyone's picks with it, so once other members are
+    // in, that's the Maestro's call.
+    if (!opts.isAdmin) {
+      const others = await db.select({ id: parlayLegs.id }).from(parlayLegs)
+        .where(and(eq(parlayLegs.parlayId, parlayId), not(eq(parlayLegs.userId, userId))));
+      if (others.length > 0) {
+        throw new PickRuleError("Other members have picks in this parlay. Remove your own pick instead, or ask the Parlay Maestro to discard it.");
+      }
     }
     await this.assertWeekUnlocked(existing.leagueId, existing.weekId);
     await this.deleteParlay(parlayId);

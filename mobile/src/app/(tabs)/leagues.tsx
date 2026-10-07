@@ -17,7 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLeagues, useLeaguesOverviewStats, useCreateLeague, useJoinLeague } from "@/hooks/use-leagues";
 import { useActiveWeek } from "@/hooks/use-weeks";
-import { useMyParlayHistory } from "@/hooks/use-parlays";
+import { useActiveWeekStatus } from "@/hooks/use-parlays";
 import { LeagueCard } from "@/components/LeagueCard";
 import { Button } from "@/components/ui/Button";
 import { IconButton } from "@/components/ui/IconButton";
@@ -28,17 +28,20 @@ export default function LeaguesScreen() {
   const { data: leagues, isLoading, refetch, isRefetching } = useLeagues();
   const { data: overviewStats } = useLeaguesOverviewStats();
   const activeWeek = useActiveWeek();
-  const { data: parlayHistory } = useMyParlayHistory();
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
   const insets = useSafeAreaInsets();
 
-  const needsPick = (leagueId: number) =>
-    !!activeWeek && !(parlayHistory ?? []).some((p) => p.leagueId === leagueId && p.weekId === activeWeek.id);
-
-  const hasUnsubmittedDraft = (leagueId: number) =>
-    !!activeWeek &&
-    (parlayHistory ?? []).some((p) => p.leagueId === leagueId && p.weekId === activeWeek.id && p.status === "draft");
+  // The server's answer for the active week: whether each league's parlay
+  // is open, how many legs are in it, and whether this member still owes one.
+  const { data: weekStatus } = useActiveWeekStatus();
+  const openParlay = (leagueId: number) => {
+    const status = weekStatus?.[leagueId];
+    return activeWeek && status?.hasOpenParlay
+      ? { legCount: status.openParlayLegCount, hasMyPick: !status.currentUserNeedsPick }
+      : undefined;
+  };
+  const needsPick = (leagueId: number) => !!activeWeek && !!weekStatus?.[leagueId]?.currentUserNeedsPick;
 
   const [modal, setModal] = useState<ModalType>(null);
   const [leagueName, setLeagueName] = useState("");
@@ -124,7 +127,7 @@ export default function LeaguesScreen() {
               league={league}
               stat={overviewStats?.[league.id]}
               needsPick={needsPick(league.id)}
-              hasUnsubmittedDraft={hasUnsubmittedDraft(league.id)}
+              openParlay={openParlay(league.id)}
               activeWeekId={activeWeek?.id}
             />
           )}

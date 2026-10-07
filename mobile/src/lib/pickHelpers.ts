@@ -1,6 +1,6 @@
 import type { Game, TakenPick } from "@shared/schema";
 import { legChipLabel } from "@shared/formatPick";
-import { adjustedLine, adjustedOdds, formatAmericanOdds, canBuyPoints, impliedPointsMoved, MAX_POINTS_MOVE, POINTS_STEP } from "@shared/buyPoints";
+import { canBuyPoints, impliedPointsMoved, lineForBet, MAX_POINTS_MOVE, POINTS_STEP } from "@shared/buyPoints";
 
 export { canBuyPoints, MAX_POINTS_MOVE, POINTS_STEP };
 
@@ -13,44 +13,9 @@ export type SelectedLeg = {
   propType?: string | null;
 };
 
-/** Same line formatting as web LeagueDetail.getLineForBet. `pointsMoved`
- * (0 by default, no behavior change for a plain pick) applies the points-
- * slider adjustment — a safer line at worse odds — to Spread/Over/Under;
- * moneyline has no line to move and ignores it. */
-export function getLineForBet(game: Game, betType: string, pick: string, pointsMoved = 0): string | undefined {
-  if (betType === "spread") {
-    const rawLine =
-      pick === "home"
-        ? game.spread
-        : game.spread
-          ? game.spread.startsWith("-")
-            ? `+${game.spread.slice(1)}`
-            : `-${game.spread.slice(1)}`
-          : null;
-    if (!rawLine) return undefined;
-    const baseOdds = parseFloat(game.spreadOdds || "-110");
-    if (pointsMoved === 0) return `${rawLine} (${game.spreadOdds || "-110"})`;
-    const line = adjustedLine("spread", parseFloat(rawLine), pointsMoved);
-    const odds = adjustedOdds(baseOdds, pointsMoved);
-    return `${line > 0 ? "+" : ""}${line} (${formatAmericanOdds(odds)})`;
-  }
-  if (betType === "moneyline") {
-    return pick === "home" ? game.moneylineHome || undefined : game.moneylineAway || undefined;
-  }
-  if (betType === "over" || betType === "under") {
-    if (!game.overUnder) return undefined;
-    const prefix = betType === "over" ? "O" : "U";
-    const baseOddsRaw = betType === "over" ? game.overOdds : game.underOdds;
-    const baseOdds = parseFloat(baseOddsRaw || "-110");
-    if (pointsMoved === 0) return `${prefix}${game.overUnder} (${baseOddsRaw || "-110"})`;
-    const line = adjustedLine(betType, parseFloat(game.overUnder), pointsMoved);
-    const odds = adjustedOdds(baseOdds, pointsMoved);
-    return `${prefix}${line} (${formatAmericanOdds(odds)})`;
-  }
-  return undefined;
-}
+export { lineForBet as getLineForBet };
 
-/** Reverse-engineers how many points a stored leg's line was bought by,
+/** Reverse-engineers how many points a stored leg's line was moved by,
  * comparing it against the game's own current market line — there's no
  * dedicated "points bought" column, so this is derived on read rather than
  * tracked as separate state. Only meaningful right after pick time, since a
@@ -58,7 +23,7 @@ export function getLineForBet(game: Game, betType: string, pick: string, pointsM
  * the slider's position while a pick is still being actively edited. */
 export function derivePointsMoved(game: Game, betType: string, pick: string, storedLine: string | null | undefined): number {
   const raw = impliedPointsMoved(betType, pick, game, storedLine);
-  return Math.min(MAX_POINTS_MOVE, Math.max(0, raw));
+  return Math.min(MAX_POINTS_MOVE, Math.max(-MAX_POINTS_MOVE, raw));
 }
 
 export function awaySpreadDisplay(spread: string | null | undefined): string | null {
@@ -97,17 +62,20 @@ export function isGamePast(game: Game): boolean {
   return new Date(game.gameTime) < new Date();
 }
 
-/** Per-game map of who (if anyone) already has the Spread / Total market on
- * that game — 'over' and 'under' are grouped as one "total" market, matching
- * the server's cross-user exclusivity (server/storage.ts exclusivityKey). */
-export function takenMarketsByGame(takenPicks: TakenPick[] | undefined): Map<number, { spread?: string; total?: string }> {
-  const byGame = new Map<number, { spread?: string; total?: string }>();
+export type TakenMarkets = { spread?: string; moneyline?: string; total?: string };
+
+/** Per-game map of who (if anyone) already has each market on that game in
+ * this parlay. One bet per market per parlay: once a member has the spread,
+ * the moneyline or the total ('over' and 'under' are one market), nobody
+ * else can take either side of it (shared/weekParlays.ts). */
+export function takenMarketsByGame(takenPicks: TakenPick[] | undefined): Map<number, TakenMarkets> {
+  const byGame = new Map<number, TakenMarkets>();
   for (const t of takenPicks ?? []) {
     if (t.gameId == null) continue;
-    if (t.betType !== "spread" && t.betType !== "over" && t.betType !== "under") continue;
+    const market = t.betType === "over" || t.betType === "under" ? "total" : t.betType;
+    if (market !== "spread" && market !== "moneyline" && market !== "total") continue;
     const entry = byGame.get(t.gameId) ?? {};
-    if (t.betType === "spread") entry.spread = t.takenBy.mobile;
-    else entry.total = t.takenBy.mobile;
+    entry[market] = t.takenBy.mobile;
     byGame.set(t.gameId, entry);
   }
   return byGame;

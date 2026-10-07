@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildShameReport, shameReportText } from "../../shared/shameReport";
+import { buildShameReport, canShameSeason, shameReportText } from "../../shared/shameReport";
 
 const game = { homeTeam: "Chiefs", awayTeam: "Bills", spread: "-3.5", overUnder: "47.5" };
 const leg = (id: number, owner: string, result: string | null, extra: Record<string, unknown> = {}) => ({
@@ -34,10 +34,36 @@ describe("shared/shameReport", () => {
     expect(build(2)).toBeNull();
   });
 
-  test("text version lists the loser and every losing bet", () => {
-    const text = shameReportText(build(1)!);
-    expect(text).toContain("Week 5 Shame Report");
-    expect(text).toContain("Parlay Loser: Zed (Chiefs (Spread -3.5))");
-    expect(text).toContain("• Bo: Josh Allen (Rushing Over 74.5 Yds)");
+  test("text version is short: bells, no year, shorthand picks", () => {
+    const report = buildShameReport({
+      legs: [
+        ...legs,
+        leg(5, "Georgie", "loss", { betType: "moneyline", pick: "away", line: "-346" }),
+        leg(6, "Dee", null),
+        leg(7, "Eve", null),
+      ],
+      bustedLegId: 1,
+      nameOf: (l) => l.owner,
+      weekLabel: "2026 Week 5",
+      loserLabel: "Parlay Loser",
+    })!;
+    const lines = shameReportText(report).split("\n");
+    expect(lines[0]).toBe("🔔 Week 5 Shame Report 🔔");
+    expect(lines[1]).toBe("Parlay Loser: Zed (Chiefs -3.5)");
+    expect(lines).toContain("• Bo: Josh (Rush O74.5)");
+    expect(lines).toContain("• Cal: Bills/Chiefs O47.5");
+    expect(lines).toContain("• Georgie: Bills ML (-346)");
+    expect(lines[lines.length - 1]).toBe("…and 2 more pending in the balance");
+  });
+
+  test("no pending line once every leg has settled", () => {
+    expect(build(1)!.pendingCount).toBe(0);
+    expect(shameReportText(build(1)!)).not.toContain("pending");
+  });
+
+  test("only the season being played can be shamed", () => {
+    expect(canShameSeason(2026, 2026)).toBe(true);
+    expect(canShameSeason(2025, 2026)).toBe(false);
+    expect(canShameSeason(undefined, 2026)).toBe(false);
   });
 });

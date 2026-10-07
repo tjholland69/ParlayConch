@@ -15,7 +15,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from "react-native-reanimated";
 import { useLeagues, useWeekLockStatus } from "@/hooks/use-leagues";
 import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
-import { useMyParlay, useMyParlayHistory } from "@/hooks/use-parlays";
+import { useActiveWeekStatus, useMyParlay, useMyParlayHistory } from "@/hooks/use-parlays";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { format, formatDistanceToNow, isPast } from "date-fns";
 import type { ParlayWithLegs, Week } from "@shared/schema";
 import { CHIP_MIN_HEIGHT, shadows } from "@/lib/theme";
@@ -125,12 +126,16 @@ function ParlayTile({
   );
 }
 
-/** For a league with no parlay yet in the active week — "build a pick" prompt. */
+/** For a league where the member still owes a pick this week: either the
+ * league's parlay is open and waiting on them, or nobody has started one. */
 function NeedsPickTile({ leagueId, weekId, leagueName }: { leagueId: number; weekId: number; leagueName: string }) {
   const router = useRouter();
+  const effectiveUserId = useEffectiveUserId();
   const { data: parlay, isLoading } = useMyParlay(leagueId, weekId);
   const { data: lockStatus } = useWeekLockStatus(leagueId, weekId);
   const isLocked = !!lockStatus?.isLocked;
+  const openLeague = () => router.push({ pathname: "/leagues/[id]", params: { id: String(leagueId) } });
+  const openBuild = () => router.push({ pathname: "/leagues/[id]/build", params: { id: String(leagueId) } });
 
   if (isLoading) {
     return (
@@ -141,7 +146,8 @@ function NeedsPickTile({ leagueId, weekId, leagueName }: { leagueId: number; wee
       </View>
     );
   }
-  if (parlay) return null; // a parlay showed up (e.g. just submitted) — history list will cover it
+  // Their pick is in: the parlay shows in the list below instead.
+  if (parlay?.legs.some((l) => l.userId === effectiveUserId)) return null;
 
   if (isLocked) {
     return (
@@ -153,7 +159,25 @@ function NeedsPickTile({ leagueId, weekId, leagueName }: { leagueId: number; wee
         metaLabel="Tap to view league"
         bg="#1c0a0a"
         border="#3d1a1a"
-        onPress={() => router.push({ pathname: "/leagues/[id]", params: { id: String(leagueId) } })}
+        onPress={openLeague}
+      />
+    );
+  }
+
+  const legCount = parlay?.legs.length ?? 0;
+  if (parlay && parlay.status !== "draft") {
+    // Submitted without them. In a league with room for another parlay
+    // this week they can still start one.
+    return (
+      <ParlayTile
+        icon="alert-circle-outline"
+        iconColor="#94a3b8"
+        leagueName={leagueName}
+        statusLabel="Parlay submitted without your pick"
+        metaLabel={parlay.canStartAnother ? "Tap to start another parlay" : "Tap to view league"}
+        bg="#141926"
+        border="#2a3447"
+        onPress={parlay.canStartAnother ? openBuild : openLeague}
       />
     );
   }
@@ -163,18 +187,19 @@ function NeedsPickTile({ leagueId, weekId, leagueName }: { leagueId: number; wee
       icon="alert-circle-outline"
       iconColor="#f59e0b"
       leagueName={leagueName}
-      statusLabel="Not submitted"
+      statusLabel={parlay ? "Parlay is Open!" : "No parlay yet this week"}
+      metaLabel={parlay ? `${legCount} ${legCount === 1 ? "leg" : "legs"} in · yours isn't yet` : undefined}
       bg="#1c1a0a"
       border="#3d2e00"
       actionIcon="create-outline"
-      ctaLabel="Create New Parlay"
-      onPress={() => router.push({ pathname: "/leagues/[id]/build", params: { id: String(leagueId) } })}
+      ctaLabel={parlay ? "Make Your Pick" : "Create New Parlay"}
+      onPress={openBuild}
     />
   );
 }
 
 const STATUS_META: Record<string, { icon: IconName; iconColor: string; label: string; bg: string; border: string }> = {
-  draft: { icon: "add-circle-outline", iconColor: "#60a5fa", label: "In progress", bg: "#0a1526", border: "#1a2e4d" },
+  draft: { icon: "add-circle-outline", iconColor: "#60a5fa", label: "Parlay is Open!", bg: "#0a1526", border: "#1a2e4d" },
   win: { icon: "trophy", iconColor: "#22c55e", label: "Won", bg: "#0a1c14", border: "#22c55e" },
   loss: { icon: "close-circle", iconColor: "#ef4444", label: "Lost", bg: "#1c0a0a", border: "#3d1a1a" },
   void: { icon: "ban-outline", iconColor: "#475569", label: "Void", bg: "#141926", border: "#2a3447" },
@@ -209,7 +234,7 @@ function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueNam
       statusLabel={isParlayInProgress(parlay) ? "In progress" : meta.label}
       metaLabel={
         isDraft
-          ? `${legCount} ${legCount === 1 ? "leg" : "legs"} queued · Tap to continue`
+          ? `${legCount} ${legCount === 1 ? "leg" : "legs"} in · your pick is saved`
           : [
               parlay.week?.label ?? "Week",
               `${legCount} ${legCount === 1 ? "leg" : "legs"}`,
@@ -463,6 +488,8 @@ export default function PicksScreen() {
     ? [activeWeek.id, ...visiblePriorWeeks.map((w) => w.id)]
     : undefined;
   const { data: parlayHistory } = useMyParlayHistory(weekIdsToFetch);
+  const { data: weekStatus } = useActiveWeekStatus();
+  const effectiveUserId = useEffectiveUserId();
 
   // Selecting a week further back than what's currently loaded (via the week
   // filter picker) reveals it immediately rather than showing an empty list.
@@ -521,8 +548,16 @@ export default function PicksScreen() {
 
   // "Needs a pick" only ever applies to the active week — filtering to a
   // past week via the week picker shouldn't invent an open-pick prompt for it.
+  // A member owes a pick when the league's parlay is open without theirs, or
+  // none has been started. The server decides (the same answer the Leagues
+  // tab uses); until that loads, fall back to "no parlay of mine this week".
   const leaguesNeedingPick = (activeWeek && matchesWeek(activeWeek.id)
-    ? leagues.filter((l) => !(parlayHistory ?? []).some((p) => p.leagueId === l.id && p.weekId === activeWeek.id))
+    ? leagues.filter((l) => {
+        const inOne = (parlayHistory ?? []).some(
+          (p) => p.leagueId === l.id && p.weekId === activeWeek.id && (p.legs ?? []).some((leg) => leg.userId === effectiveUserId),
+        );
+        return !inOne && (weekStatus?.[l.id]?.currentUserNeedsPick ?? true);
+      })
     : []
   ).filter((l) => matchesLeague(l.id));
 

@@ -8,7 +8,6 @@ import { X, Search, UserCog } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { getDisplayName } from "@/lib/displayName";
-import { api } from "@shared/routes";
 
 type SuperUserResult = {
   id: string;
@@ -22,13 +21,17 @@ type ActingAsData = {
   actingAs: SuperUserResult | null;
 };
 
+// Switching who you're acting for changes the answer to nearly every query,
+// so all of them are reset rather than a hand-kept list: anything left off
+// that list kept showing the previous member's data. Only the super user's
+// own identity and the act-as state itself survive.
 function invalidateIdentityScopedQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
-  queryClient.invalidateQueries({ queryKey: ["/api/stats"] });
-  queryClient.invalidateQueries({ queryKey: [api.dashboard.summary.path] });
-  queryClient.invalidateQueries({ queryKey: [api.dashboard.patterns.path] });
-  queryClient.invalidateQueries({ queryKey: [api.dashboard.performance.path] });
-  queryClient.invalidateQueries({ queryKey: [api.dashboard.advancedPerformance.path] });
+  void queryClient.resetQueries({
+    predicate: (q) => {
+      const root = String(q.queryKey[0]);
+      return root !== "/api/auth/user" && !root.startsWith("/api/superuser");
+    },
+  });
 }
 
 function useDebounce<T>(value: T, delay: number): T {

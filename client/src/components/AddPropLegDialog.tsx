@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { PLAYER_PROP_TYPES, type Game, type Player } from "@shared/schema";
 import { useAddDraftLeg, useGamePlayerSearch } from "@/hooks/use-bets";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { primaryPropType, propTypesForPosition } from "@/lib/propPosition";
 import { LINE_STEP, MIN_LINE, lineRangeFor } from "@shared/propLines";
 import { cn } from "@/lib/utils";
@@ -109,10 +110,13 @@ export function AddPropLegDialog({
   weekId,
   open,
   onOpenChange,
+  startNew,
 }: {
   game: Game;
   leagueId: number;
   weekId: number;
+  /** The pick starts another parlay rather than joining the open one. */
+  startNew?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -124,6 +128,7 @@ export function AddPropLegDialog({
   const [pick, setPick] = useState<string>("over");
   const [line, setLine] = useState<number>(lineRangeFor(PLAYER_PROP_TYPES[0].value).start);
   const addDraftLeg = useAddDraftLeg();
+  const effectiveUserId = useEffectiveUserId();
 
   const isYesNo = YES_NO_PROPS.has(propType);
   const range = lineRangeFor(propType);
@@ -152,9 +157,11 @@ export function AddPropLegDialog({
       {
         leagueId,
         weekId,
+        userId: effectiveUserId,
         leg: {
           gameId: game.id,
           betType: "player_prop",
+          ...(startNew ? { startNew: true } : {}),
           pick,
           line: isYesNo ? undefined : String(line),
           playerName: playerName.trim(),

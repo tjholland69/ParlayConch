@@ -20,10 +20,9 @@ export const createParlayInputSchema = z.object({
   ),
 });
 
-// Body for POST /api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs — adds
-// one leg to (or starts) the caller's in-progress draft parlay for that
-// league/week. Same per-leg shape as createParlayInputSchema's `legs` array
-// element, just singular.
+// Body for POST /api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs — the
+// caller's one pick in the league's open parlay for that week (see
+// shared/weekParlays.ts).
 export const draftParlayLegInputSchema = z.object({
   gameId: z.number(),
   betType: z.string().min(1),
@@ -33,6 +32,10 @@ export const draftParlayLegInputSchema = z.object({
   // relying on the game's own spread/moneyline/total odds.
   playerName: z.string().optional(),
   propType: z.string().optional(),
+  // Which open parlay the pick goes into, or start another one: only needed
+  // in a league that runs more than one parlay a week.
+  parlayId: z.number().int().optional(),
+  startNew: z.boolean().optional(),
 });
 
 export type DraftParlayLegInput = z.infer<typeof draftParlayLegInputSchema>;

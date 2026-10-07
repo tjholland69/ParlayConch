@@ -24,15 +24,15 @@ describe("weekly parlay status, boost, active week and player search", () => {
       { parlayId: shared.id, userId: "wf-owner", betType: "moneyline", pick: "home" },
       { parlayId: shared.id, userId: "wf-amy", betType: "moneyline", pick: "away" },
     ]);
-    // Bo has only started a draft, which doesn't count.
+    // Bo has a pick in a parlay nobody has submitted yet. It's saved, so he's in.
     const [draft] = await db.insert(parlays).values({ userId: "wf-bo", leagueId: league.id, weekId: week.id, status: "draft" }).returning();
     await db.insert(parlayLegs).values({ parlayId: draft.id, userId: "wf-bo", betType: "moneyline", pick: "home" });
 
     const lock = await storage.getWeekLockStatus(league.id, week.id);
-    expect(lock.submittedCount).toBe(2);
+    expect(lock.submittedCount).toBe(3);
     expect(lock.totalMembers).toBe(4);
     expect(lock.allSubmitted).toBe(false);
-    expect([...lock.missingMemberIds].sort()).toEqual(["wf-bo", "wf-cal"]);
+    expect(lock.missingMemberIds).toEqual(["wf-cal"]);
 
     // setActiveWeek moves the flag in one step: exactly one active week after.
     await storage.setActiveWeek(week.id);
@@ -41,13 +41,15 @@ describe("weekly parlay status, boost, active week and player search", () => {
     expect(active.some((w) => w.id === other.id)).toBe(false);
 
     const status = (await storage.getActiveWeekParlayStatus([league.id], "wf-amy"))[league.id];
-    expect(status.submittedCount).toBe(2);
+    expect(status.submittedCount).toBe(3);
     expect(status.currentUserSubmitted).toBe(true); // has a leg in, though she owns no parlay
     expect(status.hasPendingParlay).toBe(true);
-    expect([...status.missingMemberIds].sort()).toEqual(["wf-bo", "wf-cal"]);
+    expect(status.missingMemberIds).toEqual(["wf-cal"]);
+    // Bo's parlay is still open, and Amy has no pick in it yet.
+    expect(status).toMatchObject({ hasOpenParlay: true, openParlayLegCount: 1, currentUserNeedsPick: true, currentUserHasUnsubmittedDraft: false });
     const bo = (await storage.getActiveWeekParlayStatus([league.id], "wf-bo"))[league.id];
-    expect(bo.currentUserSubmitted).toBe(false);
-    expect(bo.currentUserHasUnsubmittedDraft).toBe(true);
+    expect(bo.currentUserSubmitted).toBe(true);
+    expect(bo).toMatchObject({ currentUserHasUnsubmittedDraft: true, currentUserNeedsPick: false });
   });
 
   test("a boost can be set on submit and changed or cleared afterwards", async ({ skip }) => {
@@ -56,7 +58,8 @@ describe("weekly parlay status, boost, active week and player search", () => {
     const { storage } = await import("../server/storage");
 
     const [draft] = await db.select().from(parlays).where(eq(parlays.userId, "wf-bo"));
-    const submitted = await storage.submitDraftParlay("wf-bo", draft.id, 1, 5, 25);
+    await db.update(leagues).set({ minLegsPerParlay: 1 }).where(eq(leagues.id, draft.leagueId));
+    const submitted = await storage.submitDraftParlay("wf-bo", draft.id, 25);
     expect(submitted.status).toBe("pending");
     expect(submitted.boostPct).toBe(25);
 

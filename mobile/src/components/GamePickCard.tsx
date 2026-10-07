@@ -1,5 +1,4 @@
 import { View, Text, Image, Pressable, StyleSheet } from "react-native";
-import { useState } from "react";
 import { format } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
 import type { Game } from "@shared/schema";
@@ -14,6 +13,7 @@ import {
   MAX_POINTS_MOVE,
   POINTS_STEP,
   type SelectedLeg,
+  type TakenMarkets,
 } from "@/lib/pickHelpers";
 
 /** One-off for this card's team header: "Commanders" is the only team name
@@ -80,7 +80,6 @@ export function GamePickCard({
   onSelect,
   onClear,
   onAdjustPoints,
-  pointsPending,
   readOnly,
   takenBy,
   onAddProp,
@@ -89,20 +88,18 @@ export function GamePickCard({
   selectedLeg?: SelectedLeg;
   onSelect: (leg: Omit<SelectedLeg, "gameId"> & { gameId?: number }) => void;
   onClear: () => void;
-  /** "Buy points" slider callback — re-prices the currently selected Spread/
-   * Over/Under leg at a new points-moved value (a safer line at worse odds).
-   * Omitted markets (moneyline, or no leg selected yet) never show the control. */
+  /** Alternate-line stepper callback — re-prices the selected Spread/Over/
+   * Under pick at a new points-moved value: positive buys points (safer
+   * line, worse odds), negative sells them. Omitted markets (moneyline, or
+   * no pick on this game) never show the control. */
   onAdjustPoints?: (pointsMoved: number) => void;
-  /** True while an onAdjustPoints call is in flight — disables the stepper
-   * so a second tap can't race the first. */
-  pointsPending?: boolean;
   /** Preview mode for a week that isn't open for picks yet — every market
    * renders disabled, same visual treatment as an already-started game. */
   readOnly?: boolean;
-  /** Who (if anyone) already has the Spread / Total market on this game —
-   * once one member takes either side, no one else may take that market at
-   * all, home or away / over or under. Moneyline is never exclusive. */
-  takenBy?: { spread?: string; total?: string };
+  /** Who (if anyone) already has each market on this game in the parlay.
+   * One bet per market: once a member has it, nobody else can take either
+   * side. */
+  takenBy?: TakenMarkets;
   /** Opens the Add Player Prop sheet for this game. Omitted (e.g. read-only
    * preview mode) hides the affordance entirely. */
   onAddProp?: () => void;
@@ -112,11 +109,12 @@ export function GamePickCard({
   const homeSpread = game.spread || null;
   const hasPick = !!selectedLeg;
   const spreadTaken = !!takenBy?.spread && selectedLeg?.betType !== "spread";
+  const moneylineTaken = !!takenBy?.moneyline && selectedLeg?.betType !== "moneyline";
   const totalTaken = !!takenBy?.total && selectedLeg?.betType !== "over" && selectedLeg?.betType !== "under";
   const showPointsControl = !past && !!selectedLeg && !!onAdjustPoints && canBuyPoints(selectedLeg.betType);
   const currentPoints = selectedLeg ? derivePointsMoved(game, selectedLeg.betType, selectedLeg.pick, selectedLeg.line) : 0;
-  // The +/- steppers stay out of the way until the Buy Points field is tapped.
-  const [pointsOpen, setPointsOpen] = useState(false);
+  const canSellPoints = currentPoints > -MAX_POINTS_MOVE;
+  const canBuyMorePoints = currentPoints < MAX_POINTS_MOVE;
 
   const { data: teams } = useTeams();
   const homeTeamData = teams?.find((t) => t.abbreviation === game.homeTeam);
@@ -227,7 +225,7 @@ export function GamePickCard({
             primary={game.moneylineAway || "—"}
             secondary="ML"
             selected={selectedLeg?.betType === "moneyline" && selectedLeg?.pick === "away"}
-            disabled={past || !game.moneylineAway}
+            disabled={past || !game.moneylineAway || moneylineTaken}
             onPress={() => select("moneyline", "away")}
             accessibilityLabel={`${game.awayTeam} moneyline ${game.moneylineAway || "unavailable"}`}
           />
@@ -235,11 +233,14 @@ export function GamePickCard({
             primary={game.moneylineHome || "—"}
             secondary="ML"
             selected={selectedLeg?.betType === "moneyline" && selectedLeg?.pick === "home"}
-            disabled={past || !game.moneylineHome}
+            disabled={past || !game.moneylineHome || moneylineTaken}
             onPress={() => select("moneyline", "home")}
             accessibilityLabel={`${game.homeTeam} moneyline ${game.moneylineHome || "unavailable"}`}
           />
         </View>
+        {moneylineTaken && (
+          <Text style={styles.takenText}>Moneyline taken by {takenBy!.moneyline}</Text>
+        )}
         <View style={styles.pickGridRow}>
           <MarketButton
             primary={`O ${game.overUnder || "—"}`}
@@ -290,52 +291,54 @@ export function GamePickCard({
         </View>
       )}
 
+      {/* Alternate line: the two step buttons sit either side of the line
+          they change. Nothing else in the row is tappable, so no press
+          highlight ever covers them. */}
       {showPointsControl && (
-        <View style={styles.pointsRow}>
-          <Pressable
-            onPress={() => setPointsOpen((v) => !v)}
-            style={({ pressed }) => [styles.pointsLabelBlock, pressed && { opacity: 0.7 }]}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: pointsOpen }}
-            accessibilityLabel={pointsOpen ? "Hide the buy points controls" : "Adjust points"}
-            testID={`button-buy-points-${game.id}`}
-          >
-            <Text style={styles.pointsLabel}>Buy Points</Text>
-            <Text style={styles.pointsValue}>
-              {currentPoints === 0 ? "No points bought" : `+${currentPoints} pts → ${selectedLeg!.line ?? ""}`}
-            </Text>
-          </Pressable>
-          {!pointsOpen && <Ionicons name="options-outline" size={16} color="#64748b" />}
-          {pointsOpen && <View style={styles.pointsSteppers}>
+        <View style={styles.pointsBlock}>
+          <Text style={styles.pointsLabel}>Alternate line</Text>
+          <View style={styles.pointsRow}>
             <Pressable
-              onPress={() => onAdjustPoints!(Math.max(0, currentPoints - POINTS_STEP))}
-              disabled={pointsPending || currentPoints <= 0}
-              hitSlop={8}
+              onPress={() => onAdjustPoints!(Math.max(-MAX_POINTS_MOVE, currentPoints - POINTS_STEP))}
+              disabled={!canSellPoints}
+              hitSlop={6}
               accessibilityRole="button"
-              accessibilityLabel="Buy fewer points"
+              accessibilityLabel="Move the line half a point riskier, for better odds"
+              testID={`button-points-minus-${game.id}`}
               style={({ pressed }) => [
                 styles.pointsStepBtn,
-                (pointsPending || currentPoints <= 0) && styles.pointsStepBtnDisabled,
-                pressed && { opacity: 0.7 },
+                !canSellPoints && styles.pointsStepBtnDisabled,
+                pressed && styles.pointsStepBtnPressed,
               ]}
             >
-              <Ionicons name="remove" size={16} color="#f1f5f9" />
+              <Ionicons name="remove" size={26} color="#ffffff" />
             </Pressable>
+            <View style={styles.pointsReadout} accessibilityLiveRegion="polite">
+              <Text style={styles.pointsValue} numberOfLines={1} testID={`text-points-line-${game.id}`}>
+                {selectedLeg!.line ?? "—"}
+              </Text>
+              <Text style={styles.pointsHint} numberOfLines={1}>
+                {currentPoints === 0
+                  ? "Market line"
+                  : `${currentPoints > 0 ? "Bought" : "Sold"} ${Math.abs(currentPoints)} pt${Math.abs(currentPoints) === 1 ? "" : "s"}`}
+              </Text>
+            </View>
             <Pressable
               onPress={() => onAdjustPoints!(Math.min(MAX_POINTS_MOVE, currentPoints + POINTS_STEP))}
-              disabled={pointsPending || currentPoints >= MAX_POINTS_MOVE}
-              hitSlop={8}
+              disabled={!canBuyMorePoints}
+              hitSlop={6}
               accessibilityRole="button"
-              accessibilityLabel="Buy more points"
+              accessibilityLabel="Move the line half a point safer, for worse odds"
+              testID={`button-points-plus-${game.id}`}
               style={({ pressed }) => [
                 styles.pointsStepBtn,
-                (pointsPending || currentPoints >= MAX_POINTS_MOVE) && styles.pointsStepBtnDisabled,
-                pressed && { opacity: 0.7 },
+                !canBuyMorePoints && styles.pointsStepBtnDisabled,
+                pressed && styles.pointsStepBtnPressed,
               ]}
             >
-              <Ionicons name="add" size={16} color="#f1f5f9" />
+              <Ionicons name="add" size={26} color="#ffffff" />
             </Pressable>
-          </View>}
+          </View>
         </View>
       )}
 
@@ -473,26 +476,26 @@ const styles = StyleSheet.create({
     borderStyle: "dashed",
   },
   addPropBtnText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
-  pointsRow: {
+  pointsBlock: {
     marginTop: 10,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: "#2a3447",
-    flexDirection: "row",
-    alignItems: "center",
     gap: 8,
   },
-  pointsLabelBlock: { flex: 1, minWidth: 0 },
   pointsLabel: { fontSize: 11, fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4 },
-  pointsValue: { fontSize: 13, color: "#f1f5f9", fontWeight: "500", marginTop: 2 },
-  pointsSteppers: { flexDirection: "row", gap: 8, flexShrink: 0 },
+  pointsRow: { flexDirection: "row", alignItems: "center", gap: 12 },
+  pointsReadout: { flex: 1, minWidth: 0, alignItems: "center" },
+  pointsValue: { fontSize: 17, color: "#f1f5f9", fontWeight: "700", fontVariant: ["tabular-nums"] },
+  pointsHint: { fontSize: 12, color: "#94a3b8", marginTop: 2 },
   pointsStepBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: "#2a3447",
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: "#2563eb",
     alignItems: "center",
     justifyContent: "center",
   },
-  pointsStepBtnDisabled: { opacity: 0.35 },
+  pointsStepBtnDisabled: { backgroundColor: "#2a3447", opacity: 0.5 },
+  pointsStepBtnPressed: { backgroundColor: "#1d4ed8", transform: [{ scale: 0.96 }] },
 });

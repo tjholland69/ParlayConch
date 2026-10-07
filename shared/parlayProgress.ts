@@ -42,3 +42,28 @@ export function legTally(legs: { result?: string | null }[]): {
   ].filter(Boolean).join(" ");
   return { wins, resolved, pending, pct, label };
 }
+
+type EndingLeg = {
+  decidedAt?: Date | string | null;
+  game?: { finishedAt?: Date | string | null; gameTime?: Date | string | null } | null;
+};
+
+/**
+ * When a parlay finished, in ms: the moment its last leg was decided (or
+ * its last game kicks off, if still open), falling back to when it was
+ * submitted. Same rule as the server's "ending" sort (getAllLeagueParlays).
+ */
+export function parlayEndingTime(parlay: { createdAt?: Date | string | null; legs?: EndingLeg[] | null }): number {
+  const times = (parlay.legs ?? [])
+    .map((l) => l.decidedAt ?? l.game?.finishedAt ?? l.game?.gameTime)
+    .filter((t): t is Date | string => t != null)
+    .map((t) => new Date(t).getTime())
+    .filter((t) => !Number.isNaN(t));
+  if (times.length > 0) return Math.max(...times);
+  return parlay.createdAt ? new Date(parlay.createdAt).getTime() : 0;
+}
+
+/** Most recently finished first. */
+export function byEndingDesc<P extends { id: number } & Parameters<typeof parlayEndingTime>[0]>(a: P, b: P): number {
+  return parlayEndingTime(b) - parlayEndingTime(a) || b.id - a.id;
+}

@@ -85,3 +85,25 @@ export function getParlayVisualStyle(pct: number | null, participationRate = 1):
   };
 }
 
+
+/**
+ * Participation rate for each parlay in a list: the members who started a
+ * parlay in that parlay's league and week, over the league's member count.
+ * Every list of rollup cards (a league's All Parlays tab, the History page)
+ * colors its cards from this, so the same parlay looks the same everywhere.
+ */
+export function participationRateByParlay(
+  parlays: { id: number; leagueId: number; weekId: number; userId: string }[],
+  memberCountOf: (leagueId: number) => number | null | undefined,
+): Map<number, number> {
+  const submitters = new Map<string, Set<string>>();
+  const scope = (p: { leagueId: number; weekId: number }) => `${p.leagueId}:${p.weekId}`;
+  for (const p of parlays) {
+    const set = submitters.get(scope(p)) ?? new Set<string>();
+    set.add(p.userId);
+    submitters.set(scope(p), set);
+  }
+  return new Map(
+    parlays.map((p) => [p.id, (submitters.get(scope(p))?.size ?? 0) / (memberCountOf(p.leagueId) || 1)]),
+  );
+}

@@ -42,7 +42,8 @@ import {
 } from "@/hooks/use-parlays";
 import { BoostSheet } from "@/components/BoostSheet";
 import { ShameReportModal } from "@/components/ShameReportModal";
-import { buildShameReport } from "@shared/shameReport";
+import { buildShameReport, canShameSeason } from "@shared/shameReport";
+import { standingsText } from "@shared/standingsExport";
 import { boostLabel } from "@shared/parlayBoost";
 import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
 import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
@@ -127,6 +128,7 @@ function ParlayCard({
   // The boost control only shows once the card is expanded to its legs.
   const showBoostChip = !collapsed && parlay.status !== "void" && (!!parlay.boostPct || boostEditable);
   const [shameOpen, setShameOpen] = useState(false);
+  const currentSeason = useActiveWeek()?.season;
   // Multi-game "Send to Sportsbook" walkthrough — set only when the parlay
   // spans 2+ distinct games, since a single game keeps the original one-shot
   // deep link. Advances on app-resume (see useAppResume below); there's no
@@ -162,7 +164,9 @@ function ParlayCard({
     ? bustedLeg.user.settings?.displayName ?? bustedLeg.user.firstName ?? bustedLeg.user.email ?? "Unknown"
     : name;
 
-  // Only a lost parlay has a shame report; built on demand, when it's opened.
+  // Only a lost parlay from the season being played has a shame report;
+  // built on demand, when it's opened.
+  const canShame = !!bustedLeg && canShameSeason(parlay.week?.season, currentSeason);
   const shameReport = shameOpen
     ? buildShameReport({
         legs,
@@ -381,7 +385,7 @@ function ParlayCard({
 
       {/* Promo boost: a rocket, on the expanded card only. Lit when a boost
           is set; tapping it opens the boost sheet for whoever can set it. */}
-      {(showBoostChip || !!bustedLeg) && (
+      {(showBoostChip || canShame) && (
         <View style={styles.cardChipRow}>
           {showBoostChip && (
             <Pressable
@@ -400,7 +404,7 @@ function ParlayCard({
               <Text style={styles.boostChipText}>🚀</Text>
             </Pressable>
           )}
-          {bustedLeg && (
+          {canShame && (
             <Pressable
               onPress={() => setShameOpen(true)}
               style={({ pressed }) => [styles.boostChip, styles.shameChip, pressed && { opacity: 0.7 }]}
@@ -647,9 +651,13 @@ const STANDINGS_SCOPES: { key: StandingsScope; label: string }[] = [
 function MembersTable({
   members,
   stats,
+  leagueName,
+  scopeLabel,
 }: {
   members: any[];
   stats: any[] | undefined;
+  leagueName: string;
+  scopeLabel: string;
 }) {
   const [sortKey, setSortKey] = useState<MemberSortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir | null>(null);
@@ -690,8 +698,32 @@ function MembersTable({
     }
   }
 
+  // Sends the grid as text, ranked the way it's sorted right now. The share
+  // sheet covers both Copy and Messages.
+  function shareStandings() {
+    const sortCol = MEMBER_SORT_COLUMNS.find((c) => c.key === sortKey);
+    void Share.share({
+      message: standingsText({
+        leagueName,
+        scopeLabel,
+        sortLabel: sortCol ? `${sortCol.label} (${sortDir === "asc" ? "low to high" : "high to low"})` : null,
+        rows: sortedRows.map((r) => ({ ...r, username: r.name })),
+      }),
+    }).catch(() => undefined);
+  }
+
   return (
     <View>
+      <Pressable
+        onPress={shareStandings}
+        style={({ pressed }) => [styles.shareStandingsBtn, pressed && { opacity: 0.7 }]}
+        accessibilityRole="button"
+        accessibilityLabel={`Share ${scopeLabel} standings as text`}
+        testID="button-share-standings"
+      >
+        <Ionicons name="share-outline" size={14} color="#93c5fd" />
+        <Text style={styles.shareStandingsText}>Share {scopeLabel} standings</Text>
+      </Pressable>
       <View style={styles.memberHeaderRow}>
         <View style={styles.memberIdentityCol} />
         {MEMBER_SORT_COLUMNS.map((col) => {
@@ -1222,7 +1254,13 @@ export default function LeagueDetailScreen() {
                 >
                   <Ionicons name="create-outline" size={18} color="#fff" />
                   <Text style={styles.submitBannerText}>
-                    {myParlay ? "Edit Your Pick" : "Build Your Pick"}
+                    {!myParlay
+                      ? "Start This Week's Parlay"
+                      : myParlay.status !== "draft"
+                        ? "View This Week's Parlay"
+                        : myParlay.legs.some((l) => l.userId === effectiveUserId)
+                          ? "Parlay is Open! · Change Your Pick"
+                          : "Parlay is Open! · Make Your Pick"}
                   </Text>
                 </Pressable>
               )}
@@ -1354,7 +1392,12 @@ export default function LeagueDetailScreen() {
                       );
                     })}
                   </View>
-                  <MembersTable members={members} stats={memberStats} />
+                  <MembersTable
+                    members={members}
+                    stats={memberStats}
+                    leagueName={leagueName}
+                    scopeLabel={STANDINGS_SCOPES.find((sc) => sc.key === standingsScope)?.label ?? "Current Year"}
+                  />
                 </>
               )}
               <Pressable
@@ -1572,6 +1615,8 @@ const styles = StyleSheet.create({
   },
   adminBarText: { fontSize: 13, color: "#94a3b8", fontWeight: "500" },
   cardChipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingHorizontal: 14, paddingBottom: 10 },
+  shareStandingsBtn: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6, paddingVertical: 8 },
+  shareStandingsText: { fontSize: 13, fontWeight: "600", color: "#93c5fd" },
   shameChip: { borderStyle: "solid", borderColor: "rgba(248, 113, 113, 0.35)", backgroundColor: "rgba(248, 113, 113, 0.08)" },
   shameChipText: { color: "#fca5a5" },
   boostChip: {

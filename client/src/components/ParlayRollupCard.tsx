@@ -1,5 +1,5 @@
 import React, { useState, memo } from "react";
-import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useRecalcParlay, useSplitParlayLegs, useCloneParlay, useSetParlayBoost, type EnrichLog } from "@/hooks/use-bets";
+import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useRecalcParlay, useSplitParlayLegs, useCloneParlay, useSetParlayBoost, useWeeks, type EnrichLog } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +31,7 @@ import { getSlate } from "@shared/slate";
 import { boostLabel } from "@shared/parlayBoost";
 import { BoostDialog } from "@/components/BoostDialog";
 import { ShameReportDialog } from "@/components/ShameReportDialog";
-import { buildShameReport } from "@shared/shameReport";
+import { buildShameReport, canShameSeason } from "@shared/shameReport";
 import { isParlayInProgress, legTally } from "@shared/parlayProgress";
 
 export { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
@@ -394,7 +394,10 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
     ? getDisplayName(bustedLeg.user, `User #${shortId(bustedLeg.userId)}`)
     : memberName;
 
-  // Only a lost parlay has a shame report; built on demand, when it's opened.
+  // Only a lost parlay from the season being played has a shame report;
+  // built on demand, when it's opened.
+  const { data: allWeeks } = useWeeks();
+  const canShame = !!bustedLeg && canShameSeason(parlay.week?.season, allWeeks?.find(w => w.isActive)?.season);
   const [shameOpen, setShameOpen] = useState(false);
   const shameReport = shameOpen
     ? buildShameReport({
@@ -589,7 +592,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
               (Started by {memberName})
             </span>
 
-            {bustedLeg && !selectMode && (
+            {canShame && !selectMode && (
               <button
                 type="button"
                 onClick={e => { e.stopPropagation(); setShameOpen(true); }}

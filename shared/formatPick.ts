@@ -164,3 +164,60 @@ export function legChipLabel(leg: ChipLeg, game?: ChipGame | null): string {
   }
   return team;
 }
+
+/** Prop names as they're said in a group chat: "Rush", "Rec TD", "Anytime TD". */
+const PROP_SHORT: Record<string, string> = {
+  rush_yards: "Rush",
+  rush_tds: "Rush TD",
+  rush_attempts: "Rush Att",
+  rec_yards: "Rec",
+  rec_tds: "Rec TD",
+  receptions: "Recs",
+  all_purpose_yards: "Rush+Rec",
+  pass_yards: "Pass",
+  pass_tds: "Pass TD",
+  pass_attempts: "Pass Att",
+  pass_completions: "Comp",
+  interceptions: "INT",
+  anytime_td: "Anytime TD",
+  first_td: "First TD",
+  last_td: "Last TD",
+  kicking_pts: "Kick Pts",
+  fg_made: "FG",
+  sacks: "Sacks",
+  tackles: "Tackles",
+};
+
+/**
+ * The shortest readable form of a pick, for text that gets pasted into a
+ * group chat: "Lamar (Rush O25)", "Chiefs -4.5", "Cardinals ML (-346)",
+ * "Bills/Chiefs O47.5". Same inputs as legChipLabel.
+ */
+export function legShortLabel(leg: ChipLeg, game?: ChipGame | null): string {
+  const lineNumber = leg.line?.trim().split(/\s+/)[0] || null;
+  if (leg.betType === "player_prop") {
+    const first = leg.playerName?.trim().split(/\s+/)[0] || "Player";
+    const prop = (leg.propType && PROP_SHORT[leg.propType]) || "Prop";
+    if (leg.pick === "yes" || leg.pick === "no") return `${first} (${leg.pick === "no" ? "No " : ""}${prop})`;
+    const side = leg.pick === "over" ? "O" : leg.pick === "under" ? "U" : "";
+    return `${first} (${[prop, `${side}${lineNumber ?? ""}`].filter(Boolean).join(" ")})`;
+  }
+  if (leg.betType === "over" || leg.betType === "under") {
+    const total = lineNumber?.replace(/^[ou]/i, "") || game?.overUnder || "";
+    const matchup = game?.awayTeam && game?.homeTeam ? `${game.awayTeam}/${game.homeTeam} ` : "";
+    return `${matchup}${leg.betType === "over" ? "O" : "U"}${total}`;
+  }
+  const isHome = leg.pick === "home";
+  const team = (isHome ? game?.homeTeam : game?.awayTeam) || (isHome ? "Home" : "Away");
+  if (leg.betType === "spread") {
+    const homeSpread = parseFloat(game?.spread ?? "");
+    const fromGame = Number.isNaN(homeSpread) ? null : String(isHome ? homeSpread : -homeSpread || 0);
+    const spread = withPlusSign(lineNumber ?? fromGame);
+    return spread ? `${team} ${spread}` : team;
+  }
+  if (leg.betType === "moneyline") {
+    const odds = withPlusSign(lineNumber ?? (isHome ? game?.moneylineHome : game?.moneylineAway));
+    return odds ? `${team} ML (${odds})` : `${team} ML`;
+  }
+  return team;
+}

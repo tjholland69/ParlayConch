@@ -1,15 +1,25 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
-import type { ParlayWithLegs, ParlayLegDispute, ParlayLegWithParlayContext, TakenPick } from "@shared/schema";
+import type { ActiveWeekStatus, MemberWeekParlay, ParlayWithLegs, ParlayLegDispute, ParlayLegWithParlayContext } from "@shared/schema";
 
-/** Every pick a DIFFERENT league member has already locked in (submitted)
- * for this week — used to gray out taken markets and to detect a same-game
- * moneyline+spread combo before it's added. See server's getTakenPicksForWeek. */
-export function useTakenPicks(leagueId: number, weekId: number) {
-  return useQuery<TakenPick[]>({
-    queryKey: ["/api/leagues", leagueId, "weeks", weekId, "taken-picks"],
-    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/weeks/${weekId}/taken-picks`),
-    enabled: !!leagueId && !!weekId,
+const myParlayKey = (leagueId: number, weekId: number) => ["/api/leagues", leagueId, "weeks", weekId, "my-parlay"];
+
+/** Everything that shows who's in this week's parlay; refreshed after any pick changes. */
+function invalidateWeekPickQueries(queryClient: ReturnType<typeof useQueryClient>, leagueId: number, weekId: number) {
+  queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "lock"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "parlays"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/leagues/active-week-status"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+}
+
+/** Where each of the caller's leagues stands for the active week: whether a
+ * parlay is open, how many legs are in, and whether they still owe a pick. */
+export function useActiveWeekStatus() {
+  return useQuery<Record<number, ActiveWeekStatus>>({
+    queryKey: ["/api/leagues/active-week-status"],
+    queryFn: async () => apiRequest("GET", "/api/leagues/active-week-status"),
+    staleTime: 15_000,
   });
 }
 
@@ -57,11 +67,20 @@ export function useMyParlayLegsByIds(legIds: number[]) {
   });
 }
 
-export function useMyParlay(leagueId: number, weekId: number) {
-  return useQuery<ParlayWithLegs | null>({
-    queryKey: ["/api/leagues", leagueId, "weeks", weekId, "my-parlay"],
+/**
+ * The league's parlay for the week as the caller sees it: one shared parlay
+ * holding every member's pick, plus the picks others have taken in it (see
+ * shared/weekParlays.ts). `live` keeps it fresh while it's on screen, so
+ * another member's pick shows up without leaving the page. It re-checks
+ * every 8 seconds for now; the aim is to push changes as they happen, the
+ * way web does over its WebSocket (client/src/hooks/use-realtime-sync.ts).
+ */
+export function useMyParlay(leagueId: number, weekId: number, opts: { live?: boolean } = {}) {
+  return useQuery<MemberWeekParlay | null>({
+    queryKey: myParlayKey(leagueId, weekId),
     queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/weeks/${weekId}/my-parlay`),
     enabled: !!leagueId && !!weekId,
+    ...(opts.live ? { staleTime: 0, refetchOnMount: "always" as const, refetchInterval: 8_000 } : {}),
   });
 }
 
@@ -87,63 +106,61 @@ export function useAllLeagueParlaysForWeeks(leagueId: number, weekIds: number[])
   });
 }
 
-export function useCreateParlay(leagueId: number) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { weekId: number; legs: { gameId: number; betType: string; pick: string; line?: string }[] }) =>
-      apiRequest("POST", `/api/parlays`, { leagueId, weekId: data.weekId, legs: data.legs }),
-    onSuccess: (_, vars) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", vars.weekId, "parlays"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "parlays"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", vars.weekId, "my-parlay"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", vars.weekId, "lock"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues/active-week-status"] });
-    },
-  });
-}
+export type PickInput = {
+  gameId: number;
+  betType: string;
+  pick: string;
+  line?: string;
+  playerName?: string;
+  propType?: string;
+  /** Start another parlay instead of joining the open one. */
+  startNew?: boolean;
+};
 
 /**
- * Adds ONE leg to (or starts) the caller's in-progress draft parlay for a
- * league/week — the "queue" flow: tap a pick, it's added and persisted
- * immediately, rather than batch-selecting several legs before one submit.
- * Unlike `useCreateParlay`, a draft may sit below the league's
- * `minLegsPerParlay` until `useSubmitDraftParlay` is called.
+ * Saves the caller's ONE pick in the league's open parlay for the week. A
+ * new pick replaces their earlier one in a single request, so there's no
+ * remove-then-add for a second tap to land between. The response is the
+ * whole parlay as it now stands, which replaces the cached copy.
  */
-export function useAddDraftLeg(leagueId: number, weekId: number) {
+export function useSetPick(leagueId: number, weekId: number) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (leg: { gameId: number; betType: string; pick: string; line?: string; playerName?: string; propType?: string }) =>
-      apiRequest<ParlayWithLegs>("POST", `/api/leagues/${leagueId}/weeks/${weekId}/draft-parlay/legs`, leg),
+    mutationFn: (pick: PickInput) =>
+      apiRequest<MemberWeekParlay>("POST", `/api/leagues/${leagueId}/weeks/${weekId}/draft-parlay/legs`, pick),
     onSuccess: (data) => {
-      queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data);
-      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+      queryClient.setQueryData(myParlayKey(leagueId, weekId), data);
+      invalidateWeekPickQueries(queryClient, leagueId, weekId);
     },
+    // A refused pick usually means another member got there first: reload
+    // the parlay so the screen shows why.
+    onError: () => queryClient.invalidateQueries({ queryKey: myParlayKey(leagueId, weekId) }),
   });
 }
 
-/** Removes one leg from the caller's own draft parlay (draft-only — see server route). */
-export function useRemoveDraftLeg(leagueId: number, weekId: number) {
+/** Removes a pick from an open parlay: the caller's own (the server refuses anyone else's). */
+export function useRemovePick(leagueId: number, weekId: number) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ parlayId, legId }: { parlayId: number; legId: number }) =>
-      apiRequest<{ parlay: ParlayWithLegs | null }>("DELETE", `/api/parlays/${parlayId}/legs/${legId}`),
+      apiRequest<{ parlay: MemberWeekParlay | null }>("DELETE", `/api/parlays/${parlayId}/legs/${legId}`),
     onSuccess: (data) => {
-      queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data.parlay ?? null);
-      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+      queryClient.setQueryData(myParlayKey(leagueId, weekId), data.parlay ?? null);
+      invalidateWeekPickQueries(queryClient, leagueId, weekId);
     },
+    onError: () => queryClient.invalidateQueries({ queryKey: myParlayKey(leagueId, weekId) }),
   });
 }
 
-/** Owner-facing self-cancel — only while the parlay is still draft/pending
- * (before admin approval). Distinct from an admin deleting any member's
- * parlay, which mobile doesn't expose. */
+/** Discards a whole open or pending parlay. Only whoever started it (while
+ * no one else has a pick in it) or the Parlay Maestro can. */
 export function useCancelParlay(leagueId: number, weekId: number) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (parlayId: number) => apiRequest<{ success: boolean }>("DELETE", `/api/parlays/${parlayId}/cancel`),
     onSuccess: () => {
-      queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], null);
-      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+      queryClient.invalidateQueries({ queryKey: myParlayKey(leagueId, weekId) });
+      invalidateWeekPickQueries(queryClient, leagueId, weekId);
     },
   });
 }
@@ -163,20 +180,17 @@ export function useSetParlayBoost(leagueId: number, weekId: number) {
   });
 }
 
-/** Finalizes a draft parlay — enforces minLegsPerParlay and flips it to
- * 'pending'. `boostPct` is the answer to the boost prompt (null = none). */
+/** Submits the open parlay once the league's minimum number of picks are
+ * in, flipping it to 'pending'. `boostPct` is the answer to the boost prompt
+ * (null = none). */
 export function useSubmitDraftParlay(leagueId: number, weekId: number) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ parlayId, boostPct }: { parlayId: number; boostPct?: number | null }) =>
       apiRequest<ParlayWithLegs>("POST", `/api/parlays/${parlayId}/submit`, boostPct !== undefined ? { boostPct } : undefined),
-    onSuccess: (data) => {
-      queryClient.setQueryData(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"], data);
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "parlays"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "lock"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leagues/active-week-status"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/parlays/my"] });
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: myParlayKey(leagueId, weekId) });
+      invalidateWeekPickQueries(queryClient, leagueId, weekId);
     },
   });
 }

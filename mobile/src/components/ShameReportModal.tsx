@@ -1,11 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { Modal, View, Text, Pressable, ScrollView, Share, Platform, StyleSheet } from "react-native";
+import {
+  Animated,
+  Easing,
+  Modal,
+  View,
+  Text,
+  Pressable,
+  ScrollView,
+  Share,
+  Platform,
+  StyleSheet,
+  useWindowDimensions,
+  type GestureResponderEvent,
+} from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/ui/Button";
-import { shameReportText, type ShameReport } from "@shared/shameReport";
+import { shamePendingLine, shameReportText, type ShameReport } from "@shared/shameReport";
 
-const SLIDE_MS = 4500;
+const SLIDE_MS = 10_000;
 const SLIDE_COUNT = 2;
 
 /**
@@ -26,10 +39,12 @@ async function captureSlide(view: View | null): Promise<string | null> {
 }
 
 /**
- * The weekly shame report as a two-slide "short": first who ruined the
- * parlay, then every losing bet. Moves on to the list by itself; tap a slide
- * to flip between them. Either slide can be shared as an image, or the whole
- * report as text. Mirrors web's ShameReportDialog.
+ * The weekly shame report as a two-slide story: first who ruined the parlay,
+ * then every losing bet. Each slide runs on a timer shown in the bar at the
+ * top. Tap to skip ahead (or the left edge to go back), press and hold to
+ * pause. When the last slide runs out the story closes; the card's Shame
+ * report chip brings it back. Either slide can be shared as an image, or the
+ * whole report as text. Mirrors web's ShameReportDialog.
  */
 export function ShameReportModal({
   report,
@@ -41,13 +56,67 @@ export function ShameReportModal({
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [slide, setSlide] = useState(0);
   const slideRef = useRef<View>(null);
   const [sharing, setSharing] = useState(false);
+  const [holding, setHolding] = useState(false);
+  const paused = holding || sharing;
 
-  // Shares the slide on screen as an image (the share sheet offers Save
-  // Image). Only iOS can share a file this way; elsewhere, and on a build
-  // without the capture module, it shares the text instead.
+  // How far through the current slide's timer we are, 0 to 1. `elapsed`
+  // mirrors it so a pause can pick up where it stopped.
+  const progress = useRef(new Animated.Value(0)).current;
+  const elapsed = useRef(0);
+  useEffect(() => {
+    const id = progress.addListener(({ value }) => { elapsed.current = value; });
+    return () => progress.removeListener(id);
+  }, [progress]);
+
+  function goTo(next: number) {
+    progress.setValue(0);
+    elapsed.current = 0;
+    setSlide(next);
+  }
+
+  useEffect(() => {
+    if (visible) {
+      goTo(0);
+      setHolding(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  useEffect(() => {
+    if (!visible || paused) return;
+    const timer = Animated.timing(progress, {
+      toValue: 1,
+      duration: (1 - elapsed.current) * SLIDE_MS,
+      easing: Easing.linear,
+      useNativeDriver: false,
+    });
+    timer.start(({ finished }) => {
+      if (!finished) return;
+      if (slide >= SLIDE_COUNT - 1) onClose();
+      else goTo(slide + 1);
+    });
+    return () => timer.stop();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, slide, paused]);
+
+  function onTap(e: GestureResponderEvent) {
+    if (e.nativeEvent.pageX < width * 0.3) {
+      goTo(Math.max(0, slide - 1));
+    } else if (slide >= SLIDE_COUNT - 1) {
+      onClose();
+    } else {
+      goTo(slide + 1);
+    }
+  }
+
+  // Shares the slide on screen as an image (the share sheet offers Messages
+  // and Save Image). Only iOS can share a file this way; elsewhere, and on a
+  // build without the capture module, it shares the text instead. The timer
+  // waits while the share sheet is up.
   async function shareSlide() {
     setSharing(true);
     try {
@@ -60,20 +129,36 @@ export function ShameReportModal({
     }
   }
 
-  useEffect(() => { if (visible) setSlide(0); }, [visible]);
-  // Auto-advances once, from the reveal to the list, then holds there.
-  useEffect(() => {
-    if (!visible || slide !== 0) return;
-    const timer = setTimeout(() => setSlide(1), SLIDE_MS);
-    return () => clearTimeout(timer);
-  }, [visible, slide]);
+  async function shareText() {
+    setSharing(true);
+    try {
+      await Share.share({ message: shameReportText(report) });
+    } catch {
+      // Dismissed.
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  const pendingLine = shamePendingLine(report.pendingCount);
 
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <View style={[styles.screen, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 16 }]}>
         <View style={styles.progressRow}>
           {Array.from({ length: SLIDE_COUNT }, (_, i) => (
-            <View key={i} style={[styles.progressTrack, i <= slide && styles.progressDone]} />
+            <View key={i} style={styles.progressTrack}>
+              {i < slide ? (
+                <View style={[styles.progressFill, { width: "100%" }]} />
+              ) : i === slide ? (
+                <Animated.View
+                  style={[
+                    styles.progressFill,
+                    { width: progress.interpolate({ inputRange: [0, 1], outputRange: ["0%", "100%"] }) },
+                  ]}
+                />
+              ) : null}
+            </View>
           ))}
         </View>
         <Pressable onPress={onClose} hitSlop={12} style={styles.close} accessibilityLabel="Close shame report">
@@ -82,9 +167,15 @@ export function ShameReportModal({
 
         <Pressable
           style={styles.slide}
-          onPress={() => setSlide((s) => (s + 1) % SLIDE_COUNT)}
+          onPress={onTap}
+          // A long press pauses instead of skipping: once onLongPress fires,
+          // Pressable doesn't call onPress on release.
+          onLongPress={() => setHolding(true)}
+          delayLongPress={180}
+          onPressOut={() => setHolding(false)}
           accessibilityRole="button"
           accessibilityLabel="Next slide"
+          accessibilityHint="Press and hold to pause"
           testID="button-shame-slide"
         >
           {/* Everything in this view is what a shared slide image shows.
@@ -112,6 +203,7 @@ export function ShameReportModal({
                     </View>
                   ))}
                 </ScrollView>
+                {pendingLine && <Text style={styles.pendingLine} testID="text-shame-pending">{pendingLine}</Text>}
               </View>
             )}
             <Text style={styles.brand}>PARLAY CONCH</Text>
@@ -125,7 +217,7 @@ export function ShameReportModal({
             </Button>
           </View>
           <Pressable
-            onPress={() => Share.share({ message: shameReportText(report) })}
+            onPress={shareText}
             style={({ pressed }) => [styles.textShare, pressed && { opacity: 0.7 }]}
             accessibilityRole="button"
             testID="button-shame-share-text"
@@ -141,8 +233,9 @@ export function ShameReportModal({
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#2a0a0d", paddingHorizontal: 20 },
   progressRow: { flexDirection: "row", gap: 6 },
-  progressTrack: { flex: 1, height: 3, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.2)" },
-  progressDone: { backgroundColor: "#ffffff" },
+  progressTrack: { flex: 1, height: 3, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.2)", overflow: "hidden" },
+  progressFill: { height: 3, borderRadius: 2, backgroundColor: "#ffffff" },
+  pendingLine: { paddingTop: 12, fontSize: 13, fontStyle: "italic", color: "rgba(255,255,255,0.6)", textAlign: "center" },
   close: { alignSelf: "flex-end", marginTop: 12 },
   capture: { flex: 1, backgroundColor: "#2a0a0d", borderRadius: 16, paddingHorizontal: 16, paddingVertical: 20 },
   brand: { fontSize: 10, fontWeight: "700", letterSpacing: 2, color: "rgba(255,255,255,0.35)", textAlign: "center" },

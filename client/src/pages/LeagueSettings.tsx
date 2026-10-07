@@ -421,7 +421,6 @@ export default function LeagueSettings() {
   const [minLegs, setMinLegs] = useState(3);
   const [maxLegs, setMaxLegs] = useState(5);
   const [maxParlays, setMaxParlays] = useState(1);
-  const [maxBetsPerGame, setMaxBetsPerGame] = useState(1);
   const [insightsEnabled, setInsightsEnabled] = useState(false);
   const [loserLabel, setLoserLabel] = useState<string>("parlay_loser");
   const [heroLabel, setHeroLabel] = useState<string>("parlay_hero");
@@ -437,7 +436,6 @@ export default function LeagueSettings() {
       setMinLegs(league.minLegsPerParlay || 3);
       setMaxLegs(league.maxLegsPerParlay || 5);
       setMaxParlays(league.maxParlaysPerWeek || 1);
-      setMaxBetsPerGame(league.maxBetsPerGame || 1);
       setInsightsEnabled(league.insightsEnabled ?? false);
       setLoserLabel(league.loserLabel ?? "parlay_loser");
       setHeroLabel(league.heroLabel ?? "parlay_hero");
@@ -481,7 +479,7 @@ export default function LeagueSettings() {
   });
 
   const handleSaveGeneral = () => {
-    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, maxBetsPerGame, insightsEnabled, loserLabel, heroLabel });
+    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled, loserLabel, heroLabel });
   };
 
   const handleSavePermissions = () => {
@@ -595,7 +593,7 @@ export default function LeagueSettings() {
               <CardDescription>Configure the rules for parlay submissions in this league</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="min-legs">Min Required Legs</Label>
                   <Input
@@ -610,7 +608,7 @@ export default function LeagueSettings() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="max-legs">Default Legs</Label>
+                  <Label htmlFor="max-legs">Max Legs</Label>
                   <Input
                     id="max-legs"
                     type="number"
@@ -634,21 +632,9 @@ export default function LeagueSettings() {
                     data-testid="input-max-parlays"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="max-bets-per-game">Max Bets/Game</Label>
-                  <Input
-                    id="max-bets-per-game"
-                    type="number"
-                    min={1}
-                    value={maxBetsPerGame}
-                    onChange={(e) => setMaxBetsPerGame(Number(e.target.value))}
-                    className="bg-background border-white/10"
-                    data-testid="input-max-bets-per-game"
-                  />
-                </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Members must include at least {minLegs} game picks per parlay. The default leg count is {maxLegs}, up to {maxParlays} parlay{maxParlays !== 1 ? "s" : ""} per week, with at most {maxBetsPerGame} bet{maxBetsPerGame !== 1 ? "s" : ""} per game.
+                Each member adds one pick to the league's parlay. It can be submitted once {minLegs} member{minLegs !== 1 ? "s have" : " has"} picked and holds up to {maxLegs} legs. The league can run {maxParlays} parlay{maxParlays !== 1 ? "s" : ""} per week, and a member can have one pick in each.
               </p>
               <div className="space-y-2 pt-2 border-t border-white/5">
                 <Label htmlFor="loser-label">Whoever busts a loss first each week is called…</Label>

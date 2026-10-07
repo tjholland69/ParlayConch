@@ -181,7 +181,10 @@ export default function Picks() {
         {leagues.map((league) => {
           const status = activeStatus?.[league.id];
           const hasOpenParlay = !!(status && status.submittedCount > 0 && !status.isLocked);
-          const hasUnsubmittedDraft = !!status?.currentUserHasUnsubmittedDraft && !status?.currentUserSubmitted && !status?.isLocked;
+          // The week's parlay is still taking picks (nobody has submitted it).
+          const parlayIsOpen = !!status?.hasOpenParlay && !status.isLocked;
+          const myPickIsIn = parlayIsOpen && !status!.currentUserNeedsPick;
+          const legsIn = `${status?.openParlayLegCount ?? 0} ${status?.openParlayLegCount === 1 ? "leg" : "legs"} in`;
           // Rule 1: open but not (fully) approved yet -> brewing, pulse yellow.
           // Rule 2: open and approved -> green, settled in.
           // Rule 3: no parlay this week -> leave base styling untouched.
@@ -197,7 +200,7 @@ export default function Picks() {
             .filter(m => missingIds.has(m.userId))
             .map(m => getDisplayName(m.user, "Member"))
             .sort((a, b) => a.localeCompare(b));
-          const showDraftAlert = hasUnsubmittedDraft && !isBrewing && !isApproved;
+          const showDraftAlert = parlayIsOpen;
 
           return (
             <Link key={league.id} href={`/leagues/${league.id}`}>
@@ -289,14 +292,19 @@ export default function Picks() {
                   {showDraftAlert && (
                     <div
                       className="flex items-center justify-between gap-3 rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2"
-                      data-testid={`alert-unsubmitted-picks-${league.id}`}
+                      data-testid={`alert-parlay-open-${league.id}`}
                     >
-                      <span className="flex items-center gap-1.5 min-w-0 text-xs font-medium text-orange-400">
-                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
-                        <span className="truncate">Unsubmitted picks</span>
+                      <span className="min-w-0 text-xs">
+                        <span className="flex items-center gap-1.5 font-medium text-orange-400">
+                          <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
+                          <span className="truncate">Parlay is Open!</span>
+                        </span>
+                        <span className="block truncate pl-3 text-orange-300/90">
+                          {myPickIsIn ? `Your pick is in · ${legsIn}` : `Make your pick · ${legsIn}`}
+                        </span>
                       </span>
                       <span className="flex items-center shrink-0 whitespace-nowrap text-xs font-semibold text-orange-300">
-                        Finish Picks
+                        {myPickIsIn ? "View" : "Pick"}
                         <ArrowRight className="w-3 h-3 ml-1" />
                       </span>
                     </div>
