@@ -9,23 +9,23 @@ import {
 } from "react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { apiRequest } from "@/lib/api";
-import { useWeekLockStatus } from "@/hooks/use-leagues";
+import { useLeagues, useWeekLockStatus } from "@/hooks/use-leagues";
 import { useActiveWeek, useGames } from "@/hooks/use-weeks";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import {
-  useCreateParlay,
   useMyParlay,
-  useAddDraftLeg,
-  useRemoveDraftLeg,
+  useSetPick,
+  useRemovePick,
   useSubmitDraftParlay,
   useCancelParlay,
-  useTakenPicks,
+  type PickInput,
 } from "@/hooks/use-parlays";
 import { GamePickCard } from "@/components/GamePickCard";
 import { AddPlayerPropModal } from "@/components/AddPlayerPropModal";
+import { legOwnerName } from "@/components/LegLookthrough";
 import {
   getLineForBet,
   shortLegLabel,
@@ -34,7 +34,8 @@ import {
   type SelectedLeg,
   isGamePast,
 } from "@/lib/pickHelpers";
-import type { Game, GameWithBet, ParlayWithLegs } from "@shared/schema";
+import type { Game, GameWithBet, MemberWeekParlay } from "@shared/schema";
+import { pickStanding } from "@shared/weekParlays";
 import { BoostSheet } from "@/components/BoostSheet";
 
 /** Moneyline + Spread on the same game are highly correlated (the spread
@@ -52,6 +53,24 @@ function confirmCorrelatedBet(conflictWithName: string, newBetType: string, onCo
   );
 }
 
+type ParlayLegRow = MemberWeekParlay["legs"][number];
+
+const toSelectedLeg = (l: ParlayLegRow): SelectedLeg => ({
+  gameId: l.gameId as number,
+  betType: l.betType,
+  pick: l.pick,
+  line: l.line ?? undefined,
+  playerName: l.playerName ?? undefined,
+  propType: l.propType ?? undefined,
+});
+
+/**
+ * Where a member makes their pick for the week. The league shares one parlay:
+ * each member adds a single pick to it, and everyone sees the same legs. A
+ * tap saves straight away; tapping something else moves the pick there.
+ * Whoever started the parlay, or the Parlay Maestro, submits it once the
+ * league's minimum number of picks are in. Rules: shared/weekParlays.ts.
+ */
 export default function BuildPickScreen() {
   const { id, weekId: previewWeekIdParam, readOnly: readOnlyParam } = useLocalSearchParams<{
     id: string;
@@ -62,66 +81,40 @@ export default function BuildPickScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const activeWeek = useActiveWeek();
+  const effectiveUserId = useEffectiveUserId();
+  const queryClient = useQueryClient();
   // A read-only preview passes an explicit weekId (next week's, not yet open
   // for picks) instead of relying on the active week.
   const readOnly = readOnlyParam === "1";
   const weekId = readOnly && previewWeekIdParam ? Number(previewWeekIdParam) : activeWeek?.id ?? 0;
 
-  const { data: league, isLoading: leagueLoading } = useQuery({
-    queryKey: ["/api/leagues", leagueId],
-    queryFn: () => apiRequest<{ name?: string; minLegsPerParlay?: number | null; maxLegsPerParlay?: number | null }>(
-      "GET",
-      `/api/leagues/${leagueId}`,
-    ),
-    enabled: !!leagueId,
-  });
-
+  const { data: leagues, isLoading: leagueLoading } = useLeagues();
+  const league = leagues?.find((l) => l.id === leagueId);
   const { data: lockStatus, isLoading: lockLoading } = useWeekLockStatus(leagueId, readOnly ? 0 : weekId);
-  const { data: myParlay, isLoading: myParlayLoading } = useMyParlay(leagueId, readOnly ? 0 : weekId);
+  const { data: weekParlay, isLoading: myParlayLoading } = useMyParlay(leagueId, readOnly ? 0 : weekId, { live: true });
   const { data: games, isLoading: gamesLoading } = useGames(weekId);
-  const { data: takenPicks } = useTakenPicks(leagueId, readOnly ? 0 : weekId);
-  const takenByGame = useMemo(() => takenMarketsByGame(takenPicks), [takenPicks]);
-  const createParlay = useCreateParlay(leagueId);
-  const addDraftLeg = useAddDraftLeg(leagueId, weekId);
-  const removeDraftLeg = useRemoveDraftLeg(leagueId, weekId);
+  const setPick = useSetPick(leagueId, weekId);
+  const removePick = useRemovePick(leagueId, weekId);
   const submitDraftParlay = useSubmitDraftParlay(leagueId, weekId);
   const cancelParlay = useCancelParlay(leagueId, weekId);
   const [propGame, setPropGame] = useState<Game | null>(null);
   const [boostPromptOpen, setBoostPromptOpen] = useState(false);
-  const queryClient = useQueryClient();
+  const [slipExpanded, setSlipExpanded] = useState(false);
+  // In a league that runs more than one parlay a week: the member chose to
+  // start another instead of looking at the one already submitted.
+  const [startingNew, setStartingNew] = useState(false);
 
   const minLegs = league?.minLegsPerParlay ?? 3;
   const maxLegs = league?.maxLegsPerParlay ?? 5;
 
-  // A parlay that's already been submitted (anything other than 'draft') is
-  // edited the old way — batch-select then one "Update pick" call — so an
-  // in-progress review/approval isn't churned leg-by-leg. A fresh pick (no
-  // parlay yet, or one still in 'draft') uses the new queue flow: tap once,
-  // it's added and persisted immediately, building up the parlay one leg at
-  // a time — this is what actually queues into the "Your Parlays" rollup tile.
-  const isEditingSubmitted = !!myParlay && myParlay.status !== "draft";
-
-  const [selectedLegs, setSelectedLegs] = useState<SelectedLeg[]>([]);
-  const [slipExpanded, setSlipExpanded] = useState(false);
-  const [prefilled, setPrefilled] = useState(false);
-
-  useEffect(() => {
-    if (!isEditingSubmitted || prefilled || !myParlay?.legs?.length) return;
-    const legs: SelectedLeg[] = myParlay.legs
-      .filter((l) => l.gameId != null)
-      .map((l) => ({
-        gameId: l.gameId as number,
-        betType: l.betType,
-        pick: l.pick,
-        line: l.line ?? undefined,
-        playerName: l.playerName ?? undefined,
-        propType: l.propType ?? undefined,
-      }));
-    if (legs.length) {
-      setSelectedLegs(legs);
-      setPrefilled(true);
-    }
-  }, [isEditingSubmitted, myParlay, prefilled]);
+  // While starting a new parlay there's nothing on the server yet, so the
+  // screen shows an empty one until the first pick creates it.
+  const parlay = startingNew ? null : weekParlay ?? null;
+  const standing = pickStanding(parlay, effectiveUserId, minLegs, maxLegs);
+  // Picks can change while the parlay is open, or before anyone has started one.
+  const canPick = !readOnly && !lockStatus?.isLocked && (!parlay || standing.open);
+  const savedLeg = standing.myLeg as ParlayLegRow | undefined;
+  const takenByGame = useMemo(() => takenMarketsByGame(parlay?.taken), [parlay?.taken]);
 
   useEffect(() => {
     if (!readOnly && !lockLoading && lockStatus?.isLocked) {
@@ -135,292 +128,137 @@ export default function BuildPickScreen() {
     return map;
   }, [games]);
 
-  // Draft-mode legs, straight from the server (source of truth — each tap
-  // persists immediately, so there's no local mirror to keep in sync).
-  const draftLegs: SelectedLeg[] = useMemo(
-    () =>
-      (myParlay?.legs ?? [])
-        .filter((l) => l.gameId != null)
-        .map((l) => ({
-          gameId: l.gameId as number,
-          betType: l.betType,
-          pick: l.pick,
-          line: l.line ?? undefined,
-          playerName: l.playerName ?? undefined,
-          propType: l.propType ?? undefined,
-        })),
-    [myParlay?.legs],
-  );
+  // A tap shows on screen straight away and saves in the background.
+  // `pending` is the pick the member just chose (null = cleared) until the
+  // server has caught up. Only the latest choice is ever sent: `wanted`
+  // holds it, and one save runs at a time, so tapping quickly (stepping a
+  // line five times, say) sends the last value once the save before it has
+  // finished instead of five requests racing each other.
+  const [pending, setPending] = useState<{ leg: SelectedLeg | null } | null>(null);
+  const wanted = useRef<{ pick: PickInput | null } | null>(null);
+  const saving = useRef(false);
 
-  // Draft taps show on screen straight away and save in the background:
-  // `pendingPicks` holds, per game, the grid pick the user just chose (null
-  // = cleared) until the server has caught up, and `draftQueue` runs those
-  // saves one at a time, in tap order, so a second tap never has to wait
-  // for (or get dropped behind) the first.
-  const [pendingPicks, setPendingPicks] = useState<Map<number, { leg: SelectedLeg | null; token: number }>>(new Map());
-  const draftQueue = useRef<Promise<unknown>>(Promise.resolve());
-  const pendingToken = useRef(0);
-
-  /** Runs `work` after every save already queued, whether those succeed or fail. */
-  function runQueued<T>(work: () => Promise<T>): Promise<T> {
-    const run = draftQueue.current.then(work, work);
-    draftQueue.current = run.catch(() => undefined);
-    return run;
+  async function flushPick() {
+    if (saving.current) return;
+    saving.current = true;
+    try {
+      while (wanted.current) {
+        const next = wanted.current;
+        wanted.current = null;
+        try {
+          if (next.pick) {
+            await setPick.mutateAsync(next.pick);
+            setStartingNew(false);
+          } else {
+            // Read fresh: an earlier save may have changed which leg is mine.
+            const current = queryClient.getQueryData<MemberWeekParlay | null>(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"]);
+            const mine = current?.legs.find((l) => l.userId === effectiveUserId);
+            if (current && mine) await removePick.mutateAsync({ parlayId: current.id, legId: mine.id });
+          }
+        } catch (err) {
+          // A newer tap is already waiting to be sent; only the last one's
+          // failure is worth interrupting for.
+          if (!wanted.current) {
+            Alert.alert(next.pick ? "Couldn't save your pick" : "Couldn't remove your pick", err instanceof Error ? err.message : "Please try again.");
+          }
+        }
+      }
+    } finally {
+      saving.current = false;
+      // Hand the screen back to the server's copy.
+      setPending(null);
+    }
   }
 
-  /** Shows `leg` as this game's grid pick now, then saves it via `work`. */
-  function saveGridPick(gameId: number, leg: SelectedLeg | null, failTitle: string, work: () => Promise<void>) {
-    const token = ++pendingToken.current;
-    setPendingPicks((prev) => new Map(prev).set(gameId, { leg, token }));
-    void runQueued(work)
-      .catch((err) => Alert.alert(failTitle, err instanceof Error ? err.message : "Please try again."))
-      .finally(() =>
-        // Hand the game back to the server's copy — unless a newer tap on
-        // it is still waiting its turn.
-        setPendingPicks((prev) => {
-          if (prev.get(gameId)?.token !== token) return prev;
-          const next = new Map(prev);
-          next.delete(gameId);
-          return next;
-        }),
-      );
+  function savePick(leg: SelectedLeg | null) {
+    setPending({ leg });
+    wanted.current = {
+      pick: leg
+        ? {
+            gameId: leg.gameId,
+            betType: leg.betType,
+            pick: leg.pick,
+            line: leg.line,
+            playerName: leg.playerName ?? undefined,
+            propType: leg.propType ?? undefined,
+            ...(startingNew ? { startNew: true } : {}),
+          }
+        : null,
+    };
+    void flushPick();
   }
 
-  /** This game's saved grid pick (spread/ML/total), read fresh from the
-   * cache — a queued save runs after earlier ones have changed the draft. */
-  function savedGridLeg(gameId: number) {
-    const parlay = queryClient.getQueryData<ParlayWithLegs | null>(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"]);
-    return parlay?.legs?.find((l) => l.gameId === gameId && l.betType !== "player_prop");
+  // The member's pick as shown: the one being saved, else the saved one.
+  const myPick: SelectedLeg | null = pending ? pending.leg : savedLeg ? toSelectedLeg(savedLeg) : null;
+
+  /** Saves `leg`, first confirming when it would move the pick off another game. */
+  function choosePick(leg: SelectedLeg) {
+    if (!myPick && standing.full) {
+      Alert.alert("Parlay full", `This parlay already has its ${maxLegs} legs.`);
+      return;
+    }
+    const replacingElsewhere = myPick && (myPick.gameId !== leg.gameId || myPick.betType === "player_prop" || leg.betType === "player_prop");
+    if (!replacingElsewhere) {
+      savePick(leg);
+      return;
+    }
+    Alert.alert(
+      "Change your pick?",
+      `You get one pick in this parlay. Swap ${shortLegLabel(myPick, gamesById.get(myPick.gameId))} for ${shortLegLabel(leg, gamesById.get(leg.gameId))}?`,
+      [
+        { text: "Keep my pick", style: "cancel" },
+        { text: "Swap", onPress: () => savePick(leg) },
+      ],
+    );
   }
 
-  const draftLegsShown: SelectedLeg[] = useMemo(() => {
-    if (pendingPicks.size === 0) return draftLegs;
-    const kept = draftLegs.filter((l) => l.betType === "player_prop" || !pendingPicks.has(l.gameId));
-    const chosen = [...pendingPicks.values()].flatMap((p) => (p.leg ? [p.leg] : []));
-    return [...kept, ...chosen];
-  }, [draftLegs, pendingPicks]);
+  function onSelectMarket(game: Game, betType: string, pick: string) {
+    if (!canPick) return;
+    const leg: SelectedLeg = { gameId: game.id, betType, pick, line: getLineForBet(game, betType, pick) };
+    const conflictWith = correlatedMarketWarning(parlay?.taken, game.id, betType);
+    if (conflictWith) {
+      confirmCorrelatedBet(conflictWith, betType, () => choosePick(leg));
+      return;
+    }
+    choosePick(leg);
+  }
 
-  const activeLegs = isEditingSubmitted ? selectedLegs : draftLegsShown;
-  const legMutationPending = addDraftLeg.isPending || removeDraftLeg.isPending;
+  // Alternate line: re-prices the pick at a new points-moved value without
+  // changing what was picked.
+  function adjustPoints(game: Game, pointsMoved: number) {
+    if (!canPick || !myPick || myPick.gameId !== game.id || myPick.betType === "player_prop") return;
+    savePick({ ...myPick, line: getLineForBet(game, myPick.betType, myPick.pick, pointsMoved) });
+  }
 
   // Only games still open to pick, plus any already-started/finished game
-  // the user has an existing leg on (so they can still see what they picked).
+  // that has a leg in the parlay (so everyone can still see what was picked).
   const visibleGames = useMemo(
     () =>
       (games ?? []).filter((g) => {
         const started = !!g.isFinished || (g.gameTime ? new Date(g.gameTime) < new Date() : false);
-        return !started || activeLegs.some((l) => l.gameId === g.id);
+        return !started || myPick?.gameId === g.id || (parlay?.legs ?? []).some((l) => l.gameId === g.id);
       }),
-    [games, activeLegs],
+    [games, myPick, parlay?.legs],
   );
 
+  // Who can submit: whoever started the parlay, the Parlay Maestro and
+  // lieutenants. The server has the final say (lieutenants need the
+  // approve-parlays permission).
+  const isStarter = !!parlay && parlay.userId === effectiveUserId;
+  const canSubmitRole = isStarter || !!league?.isAdmin || !!league?.isLieutenant;
   // A pick whose game kicked off before the parlay was submitted blocks the
   // submit until it's removed (the server enforces the same rule).
-  const startedGame = isEditingSubmitted
-    ? undefined
-    : draftLegs.map((l) => gamesById.get(l.gameId)).find((g) => !!g && isGamePast(g));
-
-  const canSubmit = isEditingSubmitted
-    ? selectedLegs.length >= minLegs && selectedLegs.length <= maxLegs && !lockStatus?.isLocked
-    : pendingPicks.size === 0 && draftLegs.length >= minLegs && draftLegs.length <= maxLegs && !lockStatus?.isLocked && !startedGame;
-
-  function toggleLegSubmitted(game: Game, betType: string, pick: string) {
-    const line = getLineForBet(game, betType, pick);
-    const applyChange = () => {
-      setSelectedLegs((prev) => {
-        // Exclude player_prop legs from this game-slot lookup — a prop leg
-        // added for this game (via the separate Add Player Prop flow) lives
-        // outside the 2x3 grid and must never be overwritten by a grid tap.
-        const existing = prev.findIndex((l) => l.gameId === game.id && l.betType !== "player_prop");
-        if (existing >= 0) {
-          if (prev[existing].pick === pick && prev[existing].betType === betType) {
-            return prev.filter((_, i) => i !== existing);
-          }
-          return prev.map((l, i) =>
-            i === existing ? { gameId: game.id, betType, pick, line } : l,
-          );
-        }
-        if (prev.length >= maxLegs) {
-          Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
-          return prev;
-        }
-        return [...prev, { gameId: game.id, betType, pick, line }];
-      });
-    };
-
-    const existingLeg = selectedLegs.find((l) => l.gameId === game.id && l.betType !== "player_prop");
-    const isDeselect = existingLeg?.pick === pick && existingLeg?.betType === betType;
-    const conflictWith = !isDeselect ? correlatedMarketWarning(takenPicks, game.id, betType) : null;
-    if (conflictWith) {
-      confirmCorrelatedBet(conflictWith, betType, applyChange);
-      return;
-    }
-    applyChange();
-  }
-
-  function toggleLegDraft(game: Game, betType: string, pick: string) {
-    const line = getLineForBet(game, betType, pick);
-    // Props live outside the 2x3 grid and are never touched by a grid tap.
-    const shown = draftLegsShown.find((l) => l.gameId === game.id && l.betType !== "player_prop");
-    const isDeselect = shown?.pick === pick && shown?.betType === betType;
-
-    if (!shown && draftLegsShown.length >= maxLegs) {
-      Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
-      return;
-    }
-
-    const performToggle = () =>
-      saveGridPick(game.id, isDeselect ? null : { gameId: game.id, betType, pick, line }, "Couldn't update pick", async () => {
-        const existingLeg = savedGridLeg(game.id);
-        if (existingLeg) {
-          await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
-        }
-        // Same pick tapped again → it was a deselect, nothing to add back.
-        if (isDeselect) return;
-        try {
-          await addDraftLeg.mutateAsync({ gameId: game.id, betType, pick, line });
-        } catch (addErr) {
-          // A swap whose remove succeeded but whose new pick failed to add —
-          // restore the original pick rather than silently leaving the draft
-          // one leg short of what the user had before tapping.
-          if (existingLeg) {
-            try {
-              await addDraftLeg.mutateAsync({
-                gameId: game.id,
-                betType: existingLeg.betType,
-                pick: existingLeg.pick,
-                line: existingLeg.line ?? undefined,
-              });
-            } catch {
-              // Restore also failed — the original error is surfaced; the
-              // draft is left missing this leg, but the user sees why.
-            }
-          }
-          throw addErr;
-        }
-      });
-
-    if (!isDeselect) {
-      const conflictWith = correlatedMarketWarning(takenPicks, game.id, betType);
-      if (conflictWith) {
-        confirmCorrelatedBet(conflictWith, betType, performToggle);
-        return;
-      }
-    }
-    performToggle();
-  }
-
-  function clearGameSubmitted(gameId: number) {
-    // Same exclusion as toggleLegSubmitted — clearing this game's grid pick
-    // must never also remove a separately-added player_prop leg on it.
-    setSelectedLegs((prev) => prev.filter((l) => !(l.gameId === gameId && l.betType !== "player_prop")));
-  }
-
-  // Appends a player-prop leg while editing an already-submitted parlay —
-  // everything here is local state until the batch "Update pick" submit,
-  // same as every other submitted-edit mutation in this file.
-  function addPropSubmitted(leg: SelectedLeg) {
-    if (selectedLegs.length >= maxLegs) {
-      Alert.alert("Parlay full", `Remove a leg before adding another (max ${maxLegs}).`);
-      return;
-    }
-    setSelectedLegs((prev) => [...prev, leg]);
-  }
-
-  function clearGameDraft(gameId: number) {
-    // Same exclusion as clearGameSubmitted — the grid's Clear button must
-    // never remove a separately-added player_prop leg on this game.
-    if (!draftLegsShown.some((l) => l.gameId === gameId && l.betType !== "player_prop")) return;
-    saveGridPick(gameId, null, "Couldn't remove leg", async () => {
-      const existingLeg = savedGridLeg(gameId);
-      if (existingLeg) await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
-    });
-  }
-
-  // A game can carry both a grid pick (spread/ML/total) and one or more
-  // player_prop legs at once, so the slip list's per-row remove button needs
-  // to identify the exact leg it's showing — gameId alone (what the grid's
-  // own Clear button uses) isn't enough once props are in the mix.
-  async function removeSlipLeg(leg: SelectedLeg) {
-    if (leg.betType !== "player_prop") {
-      return isEditingSubmitted ? clearGameSubmitted(leg.gameId) : clearGameDraft(leg.gameId);
-    }
-    if (isEditingSubmitted) {
-      setSelectedLegs((prev) =>
-        prev.filter(
-          (l) =>
-            !(l.gameId === leg.gameId && l.betType === "player_prop" && l.playerName === leg.playerName && l.propType === leg.propType),
-        ),
-      );
-      return;
-    }
-    const existingLeg = (myParlay?.legs ?? []).find(
-      (l) => l.gameId === leg.gameId && l.betType === "player_prop" && l.playerName === leg.playerName && l.propType === leg.propType,
-    );
-    if (!existingLeg || legMutationPending) return;
-    try {
-      await runQueued(() => removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id }));
-    } catch (err) {
-      Alert.alert("Couldn't remove leg", err instanceof Error ? err.message : "Please try again.");
-    }
-  }
-
-  // "Buy points" — re-prices the already-selected leg on this game at a new
-  // points-moved value, without changing betType/pick. Same betType+pick
-  // means the toggle's "tap same pick again → deselect" rule never applies here.
-  function adjustPointsSubmitted(game: Game, pointsMoved: number) {
-    setSelectedLegs((prev) => {
-      const idx = prev.findIndex((l) => l.gameId === game.id && l.betType !== "player_prop");
-      if (idx < 0) return prev;
-      const existing = prev[idx];
-      const line = getLineForBet(game, existing.betType, existing.pick, pointsMoved);
-      return prev.map((l, i) => (i === idx ? { ...l, line } : l));
-    });
-  }
-
-  function adjustPointsDraft(game: Game, pointsMoved: number) {
-    const shown = draftLegsShown.find((l) => l.gameId === game.id && l.betType !== "player_prop");
-    if (!shown) return;
-    const line = getLineForBet(game, shown.betType, shown.pick, pointsMoved);
-    saveGridPick(game.id, { ...shown, line }, "Couldn't update points", async () => {
-      const existingLeg = savedGridLeg(game.id);
-      if (!existingLeg) return;
-      await removeDraftLeg.mutateAsync({ parlayId: existingLeg.parlayId, legId: existingLeg.id });
-      await addDraftLeg.mutateAsync({ gameId: game.id, betType: existingLeg.betType, pick: existingLeg.pick, line });
-    });
-  }
-
-  function submit() {
-    if (!weekId || !canSubmit) return;
-
-    if (isEditingSubmitted) {
-      createParlay.mutate(
-        { weekId, legs: selectedLegs },
-        {
-          onSuccess: () => {
-            Alert.alert("Pick updated", "Your parlay is pending review.", [
-              { text: "OK", onPress: () => router.back() },
-            ]);
-          },
-          onError: (err: Error) => {
-            Alert.alert("Couldn't submit", err.message || "Please try again.");
-          },
-        },
-      );
-      return;
-    }
-
-    // A fresh pick first asks whether the sportsbook boosted this parlay.
-    if (!myParlay) return;
-    setBoostPromptOpen(true);
-  }
+  const startedGame = standing.open
+    ? (parlay?.legs ?? []).map((l) => (l.gameId != null ? gamesById.get(l.gameId) : undefined)).find((g) => !!g && isGamePast(g))
+    : undefined;
+  const canSubmit = canSubmitRole && standing.readyToSubmit && !pending && !lockStatus?.isLocked && !startedGame;
 
   function submitWithBoost(boostPct: number | null) {
-    if (!myParlay) return;
-    submitDraftParlay.mutate({ parlayId: myParlay.id, boostPct }, {
+    if (!parlay) return;
+    submitDraftParlay.mutate({ parlayId: parlay.id, boostPct }, {
       onSuccess: () => {
         setBoostPromptOpen(false);
-        Alert.alert("Pick submitted", "Your parlay is pending review.", [
+        Alert.alert("Parlay submitted", "It's now pending review.", [
           { text: "OK", onPress: () => router.back() },
         ]);
       },
@@ -430,40 +268,52 @@ export default function BuildPickScreen() {
     });
   }
 
-  // Owner can cancel their own parlay only before an admin has approved it —
-  // matches the server's cancelOwnParlay check (draft/pending only).
-  const canCancel = !!myParlay && (myParlay.status === "draft" || myParlay.status === "pending");
+  // Discarding takes every member's pick with it: the starter can while
+  // they're the only one in it, the Parlay Maestro any time before approval.
+  const othersIn = (parlay?.legs ?? []).some((l) => l.userId !== effectiveUserId);
+  const canDiscard =
+    !!parlay && (parlay.status === "draft" || parlay.status === "pending") && (!!league?.isAdmin || (isStarter && !othersIn));
 
-  function cancelParlayAction() {
-    if (!myParlay) return;
-    Alert.alert("Cancel this parlay?", "This can't be undone.", [
-      { text: "Keep it", style: "cancel" },
-      {
-        text: "Discard",
-        style: "destructive",
-        onPress: () => {
-          cancelParlay.mutate(myParlay.id, {
-            onSuccess: () => router.back(),
-            onError: (err: Error) => {
-              Alert.alert("Couldn't cancel", err.message || "Please try again.");
-            },
-          });
+  function discardParlay() {
+    if (!parlay) return;
+    Alert.alert(
+      "Discard this parlay?",
+      othersIn ? "Every member's pick in it will be removed. This can't be undone." : "This can't be undone.",
+      [
+        { text: "Keep it", style: "cancel" },
+        {
+          text: "Discard",
+          style: "destructive",
+          onPress: () => {
+            cancelParlay.mutate(parlay.id, {
+              onSuccess: () => router.back(),
+              onError: (err: Error) => {
+                Alert.alert("Couldn't discard", err.message || "Please try again.");
+              },
+            });
+          },
         },
-      },
-    ]);
+      ],
+    );
   }
 
-  const slipSummary = activeLegs
-    .map((leg) => shortLegLabel(leg, gamesById.get(leg.gameId)))
-    .join(" · ");
+  // Everyone's legs, the member's own first. While a save is in flight the
+  // member's row shows what they just chose.
+  const slipRows = useMemo(() => {
+    const others = (parlay?.legs ?? [])
+      .filter((l) => l.userId !== effectiveUserId)
+      .map((l) => ({ key: `leg-${l.id}`, owner: legOwnerName(l.user), leg: toSelectedLeg(l), mine: false }));
+    return [...(myPick ? [{ key: "mine", owner: "You", leg: myPick, mine: true }] : []), ...others];
+  }, [parlay?.legs, effectiveUserId, myPick]);
+  const legCount = slipRows.length;
+  const needed = Math.max(0, minLegs - legCount);
 
-  const submitPending = isEditingSubmitted ? createParlay.isPending : submitDraftParlay.isPending;
   const loading = leagueLoading || (!readOnly && (lockLoading || myParlayLoading)) || (weekId > 0 && gamesLoading);
 
   if (loading) {
     return (
       <View style={styles.centered}>
-        <Stack.Screen options={{ title: "Build Pick" }} />
+        <Stack.Screen options={{ title: "Make Your Pick" }} />
         <ActivityIndicator color="#2563eb" size="large" />
       </View>
     );
@@ -472,18 +322,20 @@ export default function BuildPickScreen() {
   if (!readOnly && !activeWeek) {
     return (
       <View style={styles.centered}>
-        <Stack.Screen options={{ title: "Build Pick" }} />
+        <Stack.Screen options={{ title: "Make Your Pick" }} />
         <Text style={styles.emptyTitle}>No active week</Text>
         <Text style={styles.emptySubtitle}>Check back when the next week opens.</Text>
       </View>
     );
   }
 
+  const submitted = !!parlay && !standing.open;
+
   return (
     <View style={styles.container}>
       <Stack.Screen
         options={{
-          title: readOnly ? "Next Week Preview" : isEditingSubmitted ? "Edit Pick" : "Build Pick",
+          title: readOnly ? "Next Week Preview" : submitted ? "This Week's Parlay" : "Make Your Pick",
           headerBackTitle: "Back",
         }}
       />
@@ -496,16 +348,19 @@ export default function BuildPickScreen() {
           </Text>
         </View>
       ) : (
-        <View style={styles.headerBar}>
+        <View style={styles.headerBar} testID="header-parlay-status">
           <Text style={styles.headerCount}>
-            {activeLegs.length} / {maxLegs} legs
+            {submitted ? "Parlay submitted" : parlay ? "Parlay is Open!" : "No parlay yet"}
+            {parlay || legCount > 0 ? ` · ${legCount} / ${maxLegs} legs` : ""}
           </Text>
           <Text style={styles.headerHint}>
-            {activeLegs.length < minLegs
-              ? `${minLegs - activeLegs.length} more needed`
-              : activeLegs.length >= maxLegs
-                ? "Max reached"
-                : `${maxLegs - activeLegs.length} picks left`}
+            {submitted
+              ? "Picks are closed"
+              : !parlay && legCount === 0
+                ? "Your pick starts it"
+                : needed > 0
+                  ? `${needed} more needed`
+                  : "Ready to submit"}
           </Text>
         </View>
       )}
@@ -521,24 +376,19 @@ export default function BuildPickScreen() {
           </View>
         }
         renderItem={({ item }: { item: GameWithBet }) => {
-          // The grid's own selection strip only ever reflects a spread/ML/
-          // total pick — a player_prop leg on this game is shown separately
-          // (via the Add Player Prop footer), never in the 2x3 grid.
-          const selected = activeLegs.find((l) => l.gameId === item.id && l.betType !== "player_prop");
+          // The grid only ever shows a spread/ML/total pick; a player prop
+          // on this game shows in the slip below instead.
+          const selected = myPick && myPick.gameId === item.id && myPick.betType !== "player_prop" ? myPick : undefined;
           return (
             <GamePickCard
               game={item}
               selectedLeg={selected}
-              readOnly={readOnly}
+              readOnly={!canPick}
               takenBy={takenByGame.get(item.id)}
-              onSelect={({ betType, pick }) =>
-                isEditingSubmitted ? toggleLegSubmitted(item, betType, pick) : toggleLegDraft(item, betType, pick)
-              }
-              onClear={() => (isEditingSubmitted ? clearGameSubmitted(item.id) : clearGameDraft(item.id))}
-              onAdjustPoints={(pointsMoved) =>
-                isEditingSubmitted ? adjustPointsSubmitted(item, pointsMoved) : adjustPointsDraft(item, pointsMoved)
-              }
-              onAddProp={!readOnly ? () => setPropGame(item) : undefined}
+              onSelect={({ betType, pick }) => onSelectMarket(item, betType, pick)}
+              onClear={() => canPick && savePick(null)}
+              onAdjustPoints={(pointsMoved) => adjustPoints(item, pointsMoved)}
+              onAddProp={canPick ? () => setPropGame(item) : undefined}
             />
           );
         }}
@@ -549,14 +399,19 @@ export default function BuildPickScreen() {
           onPress={() => setSlipExpanded((v) => !v)}
           style={styles.slipHeader}
           accessibilityRole="button"
+          accessibilityState={{ expanded: slipExpanded }}
+          testID="button-toggle-slip"
         >
           <View style={{ flex: 1 }}>
             <Text style={styles.slipCount}>
-              {activeLegs.length} / {maxLegs} legs · min {minLegs}
-              {activeLegs.length < maxLegs ? ` · ${maxLegs - activeLegs.length} picks left` : ""}
+              {legCount} / {maxLegs} legs · min {minLegs}
             </Text>
-            <Text style={styles.slipSummary} numberOfLines={slipExpanded ? undefined : 1}>
-              {activeLegs.length === 0 ? "Tap markets to build your parlay" : slipSummary}
+            <Text style={styles.slipSummary} numberOfLines={slipExpanded ? undefined : 1} testID="text-my-pick">
+              {myPick
+                ? `Your pick: ${shortLegLabel(myPick, gamesById.get(myPick.gameId))}`
+                : canPick
+                  ? "Tap a market to make your pick"
+                  : "You don't have a pick in this parlay"}
             </Text>
           </View>
           <Ionicons
@@ -566,67 +421,80 @@ export default function BuildPickScreen() {
           />
         </Pressable>
 
-        {slipExpanded && activeLegs.length > 0 && (
+        {slipExpanded && slipRows.length > 0 && (
           <View style={styles.slipList}>
-            {activeLegs.map((leg, i) => (
-              <View key={`${leg.gameId}-${leg.betType}-${leg.playerName ?? ""}-${leg.propType ?? ""}-${i}`} style={styles.slipRow}>
+            {slipRows.map((row) => (
+              <View key={row.key} style={styles.slipRow}>
                 <Text style={styles.slipRowText} numberOfLines={1}>
-                  {shortLegLabel(leg, gamesById.get(leg.gameId))}
+                  <Text style={styles.slipRowOwner}>{row.owner}: </Text>
+                  {shortLegLabel(row.leg, gamesById.get(row.leg.gameId))}
                 </Text>
-                {/* Grid picks save in the background; only a prop's remove
-                    has to wait for the save ahead of it. */}
-                <Pressable
-                  onPress={() => removeSlipLeg(leg)}
-                  hitSlop={8}
-                  disabled={leg.betType === "player_prop" && legMutationPending}
-                >
-                  {leg.betType === "player_prop" && legMutationPending && !isEditingSubmitted ? (
-                    <ActivityIndicator color="#64748b" size="small" />
-                  ) : (
+                {row.mine && canPick && (
+                  <Pressable onPress={() => savePick(null)} hitSlop={8} accessibilityLabel="Remove your pick">
                     <Ionicons name="close-circle" size={20} color="#64748b" />
-                  )}
-                </Pressable>
+                  </Pressable>
+                )}
               </View>
             ))}
           </View>
         )}
 
-        {startedGame && (
+        {startedGame && canSubmitRole && (
           <Text style={styles.startedWarning} testID="text-submit-blocked">
-            {startedGame.awayTeam} @ {startedGame.homeTeam} already started. Remove that pick to submit.
+            {startedGame.awayTeam} @ {startedGame.homeTeam} already started. That pick has to come out before the parlay can be submitted.
           </Text>
         )}
 
-        <Pressable
-          onPress={submit}
-          disabled={!canSubmit || submitPending}
-          style={({ pressed }) => [
-            styles.submitBtn,
-            (!canSubmit || submitPending) && styles.submitBtnDisabled,
-            pressed && canSubmit && !submitPending && { opacity: 0.85 },
-          ]}
-        >
-          {submitPending ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={styles.submitBtnText}>
-              {isEditingSubmitted
-                ? `Update pick · ${activeLegs.length} legs`
-                : `Submit pick · ${activeLegs.length} legs`}
-            </Text>
-          )}
-        </Pressable>
-
-        {canCancel && (
+        {submitted ? (
+          <>
+            <Text style={styles.slipNote}>This parlay has been submitted, so its picks can't change.</Text>
+            {parlay?.canStartAnother && !lockStatus?.isLocked && (
+              <Pressable
+                onPress={() => setStartingNew(true)}
+                style={({ pressed }) => [styles.submitBtn, pressed && { opacity: 0.85 }]}
+                testID="button-start-another-parlay"
+              >
+                <Text style={styles.submitBtnText}>Start another parlay</Text>
+              </Pressable>
+            )}
+          </>
+        ) : canSubmitRole && parlay ? (
           <Pressable
-            onPress={cancelParlayAction}
+            onPress={() => canSubmit && setBoostPromptOpen(true)}
+            disabled={!canSubmit || submitDraftParlay.isPending}
+            style={({ pressed }) => [
+              styles.submitBtn,
+              (!canSubmit || submitDraftParlay.isPending) && styles.submitBtnDisabled,
+              pressed && canSubmit && { opacity: 0.85 },
+            ]}
+            testID="button-submit-parlay"
+          >
+            {submitDraftParlay.isPending ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.submitBtnText}>
+                {needed > 0 ? `Submit parlay · ${needed} more needed` : `Submit parlay · ${legCount} legs`}
+              </Text>
+            )}
+          </Pressable>
+        ) : (
+          <Text style={styles.slipNote} testID="text-pick-saved-note">
+            {myPick
+              ? `Your pick is saved. Whoever started the parlay, or the Parlay Maestro, submits it once ${minLegs} legs are in.`
+              : `Each member adds one pick. The parlay can be submitted once ${minLegs} legs are in.`}
+          </Text>
+        )}
+
+        {canDiscard && (
+          <Pressable
+            onPress={discardParlay}
             disabled={cancelParlay.isPending}
             style={({ pressed }) => [styles.cancelParlayBtn, pressed && { opacity: 0.7 }]}
           >
             {cancelParlay.isPending ? (
               <ActivityIndicator color="#ef4444" size="small" />
             ) : (
-              <Text style={styles.cancelParlayBtnText}>Cancel Parlay</Text>
+              <Text style={styles.cancelParlayBtnText}>Discard Parlay</Text>
             )}
           </Pressable>
         )}
@@ -635,17 +503,16 @@ export default function BuildPickScreen() {
       <AddPlayerPropModal
         game={propGame}
         onClose={() => setPropGame(null)}
-        onAdd={isEditingSubmitted ? (leg) => addPropSubmitted(leg) : (leg) => runQueued(() => addDraftLeg.mutateAsync(leg)).then(() => undefined)}
-        isPending={!isEditingSubmitted && addDraftLeg.isPending}
+        onAdd={(leg) => choosePick(leg)}
       />
 
       <BoostSheet
         visible={boostPromptOpen}
         onClose={() => setBoostPromptOpen(false)}
-        initialPct={myParlay?.boostPct}
+        initialPct={parlay?.boostPct}
         saving={submitDraftParlay.isPending}
         title="Before you submit"
-        confirmLabel="Submit pick"
+        confirmLabel="Submit parlay"
         onConfirm={submitWithBoost}
       />
     </View>
@@ -712,6 +579,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   slipRowText: { flex: 1, fontSize: 14, color: "#f1f5f9", fontWeight: "500" },
+  slipRowOwner: { color: "#93c5fd", fontWeight: "700" },
+  slipNote: { fontSize: 13, lineHeight: 18, color: "#94a3b8" },
   submitBtn: {
     backgroundColor: "#2563eb",
     borderRadius: 12,

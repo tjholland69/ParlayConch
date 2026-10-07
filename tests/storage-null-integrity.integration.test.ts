@@ -100,7 +100,7 @@ describe("storage null integrity", () => {
     });
   }
 
-  test("getUserParlayForWeek normalizes missing game join to null", async ({ skip }) => {
+  test("getMemberWeekParlay normalizes missing game join to null", async ({ skip }) => {
     skipIfNoDb(skip);
     const { storage } = await import("../../server/storage");
     const userId = "null-join-normalize";
@@ -123,7 +123,7 @@ describe("storage null integrity", () => {
       "approved",
     );
 
-    const parlay = await storage.getUserParlayForWeek(userId, league.id, week.id);
+    const parlay = await storage.getMemberWeekParlay(userId, league.id, week.id);
     expect(parlay).not.toBeNull();
     expect(parlay!.legs.length).toBe(1);
     expectNormalizedGameJoin(parlay!.legs[0]!.game);

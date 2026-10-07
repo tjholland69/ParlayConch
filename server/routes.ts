@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import type { Server } from "http";
 import { storage, ParlayAlreadyExistsError } from "./storage";
 import { logger } from "./logger";
@@ -58,6 +58,19 @@ import { validateMultiBetLegs } from "@shared/multiBetValidation";
 import { syncAllPlayerStatsForWeek } from "./services/nflverse";
 import { abbreviationsForTeam } from "@shared/nflTeams";
 import multer from "multer";
+import { PickRuleError } from "@shared/weekParlays";
+
+/**
+ * Answers a failed pick request. A broken rule goes back to the member as
+ * written. Anything else (a dropped database connection, say) is logged with
+ * its cause and gets a plain message: the raw error can carry SQL.
+ */
+function sendPickError(res: Response, err: unknown, action: string) {
+  if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+  if (err instanceof PickRuleError) return res.status(400).json({ message: err.message });
+  logger.error({ err, cause: (err as { cause?: unknown })?.cause }, `[picks] ${action} failed`);
+  return res.status(500).json({ message: "Something went wrong on our end and your pick wasn't changed. Please try again." });
+}
 
 /** Returns true if the user is an admin OR is a lieutenant with the specified permission enabled. */
 async function hasLeaguePermission(leagueId: number, userId: string, permission: keyof LieutenantPermissions): Promise<boolean> {
@@ -68,6 +81,12 @@ async function hasLeaguePermission(leagueId: number, userId: string, permission:
   const league = await storage.getLeague(leagueId);
   const perms = (league?.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS;
   return perms[permission];
+}
+
+/** Active league members, plus super users (who can act in any league). */
+async function isLeagueMember(leagueId: number, userId: string): Promise<boolean> {
+  const [members, superUser] = await Promise.all([storage.getLeagueMembers(leagueId), storage.isSuperUser(userId)]);
+  return superUser || members.some(m => m.userId === userId);
 }
 
 export async function registerRoutes(
@@ -731,9 +750,9 @@ export async function registerRoutes(
     res.json(picks);
   });
 
-  // The picks-grid exclusivity set: every pick a DIFFERENT league member has
-  // already locked in (submitted) for this week, so the client can gray out
-  // those tiles. See storage.getTakenPicksForWeek.
+  // Every pick a DIFFERENT league member already has this week (in
+  // ?parlayId, when given), so the client can gray out those tiles. See
+  // storage.getTakenPicksForWeek.
   app.get("/api/leagues/:leagueId/weeks/:weekId/taken-picks", isAuthenticated, async (req, res) => {
     const leagueId = Number(req.params.leagueId);
     const weekId = Number(req.params.weekId);
@@ -741,73 +760,51 @@ export async function registerRoutes(
     const superUser = await storage.isSuperUser(userId);
     const isMember = superUser || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
     if (!isMember) return res.status(403).json({ message: "Not a member of this league" });
-    const picks = await storage.getTakenPicksForWeek(leagueId, weekId, userId);
+    const parlayId = req.query.parlayId != null ? Number(req.query.parlayId) : undefined;
+    const picks = await storage.getTakenPicksForWeek(leagueId, weekId, userId, Number.isFinite(parlayId) ? parlayId : undefined);
     res.json(picks);
   });
 
   // ===== PARLAYS =====
+  // POST /api/parlays — the old "send every leg at once" route, from when a
+  // member built a whole parlay alone. Kept for app builds that still call
+  // it: a single leg is saved as the member's pick, anything more is refused.
   app.post("/api/parlays", isAuthenticated, async (req, res) => {
     try {
       const input = createParlayInputSchema.parse(req.body);
       const userId = (req.user as any).claims.sub;
-
-      // Validate league membership
-      const leagues = await storage.getUserLeagues(userId);
-      const league = leagues.find(l => l.id === input.leagueId);
-      if (!league) return res.status(403).json({ message: "Not a member of this league" });
-
-      // Validate leg count
-      if (input.legs.length < (league.minLegsPerParlay || 3)) {
-        return res.status(400).json({ message: `Parlay must have at least ${league.minLegsPerParlay || 3} legs` });
+      if (!(await isLeagueMember(input.leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+      if (input.legs.length !== 1) {
+        return res.status(400).json({ message: "Each member adds one pick to the league's parlay. Update the app to make your pick." });
       }
-      if (input.legs.length > (league.maxLegsPerParlay || 5)) {
-        return res.status(400).json({ message: `Parlay cannot have more than ${league.maxLegsPerParlay || 5} legs` });
-      }
-
-      const parlay = await storage.createParlay(
-        userId,
-        { leagueId: input.leagueId, weekId: input.weekId },
-        input.legs.map(l => ({
-          userId,
-          gameId: l.gameId,
-          betType: l.betType,
-          pick: l.pick,
-          line: emptyToNull(l.line)
-        }))
-      );
+      const [leg] = input.legs;
+      const parlay = await storage.setDraftPick(userId, input.leagueId, input.weekId, {
+        gameId: leg.gameId,
+        betType: leg.betType,
+        pick: leg.pick,
+        line: emptyToNull(leg.line),
+      });
       res.status(201).json(parlay);
     } catch (err) {
-      if (err instanceof z.ZodError) {
-        return res.status(400).json({ message: err.errors[0].message });
-      }
-      throw err;
+      sendPickError(res, err, "save pick");
     }
   });
 
-  // POST /api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs — adds ONE leg
-  // to (or starts) the caller's in-progress draft parlay for this league/week.
-  // Unlike POST /api/parlays (full-replace, requires minLegsPerParlay already
-  // met), this is the "pick one leg at a time, it joins a queue" flow — the
-  // draft can sit below minLegsPerParlay until /submit is called. Returns the
-  // full parlay (with legs) via the same shape as GET .../my-parlay.
+  // POST /api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs — saves the
+  // caller's ONE pick in the league's open parlay for the week, replacing
+  // any pick they already had in it, and starting the parlay if nobody has
+  // yet. Optional body fields: `parlayId` (which open parlay, for a league
+  // running more than one a week) and `startNew` (start another). Returns
+  // the whole parlay, same shape as GET .../my-parlay.
   app.post("/api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs", isAuthenticated, async (req, res) => {
     try {
-      const leg = draftParlayLegInputSchema.parse(req.body);
+      const { parlayId, startNew, ...leg } = draftParlayLegInputSchema.parse(req.body);
       const userId = (req.user as any).claims.sub;
       const leagueId = Number(req.params.leagueId);
       const weekId = Number(req.params.weekId);
+      if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
 
-      // This runs on every tile tap, so it checks just this league rather
-      // than loading every league and member list the caller can see.
-      const [league, superUser, members] = await Promise.all([
-        storage.getLeague(leagueId),
-        storage.isSuperUser(userId),
-        storage.getLeagueMembers(leagueId),
-      ]);
-      const isMember = superUser || members.some(m => m.userId === userId);
-      if (!league || !isMember) return res.status(403).json({ message: "Not a member of this league" });
-
-      await storage.addLegToDraftParlay(
+      const saved = await storage.setDraftPick(
         userId,
         leagueId,
         weekId,
@@ -819,42 +816,43 @@ export async function registerRoutes(
           playerName: leg.playerName ?? null,
           propType: leg.propType ?? null,
         },
-        league.maxLegsPerParlay || 5,
-        league.maxBetsPerGame || 1,
+        { parlayId, startNew },
       );
 
-      const parlay = await storage.getUserParlayForWeek(userId, leagueId, weekId);
-      res.status(201).json(parlay);
-    } catch (err: any) {
-      if (err instanceof z.ZodError) {
-        return res.status(400).json({ message: err.errors[0].message });
-      }
-      res.status(400).json({ message: err.message });
+      res.status(201).json(await storage.getMemberWeekParlay(userId, leagueId, weekId, saved.id));
+    } catch (err) {
+      sendPickError(res, err, "save pick");
     }
   });
 
-  // DELETE /api/parlays/:id/legs/:legId — removes one leg from the caller's
-  // own draft parlay (only draft — once submitted, edits go through the
-  // existing full-replace POST /api/parlays flow instead).
+  // DELETE /api/parlays/:id/legs/:legId — removes the caller's own pick from
+  // an open parlay. The Parlay Maestro, and a lieutenant allowed to unselect
+  // picks, can remove anyone's. Once a parlay is submitted its picks are
+  // frozen; changes go through the Data Editor.
   app.delete("/api/parlays/:id/legs/:legId", isAuthenticated, async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
-      const remaining = await storage.removeDraftParlayLeg(userId, Number(req.params.id), Number(req.params.legId));
-      // Returned with its legs, like the add route: the mobile app replaces
-      // its cached draft with this, and a bare parlay row made every other
-      // pick disappear from the build screen after one was removed.
+      const parlayId = Number(req.params.id);
+      const existing = await storage.getParlay(parlayId);
+      if (!existing) return res.status(404).json({ message: "Parlay not found" });
+      if (!(await isLeagueMember(existing.leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+      const canRemoveOthers = await hasLeaguePermission(existing.leagueId, userId, "unselectUserPick");
+      const remaining = await storage.removeDraftParlayLeg(userId, parlayId, Number(req.params.legId), { canRemoveOthers });
+      // Returned with its legs, like the add route, so the client can swap
+      // its cached copy for this one.
       const parlay = remaining
-        ? await storage.getUserParlayForWeek(userId, remaining.leagueId, remaining.weekId)
+        ? await storage.getMemberWeekParlay(userId, remaining.leagueId, remaining.weekId, remaining.id)
         : null;
       res.json({ parlay });
-    } catch (err: any) {
-      res.status(400).json({ message: err.message });
+    } catch (err) {
+      sendPickError(res, err, "remove pick");
     }
   });
 
-  // POST /api/parlays/:id/submit — finalizes the caller's own draft parlay:
-  // enforces minLegsPerParlay (deferred until now) and flips it to 'pending',
-  // entering the normal approve/reject workflow.
+  // POST /api/parlays/:id/submit — submits an open parlay once the league's
+  // minimum number of members have a pick in it, flipping it to 'pending'
+  // and into the normal approve/reject workflow. Open to whoever started the
+  // parlay, the Parlay Maestro, and lieutenants who can approve parlays.
   app.post("/api/parlays/:id/submit", isAuthenticated, auditLog("parlay.submit_draft", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
@@ -862,24 +860,15 @@ export async function registerRoutes(
 
       const existing = await storage.getParlay(parlayId);
       if (!existing) return res.status(404).json({ message: "Parlay not found" });
-
-      const leagues = await storage.getUserLeagues(userId);
-      const league = leagues.find(l => l.id === existing.leagueId);
-      if (!league) return res.status(403).json({ message: "Not a member of this league" });
+      if (!(await isLeagueMember(existing.leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
 
       // Optional: the "any boost on this parlay?" answer from the submit prompt.
       const boost = req.body && "boostPct" in req.body ? parlayBoostInputSchema.parse(req.body).boostPct : undefined;
+      const canSubmitAny = await hasLeaguePermission(existing.leagueId, userId, "approveRejectParlays");
 
-      const parlay = await storage.submitDraftParlay(
-        userId,
-        parlayId,
-        league.minLegsPerParlay || 3,
-        league.maxLegsPerParlay || 5,
-        boost,
-      );
-      res.json(parlay);
-    } catch (err: any) {
-      res.status(400).json({ message: err.message });
+      res.json(await storage.submitDraftParlay(userId, parlayId, boost, { canSubmitAny }));
+    } catch (err) {
+      sendPickError(res, err, "submit parlay");
     }
   });
 
@@ -925,16 +914,21 @@ export async function registerRoutes(
   app.get("/api/leagues/:leagueId/weeks/:weekId/parlays", isAuthenticated, async (req, res) => {
     const leagueId = Number(req.params.leagueId);
     const weekId = Number(req.params.weekId);
+    if (!(await isLeagueMember(leagueId, (req.user as any).claims.sub))) return res.status(403).json({ message: "Not a member of this league" });
     const parlays = await storage.getLeagueParlaysForWeek(leagueId, weekId);
     res.json(parlays);
   });
 
+  // The week's parlay as the caller sees it: the league's shared parlay with
+  // everyone's legs, what other members have taken, and whether another can
+  // be started. ?parlayId pins one, for a league running several a week.
   app.get("/api/leagues/:leagueId/weeks/:weekId/my-parlay", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagueId = Number(req.params.leagueId);
     const weekId = Number(req.params.weekId);
-    const parlay = await storage.getUserParlayForWeek(userId, leagueId, weekId);
-    res.json(parlay);
+    if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+    const parlayId = req.query.parlayId != null ? Number(req.query.parlayId) : undefined;
+    res.json(await storage.getMemberWeekParlay(userId, leagueId, weekId, Number.isFinite(parlayId) ? parlayId : undefined));
   });
 
   // Admin: Approve/Reject parlays
@@ -2342,10 +2336,12 @@ export async function registerRoutes(
     try {
       const parlayId = Number(req.params.id);
       const userId = (req.user as any).claims.sub;
-      await storage.cancelOwnParlay(parlayId, userId);
+      const existing = await storage.getParlay(parlayId);
+      const isAdmin = !!existing && (await storage.isLeagueAdmin(existing.leagueId, userId));
+      await storage.cancelOwnParlay(parlayId, userId, { isAdmin });
       res.json({ success: true });
-    } catch (err: any) {
-      res.status(400).json({ message: err.message });
+    } catch (err) {
+      sendPickError(res, err, "discard parlay");
     }
   });
 

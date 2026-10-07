@@ -35,6 +35,8 @@ import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls, nextBulkSignal } from "@/components/ExpandCollapseControls";
 import { getSlate } from "@shared/slate";
+import { byEndingDesc } from "@shared/parlayProgress";
+import { participationRateByParlay } from "@/lib/parlayVisuals";
 
 // AG Grid alone is ~1MB — only worth loading once someone actually asks
 // for the raw leg grid, not on every History page visit.
@@ -163,6 +165,9 @@ function HistoryParlayTile({
   expandSignal = 0,
   defaultExpanded = false,
   highlighted = false,
+  participationRate,
+  loserLabel,
+  heroLabel,
 }: {
   parlay: ParlayWithLegs;
   onCopySlip: (p: ParlayWithLegs) => void;
@@ -171,6 +176,10 @@ function HistoryParlayTile({
   expandSignal?: number;
   defaultExpanded?: boolean;
   highlighted?: boolean;
+  /** Same coloring inputs as a league's All Parlays tab. */
+  participationRate?: number;
+  loserLabel?: string | null;
+  heroLabel?: string | null;
 }) {
 
   if (parlay.status === "void") {
@@ -205,6 +214,9 @@ function HistoryParlayTile({
           defaultExpanded={defaultExpanded}
           onCopySlip={onCopySlip}
           copiedId={copiedId}
+          participationRate={participationRate}
+          loserLabel={loserLabel}
+          heroLabel={heroLabel}
         />
       </CardErrorBoundary>
     </div>
@@ -323,7 +335,7 @@ export default function History() {
     fetchNextPage: fetchNextAllLeaguePage,
     isFetchingNextPage: fetchingNextAllLeaguePage,
     isLoading: loadingSingleLeagueParlays,
-  } = useAllLeagueParlaysReadOnly(leagueId ?? 0, leagueId !== undefined);
+  } = useAllLeagueParlaysReadOnly(leagueId ?? 0, leagueId !== undefined, "ending_desc");
 
   useEffect(() => {
     if (leagueId !== undefined && hasNextAllLeaguePage && !fetchingNextAllLeaguePage) {
@@ -337,8 +349,23 @@ export default function History() {
     leagueId === undefined,
   );
 
-  const allLeagueParlays = leagueId !== undefined ? flattenParlayPages(allLeaguePages) : allLeaguesOthersParlays;
+  // Most recently finished first, whichever league a parlay came from.
+  const allLeagueParlays = useMemo(
+    () => [...(leagueId !== undefined ? flattenParlayPages(allLeaguePages) : allLeaguesOthersParlays)].sort(byEndingDesc),
+    [leagueId, allLeaguePages, allLeaguesOthersParlays],
+  );
   const baseParlays = allLeagueParlays;
+  // Cards are colored from the same inputs as a league's All Parlays tab.
+  const leagueById = useMemo(() => new Map((leagues ?? []).map(l => [l.id, l])), [leagues]);
+  const participationById = useMemo(
+    () => participationRateByParlay(allLeagueParlays, id => leagueById.get(id)?.memberCount),
+    [allLeagueParlays, leagueById],
+  );
+  const cardStyleProps = (parlay: ParlayWithLegs) => ({
+    participationRate: participationById.get(parlay.id),
+    loserLabel: leagueById.get(parlay.leagueId)?.loserLabel,
+    heroLabel: leagueById.get(parlay.leagueId)?.heroLabel,
+  });
   const isLoading = leagueId !== undefined ? loadingSingleLeagueParlays : loadingAllLeaguesParlays;
 
   // Weeks that are fully graded (every parlay submitted for the week has
@@ -859,6 +886,7 @@ export default function History() {
                         collapseSignal={collapseSignal}
                         expandSignal={expandSignal}
                         highlighted={highlightParlayId === parlay.id}
+                {...cardStyleProps(parlay)}
                       />
                     </div>
                   );
@@ -875,6 +903,7 @@ export default function History() {
                 collapseSignal={collapseSignal}
                 expandSignal={expandSignal}
                 highlighted={highlightParlayId === parlay.id}
+                {...cardStyleProps(parlay)}
               />
             ))
           )}
@@ -956,6 +985,7 @@ export default function History() {
                     onCopySlip={handleCopySlip}
                     copiedId={copiedId}
                     defaultExpanded
+                    {...cardStyleProps(p)}
                   />
                 ))}
               </div>

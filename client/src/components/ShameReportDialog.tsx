@@ -1,12 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Check, Copy, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { shameReportText, type ShameReport } from "@shared/shameReport";
+import { shamePendingLine, shameReportText, type ShameReport } from "@shared/shameReport";
 
-const SLIDE_MS = 4500;
+const SLIDE_MS = 10_000;
+/** A press held this long pauses the timer instead of skipping the slide. */
+const HOLD_MS = 180;
 const SLIDE_COUNT = 2;
 /** Slides export at phone-story size. */
 const EXPORT_W = 1080;
@@ -60,7 +62,7 @@ function drawSlide(report: ShameReport, index: number): HTMLCanvasElement {
     ctx.font = font(800, 96);
     ctx.fillText("The Losing Bets", mid, 400);
     // Shrinks the rows once there are too many to fit at full size.
-    const rowH = Math.min(190, (EXPORT_H - 620) / Math.max(report.losers.length, 1));
+    const rowH = Math.min(190, (EXPORT_H - 720) / Math.max(report.losers.length, 1));
     const scale = rowH / 190;
     report.losers.forEach((l, i) => {
       const y = 560 + i * rowH;
@@ -71,6 +73,12 @@ function drawSlide(report: ShameReport, index: number): HTMLCanvasElement {
       ctx.font = font(500, 46 * scale);
       ctx.fillText(fitText(ctx, l.pick, maxW), mid, y + 66 * scale);
     });
+    const pending = shamePendingLine(report.pendingCount);
+    if (pending) {
+      ctx.fillStyle = "rgba(255,255,255,0.6)";
+      ctx.font = `italic ${font(500, 44)}`;
+      ctx.fillText(pending, mid, EXPORT_H - 180);
+    }
   }
 
   ctx.fillStyle = "rgba(255,255,255,0.35)";
@@ -90,9 +98,11 @@ function downloadSlides(report: ShameReport) {
 }
 
 /**
- * The weekly shame report as a two-slide "short": first who ruined the
- * parlay, then every losing bet. Plays through on its own; click a slide to
- * skip ahead. The slides can be saved as images or copied as text.
+ * The weekly shame report as a two-slide story: first who ruined the parlay,
+ * then every losing bet. Each slide runs on a timer shown in the bar at the
+ * top. Click to skip ahead, press and hold to pause. When the last slide runs
+ * out the story closes; the megaphone on the card brings it back. The slides
+ * can be saved as images or copied as text. Mirrors mobile's ShameReportModal.
  */
 export function ShameReportDialog({
   report,
@@ -107,13 +117,50 @@ export function ShameReportDialog({
   const [slide, setSlide] = useState(0);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => { if (open) setSlide(0); }, [open]);
-  // Auto-advances once, from the reveal to the list, then holds there.
+  const [holding, setHolding] = useState(false);
+  // Milliseconds of the current slide already played, so a pause resumes
+  // where it stopped.
+  const elapsed = useRef(0);
+  const holdTimer = useRef<ReturnType<typeof setTimeout>>();
+  const wasHeld = useRef(false);
+
+  const goTo = (next: number) => {
+    elapsed.current = 0;
+    setSlide(next);
+  };
+  const advance = () => {
+    if (slide >= SLIDE_COUNT - 1) onOpenChange(false);
+    else goTo(slide + 1);
+  };
+
   useEffect(() => {
-    if (!open || slide !== 0) return;
-    const timer = setTimeout(() => setSlide(1), SLIDE_MS);
-    return () => clearTimeout(timer);
-  }, [open, slide]);
+    if (open) {
+      goTo(0);
+      setHolding(false);
+    }
+  }, [open]);
+  useEffect(() => {
+    if (!open || holding) return;
+    const startedAt = Date.now();
+    const timer = setTimeout(advance, SLIDE_MS - elapsed.current);
+    return () => {
+      clearTimeout(timer);
+      elapsed.current += Date.now() - startedAt;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, slide, holding]);
+
+  const onPointerDown = () => {
+    wasHeld.current = false;
+    holdTimer.current = setTimeout(() => {
+      wasHeld.current = true;
+      setHolding(true);
+    }, HOLD_MS);
+  };
+  const onPointerUp = () => {
+    clearTimeout(holdTimer.current);
+    setHolding(false);
+  };
 
   const copyText = async () => {
     try {
@@ -135,9 +182,14 @@ export function ShameReportDialog({
 
         <button
           type="button"
-          onClick={() => setSlide((s) => (s + 1) % SLIDE_COUNT)}
-          className="relative mx-auto flex aspect-[9/16] w-full max-w-[280px] flex-col overflow-hidden rounded-2xl bg-gradient-to-b from-red-950 to-background p-5 text-center"
+          onClick={() => { if (!wasHeld.current) advance(); }}
+          onPointerDown={onPointerDown}
+          onPointerUp={onPointerUp}
+          onPointerLeave={onPointerUp}
+          onPointerCancel={onPointerUp}
+          className="relative mx-auto flex aspect-[9/16] w-full max-w-[280px] select-none flex-col overflow-hidden rounded-2xl bg-gradient-to-b from-red-950 to-background p-5 text-center"
           aria-label="Next slide"
+          title="Click to skip, hold to pause"
           data-testid="button-shame-slide"
         >
           <div className="flex w-full gap-1">
@@ -146,7 +198,9 @@ export function ShameReportDialog({
                 <div
                   key={`${i}-${slide}-${open}`}
                   className={cn("h-full bg-white", i < slide && "w-full", i > slide && "w-0")}
-                  style={i === slide ? { animation: `shame-progress ${SLIDE_MS}ms linear forwards` } : undefined}
+                  style={i === slide
+                    ? { animation: `shame-progress ${SLIDE_MS}ms linear forwards`, animationPlayState: holding ? "paused" : "running" }
+                    : undefined}
                 />
               </div>
             ))}
@@ -177,6 +231,11 @@ export function ShameReportDialog({
                   </li>
                 ))}
               </ul>
+              {shamePendingLine(report.pendingCount) && (
+                <p className="pt-2 text-xs italic text-white/60" data-testid="text-shame-pending">
+                  {shamePendingLine(report.pendingCount)}
+                </p>
+              )}
             </div>
           )}
         </button>

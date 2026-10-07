@@ -335,7 +335,13 @@ export type ActiveWeekStatus = {
   missingMemberIds: string[];
   hasPendingParlay: boolean;
   hasApprovedParlay: boolean;
+  /** The caller has a pick in a parlay that hasn't been submitted yet. */
   currentUserHasUnsubmittedDraft: boolean;
+  /** A parlay is open for picks this week, and how many legs are in it. */
+  hasOpenParlay: boolean;
+  openParlayLegCount: number;
+  /** The caller still owes a pick: an open parlay without theirs, or none started yet. */
+  currentUserNeedsPick: boolean;
 };
 
 export type LeagueDataStats = {
@@ -356,11 +362,8 @@ export type PopularPick = {
   count: number;
 };
 
-// A specific pick already locked in by another league member this week —
-// unlike PopularPick (a same-shape popularity ranking across everyone,
-// including still-drafting picks), this is the exclusivity set: only
-// picks from non-draft (submitted) parlays, used to gray out tiles other
-// members have already claimed.
+// A pick another league member already has in a parlay, used to gray out
+// tiles they've claimed. Taken as soon as it's saved, submitted or not.
 export type TakenPick = {
   gameId: number | null;
   betType: string;
@@ -371,4 +374,14 @@ export type TakenPick = {
   // the client only in this abbreviated form, never raw) — `web` is
   // "F.Lastname", `mobile` is just the first name. See shared/pickOwnerLabel.ts.
   takenBy: { web: string; mobile: string };
+};
+
+/**
+ * The week's parlay as one member sees it (GET .../my-parlay): the shared
+ * parlay with everyone's legs, the picks other members have taken in it, and
+ * whether the league's parlays-per-week limit leaves room to start another.
+ */
+export type MemberWeekParlay = ParlayWithLegs & {
+  taken: TakenPick[];
+  canStartAnother: boolean;
 };

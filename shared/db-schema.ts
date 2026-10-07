@@ -85,6 +85,8 @@ export const leagues = pgTable("leagues", {
   maxParlaysPerWeek: integer("max_parlays_per_week").default(1),
   minLegsPerParlay: integer("min_legs_per_parlay").default(3),
   maxLegsPerParlay: integer("max_legs_per_parlay").default(5),
+  // No longer used: a member has one pick per parlay, so there's nothing to
+  // cap per game. The column stays so old rows and old app builds still load.
   maxBetsPerGame: integer("max_bets_per_game").default(1),
   isDemo: boolean("is_demo").default(false),
   useDemoWeekData: boolean("use_demo_week_data").default(false),
@@ -163,7 +165,8 @@ export const importBatches = pgTable("import_batches", {
   uploadedAt: timestamp("uploaded_at").defaultNow(),
 });
 
-// Parlays - a user's weekly pick (replaces individual bets)
+// Parlays - a league's shared ticket for a week. `userId` is whoever started
+// it; every member adds one leg of their own (see shared/weekParlays.ts).
 export const parlays = pgTable("parlays", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id")
@@ -197,7 +200,9 @@ export const parlays = pgTable("parlays", {
   // boost claimed at the book is often recorded here after the bet is live.
   boostPct: real("boost_pct"),
 }, (table) => [
-  uniqueIndex("parlays_user_league_week_uidx").on(table.userId, table.leagueId, table.weekId),
+  // Not unique: in a league that runs several parlays a week, the same
+  // member can start more than one.
+  index("parlays_user_league_week_idx").on(table.userId, table.leagueId, table.weekId),
   index("parlays_league_week_idx").on(table.leagueId, table.weekId),
   index("parlays_status_idx").on(table.status),
   index("parlays_league_status_idx").on(table.leagueId, table.status),

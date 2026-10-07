@@ -169,6 +169,13 @@
       "when": 1791165191294,
       "tag": "0023_parlay_boost",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791346400636,
+      "tag": "0024_shared_week_parlays",
+      "breakpoints": true
     }
   ]
 }

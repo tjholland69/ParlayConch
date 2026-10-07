@@ -52,7 +52,7 @@ export default function RootLayout() {
               />
               <Stack.Screen
                 name="leagues/[id]/build"
-                options={{ headerBackTitle: "Back", title: "Build Pick" }}
+                options={{ headerBackTitle: "Back", title: "Make Your Pick" }}
               />
             </Stack>
           </AuthGuard>

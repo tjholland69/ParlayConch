@@ -7,7 +7,7 @@ The repository includes a React web application, an Express API, a PostgreSQL da
 ## Features
 
 - Create leagues and join them with invite codes
-- Submit weekly parlays with configurable leg limits
+- Build one shared parlay per league each week: every member adds a single pick
 - Track spreads, moneylines, totals, and player props
 - Approve or reject submissions as a league administrator
 - Lock a league's weekly submissions when picks are finalized
@@ -117,7 +117,7 @@ Week ──< Game
 Player ──< PlayerWeekStat
 ```
 
-A parlay belongs to one user, league, and NFL week. Each parlay contains one or more legs. Game-based legs reference a game; player-prop legs may instead use a player name and prop type.
+A parlay is a league's shared ticket for an NFL week. `parlays.user_id` is whoever started it; each member adds one leg of their own (`parlay_legs.user_id`), and a league can run up to its `max_parlays_per_week`. The rules live in `shared/weekParlays.ts`. Game-based legs reference a game; player-prop legs may instead use a player name and prop type.
 
 The `bets` table remains in the schema for backward compatibility, but `parlays` and `parlay_legs` are the primary betting model.
 

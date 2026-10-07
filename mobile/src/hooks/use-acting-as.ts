@@ -59,12 +59,20 @@ export function useSuperUserSearch(query: string, enabled: boolean) {
   });
 }
 
+/**
+ * Switching who you're acting for changes the answer to nearly every query,
+ * so all of them are thrown away and refetched, not a hand-kept list: a
+ * query left off that list kept showing the previous member's data (their
+ * parlay on Your Picks, for one). Only the super user's own identity and
+ * the act-as state itself survive.
+ */
 function invalidateIdentityScopedQueries(queryClient: ReturnType<typeof useQueryClient>) {
-  queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
-  queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-  queryClient.invalidateQueries({ queryKey: ["/api/dashboard/summary"] });
-  queryClient.invalidateQueries({ queryKey: ["/api/dashboard/patterns"] });
-  queryClient.invalidateQueries({ queryKey: ["/api/dashboard/performance"] });
+  void queryClient.resetQueries({
+    predicate: (q) => {
+      const root = String(q.queryKey[0]);
+      return root !== "/api/auth/user" && !root.startsWith("/api/superuser");
+    },
+  });
 }
 
 export function useSetActAs() {

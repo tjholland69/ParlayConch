@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, ke
 import { api, buildUrl } from "@shared/routes";
 import { useToast } from "@/hooks/use-toast";
 import type { MultiBetLegInput } from "@shared/multiBetValidation";
-import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, TakenPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team, ParlayListSort } from "@shared/schema";
+import type { Week, Game, GameWithBet, UserStat, LeagueWithMembers, ParlayWithLegs, MemberWeekParlay, ParlayLegWithParlayContext, League, WeekLockStatus, ActiveWeekStatus, LeagueDataStats, PopularPick, TakenPick, Player, ParlayLegDispute, LeagueMemberWithUser, Team, ParlayListSort } from "@shared/schema";
 
 export type PaginatedParlays = {
   items: ParlayWithLegs[];
@@ -375,8 +375,15 @@ export function useJoinLeague() {
 }
 
 // Parlays
+/**
+ * The league's parlay for the week as the caller sees it: one shared parlay
+ * holding every member's pick, plus the picks others have taken in it (see
+ * shared/weekParlays.ts). Realtime events refresh it; the interval covers a
+ * server running without Redis, so another member's pick still shows up.
+ */
 export function useMyParlay(leagueId: number, weekId: number) {
-  return useQuery<ParlayWithLegs | null>({
+  return useQuery<MemberWeekParlay | null>({
+    refetchInterval: 10_000,
     queryKey: [api.parlays.myForWeek.path, leagueId, weekId],
     queryFn: async () => {
       const url = buildUrl(api.parlays.myForWeek.path, { leagueId, weekId });
@@ -484,9 +491,16 @@ export function useCreateParlay() {
   });
 }
 
-type DraftParlayLegInput = ParlayLegInput & { playerName?: string; propType?: string };
+type DraftParlayLegInput = ParlayLegInput & {
+  playerName?: string;
+  propType?: string;
+  /** Start another parlay instead of joining the open one. */
+  startNew?: boolean;
+};
 
 function invalidateDraftParlayQueries(queryClient: ReturnType<typeof useQueryClient>, leagueId: number, weekId: number) {
+  queryClient.invalidateQueries({ queryKey: ['/api/leagues/active-week-status'] });
+  queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'] });
   queryClient.invalidateQueries({ queryKey: [api.parlays.myForWeek.path, leagueId, weekId] });
   queryClient.invalidateQueries({ queryKey: [api.parlays.forWeek.path, leagueId, weekId] });
   queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'taken-picks'] });
@@ -496,7 +510,7 @@ function invalidateDraftParlayQueries(queryClient: ReturnType<typeof useQueryCli
 // another tap is still in flight.
 const DRAFT_LEG_MUTATION_KEY = ["draft-parlay-leg"];
 
-type DraftParlayCache = ParlayWithLegs | null | undefined;
+type DraftParlayCache = MemberWeekParlay | null | undefined;
 
 /** Refetches the draft's queries once the last in-flight tap has settled.
  * Refetching after each one would briefly drop the optimistic legs of taps
@@ -514,20 +528,18 @@ function removeLegFromDraftCache(parlay: DraftParlayCache, legId: number): Draft
   return legs.length === 0 ? null : { ...parlay, legs };
 }
 
-// Adds ONE leg to (or starts) the caller's in-progress draft parlay — the
-// per-tap counterpart to useCreateParlay's all-at-once submit. Powers the
-// picks grid so each tile tap is its own server round-trip (needed for live
-// per-game caps and cross-user pick exclusivity — see addLegToDraftParlay).
-// The tile lights up straight away from an optimistic cache write (a leg
-// with a negative id until the server answers) and is rolled back if the
-// server rejects the pick.
+// Saves the caller's ONE pick in the league's open parlay for the week,
+// replacing any pick they already had in it (see storage.setDraftPick). The
+// tile lights up straight away from an optimistic cache write (a leg with a
+// negative id until the server answers); if the server refuses the pick the
+// parlay is refetched, which puts the member's earlier pick back.
 export function useAddDraftLeg() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   return useMutation({
     mutationKey: DRAFT_LEG_MUTATION_KEY,
-    onMutate: async ({ leagueId, weekId, leg }) => {
+    onMutate: async ({ leagueId, weekId, leg, userId }) => {
       const key = [api.parlays.myForWeek.path, leagueId, weekId];
       await queryClient.cancelQueries({ queryKey: key });
       const optimisticLegId = -Date.now();
@@ -541,14 +553,18 @@ export function useAddDraftLeg() {
           line: leg.line ?? null,
           playerName: leg.playerName ?? null,
           propType: leg.propType ?? null,
-        } as ParlayWithLegs["legs"][number];
-        return current
-          ? { ...current, legs: [...current.legs, optimisticLeg] }
-          : ({ id: -1, leagueId, weekId, status: "draft", legs: [optimisticLeg] } as ParlayWithLegs);
+          userId,
+        } as MemberWeekParlay["legs"][number];
+        // One pick per member: the new one takes the place of theirs. A
+        // pick that starts another parlay begins from an empty one instead.
+        const others = (current?.legs ?? []).filter(l => l.id >= 0 && l.userId !== userId);
+        return current && !leg.startNew
+          ? { ...current, legs: [...others, optimisticLeg] }
+          : ({ id: -1, leagueId, weekId, status: "draft", legs: [optimisticLeg], taken: [], canStartAnother: false } as unknown as MemberWeekParlay);
       });
       return { optimisticLegId };
     },
-    mutationFn: async (data: { leagueId: number; weekId: number; leg: DraftParlayLegInput }) => {
+    mutationFn: async (data: { leagueId: number; weekId: number; leg: DraftParlayLegInput; userId?: string }) => {
       const res = await fetch(`/api/leagues/${data.leagueId}/weeks/${data.weekId}/draft-parlay/legs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -559,7 +575,7 @@ export function useAddDraftLeg() {
         const errData = await res.json();
         throw new Error(errData.message || "Failed to add pick");
       }
-      return res.json() as Promise<ParlayWithLegs>;
+      return res.json() as Promise<MemberWeekParlay>;
     },
     onSuccess: (parlay, variables) => {
       // The response is the full draft, so the real leg replaces the
@@ -574,7 +590,7 @@ export function useAddDraftLeg() {
           (current) => removeLegFromDraftCache(current, context.optimisticLegId),
         );
       }
-      toast({ title: "Couldn't add pick", description: error.message, variant: "destructive" });
+      toast({ title: "Couldn't save your pick", description: error.message, variant: "destructive" });
     },
     onSettled: (_data, _error, variables) => {
       settleDraftParlayQueries(queryClient, variables.leagueId, variables.weekId);

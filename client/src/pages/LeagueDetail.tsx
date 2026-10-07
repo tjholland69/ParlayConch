@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useUpdateLeagueSettings, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useTakenPicks, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
+import { useLeagues, useUpdateLeagueSettings, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
 import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { BetSlipPanel } from "@/components/BetSlipPanel";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
+import { participationRateByParlay } from "@/lib/parlayVisuals";
 import { AddPropLegDialog } from "@/components/AddPropLegDialog";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
@@ -29,6 +30,7 @@ import { ExpandCollapseControls, nextBulkSignal } from "@/components/ExpandColla
 import { SortHeader } from "@/components/SortHeader";
 import { BoostDialog } from "@/components/BoostDialog";
 import { useColumnSort } from "@/hooks/use-column-sort";
+import { standingsCsv } from "@shared/standingsExport";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
 import { PageLoader } from "@/components/PageLoader";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -39,6 +41,7 @@ import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { hasGameStarted } from "@shared/parlayProgress";
 import { getBuildingVerb } from "@/lib/parlaySlang";
 import { getLineForBet, spreadLabels } from "@/lib/gameOdds";
+import { canBuyPoints, impliedPointsMoved, lineForBet, MAX_POINTS_MOVE, POINTS_STEP } from "@shared/buyPoints";
 import { legChipLabel } from "@/lib/legLabel";
 import { SlateGroupedGames } from "@/components/SlateGroupedGames";
 import { PickTile } from "@/components/PickTile";
@@ -60,8 +63,7 @@ function AllParlaysList({
   allExpandSignal,
   setAllCollapseSignal,
   setAllExpandSignal,
-  submittersByWeek,
-  memberCount,
+  participationById,
   loserLabel,
   heroLabel,
   canManage,
@@ -76,8 +78,7 @@ function AllParlaysList({
   allExpandSignal: number;
   setAllCollapseSignal: Dispatch<SetStateAction<number>>;
   setAllExpandSignal: Dispatch<SetStateAction<number>>;
-  submittersByWeek: Map<number, Set<string>>;
-  memberCount: number;
+  participationById: Map<number, number>;
   loserLabel: string | null | undefined;
   heroLabel: string | null | undefined;
   canManage: boolean;
@@ -103,7 +104,7 @@ function AllParlaysList({
         canManage={canManage}
         collapseSignal={allCollapseSignal}
         expandSignal={allExpandSignal}
-        participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
+        participationRate={participationById.get(parlay.id) ?? 0}
         loserLabel={loserLabel}
         heroLabel={heroLabel}
       />
@@ -233,6 +234,9 @@ function LeagueCreatedStat({
   );
 }
 
+const slugify = (name: string | null | undefined) =>
+  (name ?? "league").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "league";
+
 const STANDINGS_COLUMNS = [
   { key: "record", label: "Record", width: "min-w-[52px]" },
   { key: "winRate", label: "Win%", width: "min-w-[50px]" },
@@ -242,7 +246,17 @@ const STANDINGS_COLUMNS = [
 ] as const;
 type StandingsSortKey = "member" | (typeof STANDINGS_COLUMNS)[number]["key"];
 
-function StandingsList({ list }: { list: UserStat[] }) {
+/** Saves the standings as a CSV, ranked in the order they're sorted on screen. */
+function downloadStandingsCsv(filename: string, rows: UserStat[]) {
+  const url = URL.createObjectURL(new Blob([standingsCsv(rows)], { type: "text/csv;charset=utf-8;" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function StandingsList({ list, exportName }: { list: UserStat[]; exportName: string }) {
   // Rank is always the BAR standing, whichever column the list is sorted by.
   const rankByUser = useMemo(() => {
     const byBar = [...list].sort((a, b) => (b.bar ?? 0) - (a.bar ?? 0));
@@ -286,6 +300,18 @@ function StandingsList({ list }: { list: UserStat[] }) {
             </div>
           ))}
         </div>
+      </div>
+      <div className="flex justify-end">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 gap-1.5 text-xs text-muted-foreground"
+          onClick={() => downloadStandingsCsv(`${exportName}.csv`, sorted)}
+          data-testid={`button-export-${exportName}`}
+        >
+          <Download className="w-3.5 h-3.5" />
+          Export CSV
+        </Button>
       </div>
       {sorted.map((stat) => {
         const rank = rankByUser.get(stat.userId) ?? 0;
@@ -424,7 +450,16 @@ export default function LeagueDetail() {
 
   const { data: games } = useGames(activeWeekId || 0);
   const { data: leagueParlays } = useLeagueParlays(leagueId, activeWeekId || 0);
-  const { data: myParlay } = useMyParlay(leagueId, activeWeekId || 0);
+  const { data: weekParlay } = useMyParlay(leagueId, activeWeekId || 0);
+  // In a league that runs more than one parlay a week: the member chose to
+  // start another instead of looking at the one already submitted. Nothing
+  // exists on the server until their first pick creates it, so until then
+  // the page shows an empty parlay.
+  const [startingNew, setStartingNew] = useState(false);
+  const myParlay = startingNew ? null : weekParlay ?? null;
+  // A pick that would move the member's one pick to a different game waits
+  // here for them to confirm the swap.
+  const [pendingSwap, setPendingSwap] = useState<{ from: string; to: string; leg: { gameId: number; betType: string; pick: string; line?: string } } | null>(null);
   const addDraftLeg = useAddDraftLeg();
   const removeDraftLeg = useRemoveDraftLeg();
   const submitDraftParlay = useSubmitDraftParlay();
@@ -438,7 +473,6 @@ export default function LeagueDetail() {
   const lockParlay = useLockWeekParlay(leagueId, activeWeekId || 0);
   const unlockParlay = useUnlockWeekParlay(leagueId, activeWeekId || 0);
   const { data: popularPicks } = usePopularPicks(leagueId, activeWeekId || 0);
-  const { data: takenPicks } = useTakenPicks(leagueId, activeWeekId || 0);
   const { data: myParlayHistory } = useMyParlayHistory(leagueId);
 
   const [propDialogGame, setPropDialogGame] = useState<Game | null>(null);
@@ -497,20 +531,33 @@ export default function LeagueDetail() {
   const [showTransferDialog, setShowTransferDialog] = useState(false);
   const [transferTargetId, setTransferTargetId] = useState<string>("");
 
-  // The draft parlay (server-side, status: 'draft') is now the source of
-  // truth for "what's selected" — no local selection state. myParlay is
-  // truthy (and its legs populated) as soon as the first tile is tapped,
-  // via useMyParlay -> getUserParlayForWeek, which returns draft parlays too.
-  const myLegs = myParlay?.legs ?? [];
-  const maxBetsPerGame = league?.maxBetsPerGame || 1;
+  // The league shares one parlay for the week: every member adds a single
+  // pick to it, saved on the server the moment it's made (no local selection
+  // state). myParlay is that shared parlay with everyone's legs; `myLegs` is
+  // this member's own (one, or an optimistic one still being saved, which
+  // has a negative id). Rules: shared/weekParlays.ts.
+  const parlayLegs = myParlay?.legs ?? [];
+  const myLegs = parlayLegs.filter(l => l.id < 0 || l.userId === effectiveUserId);
+  const myLeg = myLegs[0];
 
-  const legsForGame = (gameId: number) => myLegs.filter(l => l.gameId === gameId);
+  const legsForGame = (gameId: number) => parlayLegs.filter(l => l.gameId === gameId);
 
   const isMySelection = (gameId: number, betType: string, pick: string) =>
     myLegs.some(l => l.gameId === gameId && l.betType === betType && l.pick === pick);
 
-  const takenByOther = (gameId: number, betType: string, pick: string) =>
-    (takenPicks ?? []).find(t => t.gameId === gameId && t.betType === betType && t.pick === pick);
+  // One bet per market per parlay: once another member has the spread, the
+  // moneyline or the total on a game, both sides of it are taken.
+  const marketOf = (betType: string) => (betType === "over" || betType === "under" ? "total" : betType);
+  const takenByOther = (gameId: number, betType: string, _pick?: string) =>
+    (myParlay?.taken ?? []).find(t => t.gameId === gameId && marketOf(t.betType) === marketOf(betType));
+
+  const savePick = (leg: { gameId: number; betType: string; pick: string; line?: string }) => {
+    if (!activeWeekId || !leagueId) return;
+    addDraftLeg.mutate(
+      { leagueId, weekId: activeWeekId, leg: startingNew ? { ...leg, startNew: true } : leg, userId: effectiveUserId },
+      { onSuccess: () => setStartingNew(false) },
+    );
+  };
 
   const toggleLeg = (game: Game, betType: string, pick: string) => {
     if (!activeWeekId || !leagueId) return;
@@ -521,10 +568,18 @@ export default function LeagueDetail() {
       removeDraftLeg.mutate({ parlayId: myParlay.id, legId: existing.id, leagueId, weekId: activeWeekId });
       return;
     }
-    if (takenByOther(game.id, betType, pick)) return;
-    if (legsForGame(game.id).length >= maxBetsPerGame) return;
+    if (takenByOther(game.id, betType)) return;
     const line = getLineForBet(game, betType, pick);
-    addDraftLeg.mutate({ leagueId, weekId: activeWeekId, leg: { gameId: game.id, betType, pick, line } });
+    // Moving the pick to a different game is worth a second look.
+    if (myLeg && myLeg.gameId !== game.id) {
+      setPendingSwap({
+        from: legChipLabel(myLeg, (games ?? []).find(g => g.id === myLeg.gameId)),
+        to: legChipLabel({ betType, pick, line: line ?? null, propType: null }, game),
+        leg: { gameId: game.id, betType, pick, line },
+      });
+      return;
+    }
+    savePick({ gameId: game.id, betType, pick, line });
   };
 
   // Open Parlays only shows the active week's slate by default. Later weeks
@@ -540,7 +595,7 @@ export default function LeagueDetail() {
     : [];
   // Also fetch next week when the draft already holds a later-week leg, so
   // its chip can still name the teams while the section is hidden.
-  const hasLaterWeekLeg = !!games && myLegs.some(l => l.gameId != null && !games.some(g => g.id === l.gameId));
+  const hasLaterWeekLeg = !!games && parlayLegs.some(l => l.gameId != null && !games.some(g => g.id === l.gameId));
   const laterWeekQueries = useGamesForWeeks(
     laterWeeks.slice(0, Math.max(laterWeeksShown, hasLaterWeekLeg ? 1 : 0)).map(w => w.id),
   );
@@ -585,7 +640,8 @@ export default function LeagueDetail() {
 
   const renderGameCard = (game: Game) => {
     const isPast = !!game.isFinished || (game.gameTime ? new Date(game.gameTime) < new Date() : false);
-    const capReached = legsForGame(game.id).length >= maxBetsPerGame;
+    // Only the taken markets are closed; there's no per-game cap any more.
+    const capReached = false;
 
     const { away: awaySpread, home: homeSpread } = spreadLabels(game);
 
@@ -722,10 +778,23 @@ export default function LeagueDetail() {
   // A pick whose game kicked off before the parlay was submitted blocks the
   // submit until it's removed.
   const allSlateGames = [...(games ?? []), ...laterWeekRowGames];
-  const startedLegGames = myLegs
+  const startedLegGames = parlayLegs
     .map(l => allSlateGames.find(g => g.id === l.gameId))
     .filter((g): g is Game => !!g && hasGameStarted(g));
-  const canSubmit = myLegs.length >= minLegs && myLegs.length <= maxLegs && !lockStatus?.isLocked && startedLegGames.length === 0;
+  // Whoever started the parlay, the Parlay Maestro and lieutenants can
+  // submit it (the server checks a lieutenant's approve-parlays permission).
+  const canSubmitRole = !!myParlay && (myParlay.userId === effectiveUserId || !!league.isAdmin || !!league.isLieutenant);
+  const canSubmit = canSubmitRole && parlayLegs.length >= minLegs && parlayLegs.length <= maxLegs && !lockStatus?.isLocked && startedLegGames.length === 0;
+  // Alternate line for this member's own spread/total pick.
+  const myLegGame = myLeg ? allSlateGames.find(g => g.id === myLeg.gameId) : undefined;
+  const myPointsMoved = myLeg && myLegGame && canBuyPoints(myLeg.betType)
+    ? Math.max(-MAX_POINTS_MOVE, Math.min(MAX_POINTS_MOVE, impliedPointsMoved(myLeg.betType, myLeg.pick, myLegGame, myLeg.line)))
+    : null;
+  const stepMyLine = (delta: number) => {
+    if (!myLeg || !myLegGame || myPointsMoved == null || myLeg.id < 0) return;
+    const moved = Math.max(-MAX_POINTS_MOVE, Math.min(MAX_POINTS_MOVE, myPointsMoved + delta));
+    savePick({ gameId: myLegGame.id, betType: myLeg.betType, pick: myLeg.pick, line: lineForBet(myLegGame, myLeg.betType, myLeg.pick, moved) });
+  };
   // Members put their legs into one shared parlay, so "did I get a pick in"
   // is about having a leg in it, not about owning a parlay row.
   const iAmMissing = !!effectiveUserId && !!lockStatus?.missingMemberIds?.includes(effectiveUserId);
@@ -981,13 +1050,23 @@ export default function LeagueDetail() {
             </div>
           )}
 
-          {!lockStatus?.isLocked && (!myParlay || myParlay.status === "draft") && (!!myParlay || iAmMissing || !lockStatus) ? (
+          {!lockStatus?.isLocked && (!myParlay || myParlay.status === "draft") && (!!myParlay || iAmMissing || !lockStatus || startingNew) ? (
             <>
-              {/* Selection Summary */}
-              {myLegs.length > 0 && (
-                <Card className="bg-card/50 border-white/5">
-                  <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
-                    <CardTitle className="text-lg">Your Parlay ({myLegs.length}/{maxLegs} legs)</CardTitle>
+              {/* The shared parlay so far: every member's pick, this member's first. */}
+              <Card className="bg-card/50 border-white/5" data-testid="card-open-parlay">
+                <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
+                  <CardTitle className="text-lg">
+                    {myParlay ? "Parlay is Open!" : startingNew ? "New parlay" : "No parlay yet this week"}
+                    <span className="ml-2 text-sm font-normal text-muted-foreground">
+                      {parlayLegs.length}/{maxLegs} legs · min {minLegs}
+                    </span>
+                  </CardTitle>
+                  {startingNew && (
+                    <Button variant="ghost" size="sm" onClick={() => setStartingNew(false)} data-testid="button-cancel-new-parlay">
+                      Back to this week's parlay
+                    </Button>
+                  )}
+                  {canSubmitRole && (
                     <Button
                       onClick={submitParlay}
                       disabled={!canSubmit || submitDraftParlay.isPending || myLegs.some(l => l.id < 0)}
@@ -995,30 +1074,74 @@ export default function LeagueDetail() {
                     >
                       {submitDraftParlay.isPending ? `${getBuildingVerb(leagueId)}...` : "Submit Parlay"}
                     </Button>
-                  </CardHeader>
-                  <CardContent>
-                    {!canSubmit && (
-                      <p className="text-sm text-muted-foreground mb-3" data-testid="text-submit-blocked">
-                        {startedLegGames.length > 0
-                          ? `${startedLegGames.map(g => `${g.awayTeam} @ ${g.homeTeam}`).join(", ")} already started. Remove that pick to submit.`
-                          : myLegs.length < minLegs
-                          ? `Select at least ${minLegs} games`
-                          : `Maximum ${maxLegs} games allowed`}
-                      </p>
-                    )}
+                  )}
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <p className="text-sm text-muted-foreground" data-testid="text-submit-blocked">
+                    {startedLegGames.length > 0
+                      ? `${startedLegGames.map(g => `${g.awayTeam} @ ${g.homeTeam}`).join(", ")} already started. That pick has to come out before the parlay can be submitted.`
+                      : !myParlay
+                      ? startingNew
+                        ? "Your pick starts another parlay for this week."
+                        : "Each member adds one pick. Yours starts this week's parlay."
+                      : parlayLegs.length < minLegs
+                      ? `${minLegs - parlayLegs.length} more ${minLegs - parlayLegs.length === 1 ? "pick" : "picks"} needed before it can be submitted. ${myLeg ? "Your pick is saved." : "Pick a market below to add yours."}`
+                      : canSubmitRole
+                      ? "Enough picks are in. Submit when the league is ready."
+                      : `${myLeg ? "Your pick is saved. " : ""}Whoever started the parlay, or the Parlay Maestro, submits it.`}
+                  </p>
+                  {parlayLegs.length > 0 && (
                     <div className="flex flex-wrap gap-2">
-                      {myLegs.map((leg) => {
-                        const game = games?.find(g => g.id === leg.gameId) ?? laterWeekRowGames.find(g => g.id === leg.gameId);
+                      {[...myLegs, ...parlayLegs.filter(l => !myLegs.includes(l))].map((leg) => {
+                        const game = allSlateGames.find(g => g.id === leg.gameId);
+                        const mine = myLegs.includes(leg);
                         return (
-                          <Badge key={leg.id} variant="outline" className="text-sm" data-testid={`badge-my-leg-${leg.id}`}>
+                          <Badge
+                            key={leg.id}
+                            variant="outline"
+                            className={cn("text-sm", mine && "border-primary/60 bg-primary/10")}
+                            data-testid={mine ? `badge-my-leg-${leg.id}` : `badge-parlay-leg-${leg.id}`}
+                          >
+                            <span className="mr-1 text-muted-foreground">{mine ? "You" : getDisplayName(leg.user, "Member")}:</span>
                             {legChipLabel(leg, game)}
                           </Badge>
                         );
                       })}
                     </div>
-                  </CardContent>
-                </Card>
-              )}
+                  )}
+                  {myPointsMoved != null && (
+                    <div className="flex items-center gap-3 pt-1" data-testid="control-alternate-line">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Alternate line</span>
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-9 w-9 text-lg"
+                        onClick={() => stepMyLine(-POINTS_STEP)}
+                        disabled={myPointsMoved <= -MAX_POINTS_MOVE || myLeg!.id < 0}
+                        aria-label="Move the line half a point riskier, for better odds"
+                        data-testid="button-points-minus"
+                      >
+                        −
+                      </Button>
+                      <span className="min-w-[7rem] text-center font-mono text-sm" data-testid="text-points-line">{myLeg!.line}</span>
+                      <Button
+                        size="icon"
+                        variant="secondary"
+                        className="h-9 w-9 text-lg"
+                        onClick={() => stepMyLine(POINTS_STEP)}
+                        disabled={myPointsMoved >= MAX_POINTS_MOVE || myLeg!.id < 0}
+                        aria-label="Move the line half a point safer, for worse odds"
+                        data-testid="button-points-plus"
+                      >
+                        +
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        {myPointsMoved === 0 ? "Market line" : `${myPointsMoved > 0 ? "Bought" : "Sold"} ${Math.abs(myPointsMoved)} pt${Math.abs(myPointsMoved) === 1 ? "" : "s"}`}
+                      </span>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
 
               {/* Games Grid — all of this week's games; started/finished ones
                   are greyed out. Next week's games only appear once the user
@@ -1062,6 +1185,7 @@ export default function LeagueDetail() {
                   game={propDialogGame}
                   leagueId={leagueId}
                   weekId={activeWeekId}
+                  startNew={startingNew}
                   open={!!propDialogGame}
                   onOpenChange={(open) => !open && setPropDialogGame(null)}
                 />
@@ -1069,6 +1193,18 @@ export default function LeagueDetail() {
             </>
           ) : (
             <>
+              {/* Only while the league's parlays-per-week limit has room. */}
+              {weekParlay?.canStartAnother && !lockStatus?.isLocked && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-card/40 px-4 py-3" data-testid="banner-start-another-parlay">
+                  <p className="text-sm text-muted-foreground">
+                    This week's parlay is submitted. Your league can run {league.maxParlaysPerWeek} a week, so there's room for another.
+                  </p>
+                  <Button size="sm" onClick={() => setStartingNew(true)} data-testid="button-start-another-parlay">
+                    <Plus className="w-4 h-4 mr-1" />
+                    Start another parlay
+                  </Button>
+                </div>
+              )}
               {(() => {
                 const openParlays = (leagueParlays ?? []).filter(p => p.status === 'pending' || p.status === 'approved');
                 if (openParlays.length === 0) {
@@ -1353,13 +1489,7 @@ export default function LeagueDetail() {
                 </div>
               );
             }
-            // Participation rate per week: distinct submitters that week / current member count.
-            const submittersByWeek = new Map<number, Set<string>>();
-            for (const p of allParlays) {
-              if (!submittersByWeek.has(p.weekId)) submittersByWeek.set(p.weekId, new Set());
-              submittersByWeek.get(p.weekId)!.add(p.userId);
-            }
-            const memberCount = league.memberCount || 1;
+            const participationById = participationRateByParlay(allParlays, () => league.memberCount);
             const shouldVirtualize = list.length > 20;
             if (allViewMode === "grid") {
               return (
@@ -1394,8 +1524,7 @@ export default function LeagueDetail() {
                 allExpandSignal={allExpandSignal}
                 setAllCollapseSignal={setAllCollapseSignal}
                 setAllExpandSignal={setAllExpandSignal}
-                submittersByWeek={submittersByWeek}
-                memberCount={memberCount}
+                participationById={participationById}
                 loserLabel={league.loserLabel}
                 heroLabel={league.heroLabel}
                 canManage={!!league.isAdmin}
@@ -1454,7 +1583,7 @@ export default function LeagueDetail() {
                     {[1, 2, 3].map(i => <div key={i} className="h-12 bg-white/5 rounded animate-pulse" />)}
                   </div>
                 ) : (
-                  <StandingsList list={dataStats?.currentSeasonStandings ?? []} />
+                  <StandingsList list={dataStats?.currentSeasonStandings ?? []} exportName={`${slugify(league?.name)}-standings-current-season`} />
                 )}
               </CardContent>
             </Card>
@@ -1472,41 +1601,12 @@ export default function LeagueDetail() {
                     {[1, 2, 3].map(i => <div key={i} className="h-12 bg-white/5 rounded animate-pulse" />)}
                   </div>
                 ) : (
-                  <StandingsList list={dataStats?.allTimeStandings ?? []} />
+                  <StandingsList list={dataStats?.allTimeStandings ?? []} exportName={`${slugify(league?.name)}-standings-all-time`} />
                 )}
               </CardContent>
             </Card>
           </div>
 
-          {stats && stats.length > 0 && (
-            <div className="flex justify-end">
-              <Button
-                size="sm"
-                variant="outline"
-                className="gap-2"
-                data-testid="button-export-standings"
-                onClick={() => downloadCsv(
-                  `${league?.name ?? "league"}-standings.csv`,
-                  ["rank", "user_id", "username", "wins", "losses", "pushes", "win_rate_pct", "power_score", "participation_rate", "bar"],
-                  stats.map((s, i) => [
-                    i + 1,
-                    s.userId,
-                    s.username,
-                    s.wins,
-                    s.losses,
-                    s.pushes,
-                    s.winRate.toFixed(1),
-                    (s.powerScore ?? 0).toFixed(3),
-                    (s.participationRate ?? 0).toFixed(3),
-                    (s.bar ?? 0).toFixed(3),
-                  ])
-                )}
-              >
-                <Download className="w-4 h-4" />
-                Export CSV
-              </Button>
-            </div>
-          )}
         </TabsContent>
 
         {/* Records Tab */}
@@ -1965,6 +2065,32 @@ export default function LeagueDetail() {
       />
 
       {/* Lock confirmation dialog — shown when not all bets are in */}
+      <AlertDialog open={!!pendingSwap} onOpenChange={(open) => !open && setPendingSwap(null)}>
+        <AlertDialogContent data-testid="dialog-swap-pick">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Change your pick?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">You get one pick in this parlay.</span>
+              <span className="block">
+                Swap <strong>{pendingSwap?.from}</strong> for <strong>{pendingSwap?.to}</strong>?
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-keep-pick">Keep my pick</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingSwap) savePick(pendingSwap.leg);
+                setPendingSwap(null);
+              }}
+              data-testid="button-swap-pick"
+            >
+              Swap
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={showLockConfirm} onOpenChange={setShowLockConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
