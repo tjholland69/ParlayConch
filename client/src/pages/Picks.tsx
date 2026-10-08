@@ -13,6 +13,8 @@ import { getDisplayName } from "@/lib/displayName";
 import { upToCurrentWeek } from "@/lib/weekFilters";
 import { PageLoader } from "@/components/PageLoader";
 import { SlateGroupedGames } from "@/components/SlateGroupedGames";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { openParlayPrompt } from "@shared/weekParlays";
 
 interface InjuryNewsItem {
   id: string;
@@ -95,15 +97,20 @@ export default function Picks() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const gameNotes = useMemo(() => {
-    if (!visibleGames.length) return [];
-    return visibleGames.map(game => {
-      const watchList = (injuries ?? [])
-        .filter(inj => inj.tag && NOT_RULED_OUT_TAGS.has(inj.tag))
-        .filter(inj => inj.team && (teamMatches(game.homeTeam, inj.team) || teamMatches(game.awayTeam, inj.team)))
-        .slice(0, 2);
-      return { game, watchList };
-    });
+  // Each game's synopsis: a couple of players still in the mix worth a look
+  // for props. Opened from the Synopsis button on the game's tile.
+  const watchListByGame = useMemo(() => {
+    const byGame = new Map<number, InjuryNewsItem[]>();
+    for (const game of visibleGames) {
+      byGame.set(
+        game.id,
+        (injuries ?? [])
+          .filter(inj => inj.tag && NOT_RULED_OUT_TAGS.has(inj.tag))
+          .filter(inj => inj.team && (teamMatches(game.homeTeam, inj.team) || teamMatches(game.awayTeam, inj.team)))
+          .slice(0, 2),
+      );
+    }
+    return byGame;
   }, [visibleGames, injuries]);
 
   if (isLoadingWeeks || isLoadingLeagues) {
@@ -183,8 +190,7 @@ export default function Picks() {
           const hasOpenParlay = !!(status && status.submittedCount > 0 && !status.isLocked);
           // The week's parlay is still taking picks (nobody has submitted it).
           const parlayIsOpen = !!status?.hasOpenParlay && !status.isLocked;
-          const myPickIsIn = parlayIsOpen && !status!.currentUserNeedsPick;
-          const legsIn = `${status?.openParlayLegCount ?? 0} ${status?.openParlayLegCount === 1 ? "leg" : "legs"} in`;
+          const prompt = parlayIsOpen ? openParlayPrompt(status!) : null;
           // Rule 1: open but not (fully) approved yet -> brewing, pulse yellow.
           // Rule 2: open and approved -> green, settled in.
           // Rule 3: no parlay this week -> leave base styling untouched.
@@ -297,14 +303,14 @@ export default function Picks() {
                       <span className="min-w-0 text-xs">
                         <span className="flex items-center gap-1.5 font-medium text-orange-400">
                           <span className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />
-                          <span className="truncate">Parlay is Open!</span>
+                          <span className="truncate">{prompt!.headline}</span>
                         </span>
                         <span className="block truncate pl-3 text-orange-300/90">
-                          {myPickIsIn ? `Your pick is in · ${legsIn}` : `Make your pick · ${legsIn}`}
+                          {prompt!.detail}
                         </span>
                       </span>
                       <span className="flex items-center shrink-0 whitespace-nowrap text-xs font-semibold text-orange-300">
-                        {myPickIsIn ? "View" : "Pick"}
+                        {prompt!.action}
                         <ArrowRight className="w-3 h-3 ml-1" />
                       </span>
                     </div>
@@ -356,6 +362,40 @@ export default function Picks() {
                         {game.isFinished && (
                           <span className="text-xs font-mono text-muted-foreground">Final</span>
                         )}
+                        {/* The week synopsis for this game, off the tile until asked for. */}
+                        {injuries && (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 gap-1 px-2 text-xs text-primary/80"
+                                data-testid={`button-synopsis-${game.id}`}
+                              >
+                                <Newspaper className="w-3.5 h-3.5" />
+                                Synopsis
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent align="end" className="w-72 space-y-2 text-sm" data-testid={`card-week-synopsis-${game.id}`}>
+                              <p className="font-bold">{game.awayTeam} @ {game.homeTeam}</p>
+                              {(watchListByGame.get(game.id) ?? []).length > 0 ? (
+                                <div className="space-y-1">
+                                  <p className="text-xs text-muted-foreground">Worth watching for props (not ruled out):</p>
+                                  <ul className="space-y-0.5">
+                                    {watchListByGame.get(game.id)!.map(inj => (
+                                      <li key={inj.id} className="text-xs flex items-center gap-1.5">
+                                        <span className="font-medium">{inj.title.split(" — ")[0]}</span>
+                                        <span className="text-muted-foreground">{inj.tag}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No notable injury concerns reported.</p>
+                              )}
+                            </PopoverContent>
+                          </Popover>
+                        )}
                       </div>
                       <div className="flex items-center justify-between">
                         <div className="flex-1 min-w-0">
@@ -391,44 +431,6 @@ export default function Picks() {
         )}
       </div>
 
-      {/* Week Synopsis */}
-      {!!gameNotes.length && (
-        <div>
-          <h2 className="text-xl font-bold mb-1 flex items-center gap-2">
-            <Newspaper className="w-5 h-5 text-primary/70" />
-            Week Synopsis
-          </h2>
-          <p className="text-sm text-muted-foreground mb-4">
-            A quick rundown of what's on tap, plus a few names still in the mix worth watching for prop bets.
-          </p>
-          <div className="grid gap-3 md:grid-cols-2">
-            {gameNotes.map(({ game, watchList }) => (
-              <Card key={game.id} className="bg-card/30 border-white/5" data-testid={`card-week-synopsis-${game.id}`}>
-                <CardContent className="p-4 space-y-2">
-                  <p className="font-bold text-sm">
-                    {game.awayTeam} @ {game.homeTeam}
-                  </p>
-                  {watchList.length > 0 ? (
-                    <div className="space-y-1">
-                      <p className="text-xs text-muted-foreground">Worth watching (not ruled out):</p>
-                      <ul className="space-y-0.5">
-                        {watchList.map(inj => (
-                          <li key={inj.id} className="text-xs flex items-center gap-1.5">
-                            <span className="font-medium">{inj.title.split(" — ")[0]}</span>
-                            <span className="text-muted-foreground">{inj.tag}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">No notable injury concerns reported.</p>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

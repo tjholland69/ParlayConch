@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { HERO_LABELS, LOSER_LABELS } from "./leagueLabels";
 
 /** A sportsbook promo boost on a parlay's odds, in percent (25 = 25%).
  * Null means no boost. */
@@ -36,13 +37,16 @@ export const draftParlayLegInputSchema = z.object({
   // in a league that runs more than one parlay a week.
   parlayId: z.number().int().optional(),
   startNew: z.boolean().optional(),
+  // "On Behalf Of": the member this pick is for, when it isn't the caller.
+  onBehalfOfUserId: z.string().min(1).optional(),
 });
 
 export type DraftParlayLegInput = z.infer<typeof draftParlayLegInputSchema>;
 
 export const updateParlayInputSchema = z
   .object({
-    status: z.enum(["pending", "approved", "rejected", "win", "loss", "push"]).optional(),
+    // Every status the Data Editor's dropdown offers.
+    status: z.enum(["draft", "pending", "approved", "sent", "placed", "rejected", "win", "loss", "push", "void"]).optional(),
     legs: z
       .array(
         z.object({
@@ -101,8 +105,11 @@ export const updateLeagueSettingsSchema = z
     maxLegsPerParlay: z.number().int().min(1).optional(),
     maxBetsPerGame: z.number().int().min(1).optional(),
     insightsEnabled: z.boolean().optional(),
-    loserLabel: z.enum(['parlay_loser', 'asshole', 'jerry', 'dud', 'doofus']).optional(),
-    heroLabel: z.enum(['parlay_hero', 'mvp', 'legend', 'big_time']).optional(),
+    loserLabel: z.enum(LOSER_LABELS).optional(),
+    heroLabel: z.enum(HERO_LABELS).optional(),
+    // The league's own emoji for its shame report; null goes back to the
+    // defaults. Long enough for a multi-part emoji, too short for a sentence.
+    shameEmoji: z.string().trim().min(1).max(16).nullable().optional(),
     // When the league started (ISO timestamp). Set automatically when the
     // league is made here; the Parlay Maestro can move it back for a league
     // that existed before, so backloaded history reads right.
@@ -128,6 +135,27 @@ export const updateLeagueNotificationSettingsSchema = z
     reminderMessage: z.string().max(500),
   })
   .strict();
+
+export const lieutenantPermissionsSchema = z.object({
+  approveRejectParlays: z.boolean(),
+  editParlays: z.boolean(),
+  lockParlay: z.boolean(),
+  unlockParlay: z.boolean(),
+  unselectUserPick: z.boolean(),
+  // Newer than the rest: a page loaded before it existed won't send it.
+  pickOnBehalf: z.boolean().default(false),
+  approveMemberInvites: z.boolean(),
+  importHistory: z.boolean(),
+});
+
+export const notificationPreferencesSchema = z.object({
+  email: z.boolean(),
+  sms: z.boolean(),
+  push: z.boolean(),
+  phone: z.string().optional(),
+  // Per-alert switches, keyed by NOTIFICATION_EVENTS key.
+  events: z.record(z.string().max(40), z.boolean()).optional(),
+});
 
 export const addParlayLegInputSchema = z
   .object({

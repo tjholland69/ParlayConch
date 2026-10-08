@@ -32,7 +32,8 @@ import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import type { ParlayLegRowActions } from "@/components/ParlayLegsGrid";
 import { AddMultiBetParlayDialog } from "@/components/AddMultiBetParlayDialog";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
-import { compareLegsByDecided, parlayDecidedTime } from "@/lib/decidedTime";
+import { parlayDecidedTime } from "@/lib/decidedTime";
+import { sortParlayLegs } from "@shared/legOrder";
 
 // AG Grid alone is ~1MB — only worth loading once someone actually asks
 // for the raw leg grid, not on every Data Editor page visit.
@@ -675,7 +676,7 @@ export default function DemoDataEditor() {
 
   // Parlay level: week first, then when the parlay was decided. A parlay with
   // no dated legs sorts as the oldest in its week. Leg level (inside each
-  // card, and row order in Table view) is compareLegsByDecided.
+  // card, and row order in Table view) is sortParlayLegs.
   const byWeekThenDecided = (a: ParlayWithLegs, b: ParlayWithLegs) =>
     (a.week?.season ?? 0) - (b.week?.season ?? 0)
     || (a.week?.weekNumber ?? 0) - (b.week?.weekNumber ?? 0)
@@ -920,7 +921,7 @@ export default function DemoDataEditor() {
       ) : viewMode === "grid" ? (
         <Suspense fallback={<div className="h-[70vh] bg-white/5 rounded-xl animate-pulse" />}>
           <ParlayLegsGrid
-            rows={flattenParlayLegs(sorted.map(p => ({ ...p, legs: [...p.legs].sort(compareLegsByDecided) })))}
+            rows={flattenParlayLegs(sorted.map(p => ({ ...p, legs: sortParlayLegs(p) })))}
             rowActions={gridRowActions}
           />
         </Suspense>
@@ -963,6 +964,7 @@ export default function DemoDataEditor() {
                   participationRate={(submittersByWeek.get(parlay.weekId)?.size ?? 0) / memberCount}
                   loserLabel={league.loserLabel}
                   heroLabel={league.heroLabel}
+                  shameEmoji={league.shameEmoji}
                 />
               </CardErrorBoundary>
             ));

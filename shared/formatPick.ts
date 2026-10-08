@@ -221,3 +221,64 @@ export function legShortLabel(leg: ChipLeg, game?: ChipGame | null): string {
   }
   return team;
 }
+
+/** Prop names as they read on a lookthrough row: "Rush Yds", "Recs", "ATD". */
+const PROP_ABBREV: Record<string, string> = {
+  rush_yards: "Rush Yds",
+  rush_tds: "Rush TDs",
+  rush_attempts: "Rush Att",
+  rec_yards: "Rec Yds",
+  rec_tds: "Rec TDs",
+  receptions: "Recs",
+  all_purpose_yards: "Rush+Rec Yds",
+  pass_yards: "Pass Yds",
+  pass_tds: "Pass TDs",
+  pass_attempts: "Pass Att",
+  pass_completions: "Comps",
+  interceptions: "Ints",
+  anytime_td: "ATD",
+  first_td: "1st TD",
+  last_td: "Last TD",
+  kicking_pts: "Kick Pts",
+  fg_made: "FGs",
+  sacks: "Sacks",
+  tackles: "Tkls",
+};
+
+/** "rush_yards" -> "Rush Yds". A type that isn't listed is title-cased from
+ * its key ("longest_rush" -> "Longest Rush"), so nothing shows as snake_case. */
+export function propAbbrev(propType: string | null | undefined): string {
+  if (!propType) return "Prop";
+  return PROP_ABBREV[propType]
+    ?? propType.split("_").filter(Boolean).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+}
+
+/**
+ * A prop pick after the player's name: "Rush Yds O 25", "Recs U 4.5", "ATD",
+ * "2 ATDs" (a yes/no prop that needs two or more), "No ATD".
+ */
+export function propPickLabel(leg: Pick<ChipLeg, "pick" | "line" | "propType">): string {
+  const abbrev = propAbbrev(leg.propType);
+  const number = leg.line?.trim().split(/\s+/)[0]?.replace(/^[ou]/i, "") || null;
+  const pick = (leg.pick ?? "").toLowerCase();
+  if (pick === "yes" || pick === "no") {
+    const count = Number(number);
+    const label = Number.isFinite(count) && count >= 2 ? `${count} ${abbrev}s` : abbrev;
+    return pick === "no" ? `No ${label}` : label;
+  }
+  const side = pick === "over" ? "O" : pick === "under" ? "U" : "";
+  return [abbrev, side, number].filter(Boolean).join(" ");
+}
+
+/**
+ * A leg as one line on a lookthrough row. Props lead with the player:
+ * "Lamar Jackson - Rush Yds O 25". Game bets name their market, so a spread
+ * and a moneyline on the same team never read alike: "Chiefs (Spread -3.5)",
+ * "Chiefs (Moneyline -180)", "Over 47.5 (Total)".
+ */
+export function legLookthroughLabel(leg: ChipLeg, game?: ChipGame | null): string {
+  if (leg.betType === "player_prop") {
+    return `${leg.playerName?.trim() || "Player"} - ${withSegment(propPickLabel(leg), leg.gameSegment)}`;
+  }
+  return withSegment(legChipLabel(leg, game), leg.gameSegment);
+}

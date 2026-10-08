@@ -54,6 +54,7 @@ import { cn } from "@/lib/utils";
 import { Link } from "wouter";
 import type { LieutenantPermissions, LeagueMemberWithUser, LeagueNotificationSettings, ParlayLeg } from "@shared/schema";
 import { DEFAULT_LIEUTENANT_PERMISSIONS, DEFAULT_LEAGUE_NOTIFICATION_SETTINGS } from "@shared/schema";
+import { DEFAULT_SHAME_EMOJI, HERO_LABEL_TEXT, LOSER_LABEL_TEXT, SHAME_EMOJI_CHOICES } from "@shared/leagueLabels";
 import { PERMISSION_LABELS } from "@/lib/leaguePermissionLabels";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
 
@@ -424,6 +425,8 @@ export default function LeagueSettings() {
   const [insightsEnabled, setInsightsEnabled] = useState(false);
   const [loserLabel, setLoserLabel] = useState<string>("parlay_loser");
   const [heroLabel, setHeroLabel] = useState<string>("parlay_hero");
+  // "" means the league hasn't picked one and the report uses its defaults.
+  const [shameEmoji, setShameEmoji] = useState<string>("");
   const [perms, setPerms] = useState<LieutenantPermissions>(DEFAULT_LIEUTENANT_PERMISSIONS);
   const [notifSettings, setNotifSettings] = useState<LeagueNotificationSettings>(DEFAULT_LEAGUE_NOTIFICATION_SETTINGS);
   const [announceTitle, setAnnounceTitle] = useState("");
@@ -439,8 +442,9 @@ export default function LeagueSettings() {
       setInsightsEnabled(league.insightsEnabled ?? false);
       setLoserLabel(league.loserLabel ?? "parlay_loser");
       setHeroLabel(league.heroLabel ?? "parlay_hero");
+      setShameEmoji(league.shameEmoji ?? "");
       setPerms(
-        (league.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS
+        { ...DEFAULT_LIEUTENANT_PERMISSIONS, ...(league.lieutenantPermissions as Partial<LieutenantPermissions> | null) }
       );
       setNotifSettings(
         (league.notificationSettings as LeagueNotificationSettings) || DEFAULT_LEAGUE_NOTIFICATION_SETTINGS
@@ -479,7 +483,7 @@ export default function LeagueSettings() {
   });
 
   const handleSaveGeneral = () => {
-    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled, loserLabel, heroLabel });
+    updateSettings.mutate({ name, description: description || null, minLegsPerParlay: minLegs, maxLegsPerParlay: maxLegs, maxParlaysPerWeek: maxParlays, insightsEnabled, loserLabel, heroLabel, shameEmoji: shameEmoji.trim() || null });
   };
 
   const handleSavePermissions = () => {
@@ -643,11 +647,9 @@ export default function LeagueSettings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="parlay_loser">Parlay Loser</SelectItem>
-                    <SelectItem value="asshole">Asshole</SelectItem>
-                    <SelectItem value="jerry">Jerry</SelectItem>
-                    <SelectItem value="dud">Dud</SelectItem>
-                    <SelectItem value="doofus">Doofus</SelectItem>
+                    {Object.entries(LOSER_LABEL_TEXT).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -658,12 +660,44 @@ export default function LeagueSettings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="parlay_hero">Parlay Hero</SelectItem>
-                    <SelectItem value="mvp">MVP</SelectItem>
-                    <SelectItem value="legend">Legend</SelectItem>
-                    <SelectItem value="big_time">Big Time</SelectItem>
+                    {Object.entries(HERO_LABEL_TEXT).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>{label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="shame-emoji">Shame report emoji</Label>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {SHAME_EMOJI_CHOICES.map((emoji) => {
+                    const selected = (shameEmoji || DEFAULT_SHAME_EMOJI) === emoji;
+                    return (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setShameEmoji(emoji)}
+                        aria-pressed={selected}
+                        aria-label={`Use ${emoji}`}
+                        className={`h-9 w-9 rounded-lg border text-lg transition-colors ${selected ? "border-primary bg-primary/15" : "border-white/10 bg-background hover:border-white/30"}`}
+                        data-testid={`button-shame-emoji-${emoji}`}
+                      >
+                        {emoji}
+                      </button>
+                    );
+                  })}
+                  <Input
+                    id="shame-emoji"
+                    value={shameEmoji}
+                    onChange={(e) => setShameEmoji(e.target.value)}
+                    placeholder="Or type one"
+                    maxLength={16}
+                    className="h-9 w-28 bg-background border-white/10"
+                    data-testid="input-shame-emoji"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Shown on the report's slides and around its title when it's copied as text. It applies on the web and in the app.
+                </p>
               </div>
             </CardContent>
           </Card>

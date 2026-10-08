@@ -4,6 +4,7 @@
  * already has, so web and mobile show (and share) the same two slides.
  */
 import { legChipLabel, legShortLabel } from "./formatPick";
+import { DEFAULT_SHAME_EMOJI, DEFAULT_SHAME_TEXT_EMOJI } from "./leagueLabels";
 
 type ShameLeg = Parameters<typeof legChipLabel>[0] & {
   id: number;
@@ -21,6 +22,8 @@ export type ShameReport = {
   losers: { legId: number; name: string; pick: string; shortPick: string; isParlayLoser: boolean }[];
   /** Legs still waiting on a result (a lost parlay with Monday night to play). */
   pendingCount: number;
+  /** The league's own emoji for the report, when the Parlay Maestro set one. */
+  emoji?: string | null;
 };
 
 /** Shame reports are only for the season being played: `currentSeason` is the active week's. */
@@ -43,6 +46,7 @@ export function buildShameReport<L extends ShameLeg>(input: {
   nameOf: (leg: L) => string;
   weekLabel: string;
   loserLabel: string;
+  emoji?: string | null;
 }): ShameReport | null {
   const lost = input.legs.filter((l) => l.result === "loss");
   const busted = lost.find((l) => l.id === input.bustedLegId);
@@ -66,19 +70,27 @@ export function buildShameReport<L extends ShameLeg>(input: {
     loserPick: first.pick,
     losers: [first, ...others],
     pendingCount: input.legs.filter((l) => l.result == null).length,
+    emoji: input.emoji?.trim() || null,
   };
+}
+
+/** The emoji on the report's slides: the league's own, else the siren. */
+export function shameEmoji(report: Pick<ShameReport, "emoji">): string {
+  return report.emoji || DEFAULT_SHAME_EMOJI;
 }
 
 /**
  * Plain-text version, for pasting into the group chat. Kept short: no year
- * in the title ("2026 Week 5" reads as "Week 5") and shorthand picks.
+ * in the title ("2026 Week 5" reads as "Week 5") and shorthand picks. The
+ * loser's own bet is in the list below, so their line is just the name.
  */
 export function shameReportText(report: ShameReport): string {
   const week = report.weekLabel.replace(/^\d{4}\s+/, "");
   const pending = shamePendingLine(report.pendingCount);
+  const emoji = report.emoji || DEFAULT_SHAME_TEXT_EMOJI;
   return [
-    `🔔 ${week} Shame Report 🔔`,
-    `${report.loserLabel}: ${report.loserName} (${report.losers[0].shortPick})`,
+    `${emoji} ${week} Shame Report ${emoji}`,
+    `${report.loserLabel}: ${report.loserName}`,
     "",
     `Losing bets (${report.losers.length}):`,
     ...report.losers.map((l) => `• ${l.name}: ${l.shortPick}`),

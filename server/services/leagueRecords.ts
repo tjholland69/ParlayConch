@@ -1,20 +1,11 @@
 import { db } from "../db";
+import { loserLabelText as loserLabelFor } from "@shared/leagueLabels";
 import { eq, and, inArray } from "drizzle-orm";
 import { leagueMembers, parlays, parlayLegs, games, weeks, leagues } from "@shared/db-schema";
 import { parseAmericanOdds } from "@shared/powerScore";
 import { getSlate } from "@shared/slate";
 import { applyBoost } from "@shared/parlayBoost";
 import { storage } from "../storage";
-
-/** Mirrors LOSER_LABEL_TEXT in client/src/components/ParlayRollupCard.tsx —
- * kept in sync by hand since one is server-only and the other client-only. */
-const LOSER_LABEL_TEXT: Record<string, string> = {
-  parlay_loser: "Parlay Loser",
-  asshole: "Asshole",
-  jerry: "Jerry",
-  dud: "Dud",
-  doofus: "Doofus",
-};
 
 export type LeagueRecordEntry = {
   key: string;
@@ -124,7 +115,7 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
   if (memberIds.length === 0) return [];
 
   const [league] = await db.select().from(leagues).where(eq(leagues.id, leagueId));
-  const loserLabelText = LOSER_LABEL_TEXT[league?.loserLabel ?? "parlay_loser"] ?? LOSER_LABEL_TEXT.parlay_loser;
+  const loserLabelText = loserLabelFor(league?.loserLabel);
 
   const rows = await db
     .select({

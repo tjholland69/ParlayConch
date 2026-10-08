@@ -62,7 +62,10 @@ export function isGamePast(game: Game): boolean {
   return new Date(game.gameTime) < new Date();
 }
 
-export type TakenMarkets = { spread?: string; moneyline?: string; total?: string };
+/** Who has a market, and which side they took: the other side is the one
+ * their pick rules out ("Voided by"). */
+export type TakenMarket = { by: string; betType: string; pick: string };
+export type TakenMarkets = { spread?: TakenMarket; moneyline?: TakenMarket; total?: TakenMarket };
 
 /** Per-game map of who (if anyone) already has each market on that game in
  * this parlay. One bet per market per parlay: once a member has the spread,
@@ -75,7 +78,7 @@ export function takenMarketsByGame(takenPicks: TakenPick[] | undefined): Map<num
     const market = t.betType === "over" || t.betType === "under" ? "total" : t.betType;
     if (market !== "spread" && market !== "moneyline" && market !== "total") continue;
     const entry = byGame.get(t.gameId) ?? {};
-    entry[market] = t.takenBy.mobile;
+    entry[market] = { by: t.takenBy.mobile, betType: t.betType, pick: t.pick };
     byGame.set(t.gameId, entry);
   }
   return byGame;

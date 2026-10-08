@@ -17,7 +17,9 @@ import { UserAvatar } from "@/components/UserAvatar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { REGION_TILES } from "@/lib/geo";
 import type { UserNotificationPreferences, UserRegion } from "@shared/schema";
+import { NOTIFICATION_EVENTS } from "@shared/notifications";
 import { useToast } from "@/hooks/use-toast";
+import { ConnectorTokensCard } from "@/components/ConnectorTokensCard";
 
 const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
 
@@ -576,7 +578,7 @@ export default function Settings() {
                 </div>
                 {notifPrefs.email && (
                   <p className="text-xs text-blue-400/80 pl-11">
-                    Email delivery requires additional setup — your preference is saved.
+                    The alerts switched on below are also emailed to you.
                   </p>
                 )}
               </div>
@@ -611,7 +613,7 @@ export default function Settings() {
                       className="bg-background border-white/10 h-8 text-sm"
                       data-testid="input-phone-number"
                     />
-                    <p className="text-xs text-green-400/80">SMS delivery requires Twilio integration — your preference is saved.</p>
+                    <p className="text-xs text-green-400/80">Texts aren't being sent yet: no SMS provider is connected. Your preference is saved for when one is.</p>
                   </div>
                 )}
               </div>
@@ -635,8 +637,33 @@ export default function Settings() {
                   />
                 </div>
                 {notifPrefs.push && (
-                  <p className="text-xs text-purple-400/80 mt-2 pl-11">Push notifications will be available when a native app is released.</p>
+                  <p className="text-xs text-purple-400/80 mt-2 pl-11">Push isn't being sent yet: the app doesn't register for it. Your preference is saved for when it does.</p>
                 )}
+              </div>
+
+              {/* Which alerts. Every one lands in the bell; the channels
+                  above decide where else it goes. */}
+              <div className="p-4 rounded-xl bg-white/5 border border-white/5 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Alert me when…</p>
+                  <p className="text-xs text-muted-foreground">Each alert shows in the notification bell, and on any channel switched on above.</p>
+                </div>
+                {NOTIFICATION_EVENTS.map((event) => (
+                  <div key={event.key} className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm">{event.label}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {event.description}{event.required ? " Always on: it needs an answer from you." : ""}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={event.required || (notifPrefs.events?.[event.key] ?? event.defaultOn)}
+                      disabled={event.required}
+                      onCheckedChange={(v) => setNotifPrefs((p) => ({ ...p, events: { ...p.events, [event.key]: v } }))}
+                      data-testid={`switch-alert-${event.key}`}
+                    />
+                  </div>
+                ))}
               </div>
 
               <div className="flex justify-end pt-2">
@@ -882,6 +909,7 @@ export default function Settings() {
 
         {/* Account Tab */}
         <TabsContent value="account" className="space-y-4">
+          <ConnectorTokensCard />
           {user?.isSuperUser && (
             <Card className="bg-card/50 border-white/5">
               <CardHeader>

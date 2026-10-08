@@ -176,6 +176,20 @@
       "when": 1791346400636,
       "tag": "0024_shared_week_parlays",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1791425232289,
+      "tag": "0025_on_behalf_unlock_requests_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1791426874579,
+      "tag": "0026_api_tokens",
+      "breakpoints": true
     }
   ]
 }

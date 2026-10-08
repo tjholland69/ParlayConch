@@ -2,7 +2,12 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/api";
 import type { ActiveWeekStatus, MemberWeekParlay, ParlayWithLegs, ParlayLegDispute, ParlayLegWithParlayContext } from "@shared/schema";
 
-const myParlayKey = (leagueId: number, weekId: number) => ["/api/leagues", leagueId, "weeks", weekId, "my-parlay"];
+/** In On Behalf Of mode the parlay is cached as `onBehalfOf` sees it, under
+ * its own key, so switching who you're picking for never mixes the two. */
+export const myParlayKey = (leagueId: number, weekId: number, onBehalfOf?: string) => [
+  "/api/leagues", leagueId, "weeks", weekId, "my-parlay", ...(onBehalfOf ? [onBehalfOf] : []),
+];
+const onBehalfQuery = (onBehalfOf?: string) => (onBehalfOf ? `?onBehalfOf=${encodeURIComponent(onBehalfOf)}` : "");
 
 /** Everything that shows who's in this week's parlay; refreshed after any pick changes. */
 function invalidateWeekPickQueries(queryClient: ReturnType<typeof useQueryClient>, leagueId: number, weekId: number) {
@@ -75,10 +80,10 @@ export function useMyParlayLegsByIds(legIds: number[]) {
  * every 8 seconds for now; the aim is to push changes as they happen, the
  * way web does over its WebSocket (client/src/hooks/use-realtime-sync.ts).
  */
-export function useMyParlay(leagueId: number, weekId: number, opts: { live?: boolean } = {}) {
+export function useMyParlay(leagueId: number, weekId: number, opts: { live?: boolean; onBehalfOf?: string } = {}) {
   return useQuery<MemberWeekParlay | null>({
-    queryKey: myParlayKey(leagueId, weekId),
-    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/weeks/${weekId}/my-parlay`),
+    queryKey: myParlayKey(leagueId, weekId, opts.onBehalfOf),
+    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/weeks/${weekId}/my-parlay${onBehalfQuery(opts.onBehalfOf)}`),
     enabled: !!leagueId && !!weekId,
     ...(opts.live ? { staleTime: 0, refetchOnMount: "always" as const, refetchInterval: 8_000 } : {}),
   });
@@ -123,13 +128,17 @@ export type PickInput = {
  * remove-then-add for a second tap to land between. The response is the
  * whole parlay as it now stands, which replaces the cached copy.
  */
-export function useSetPick(leagueId: number, weekId: number) {
+export function useSetPick(leagueId: number, weekId: number, onBehalfOf?: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (pick: PickInput) =>
-      apiRequest<MemberWeekParlay>("POST", `/api/leagues/${leagueId}/weeks/${weekId}/draft-parlay/legs`, pick),
+      apiRequest<MemberWeekParlay>(
+        "POST",
+        `/api/leagues/${leagueId}/weeks/${weekId}/draft-parlay/legs`,
+        onBehalfOf ? { ...pick, onBehalfOfUserId: onBehalfOf } : pick,
+      ),
     onSuccess: (data) => {
-      queryClient.setQueryData(myParlayKey(leagueId, weekId), data);
+      queryClient.setQueryData(myParlayKey(leagueId, weekId, onBehalfOf), data);
       invalidateWeekPickQueries(queryClient, leagueId, weekId);
     },
     // A refused pick usually means another member got there first: reload
@@ -138,14 +147,15 @@ export function useSetPick(leagueId: number, weekId: number) {
   });
 }
 
-/** Removes a pick from an open parlay: the caller's own (the server refuses anyone else's). */
-export function useRemovePick(leagueId: number, weekId: number) {
+/** Removes a pick from an open parlay: the caller's own, or one they made
+ * on a member's behalf (the server refuses anyone else's). */
+export function useRemovePick(leagueId: number, weekId: number, onBehalfOf?: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ parlayId, legId }: { parlayId: number; legId: number }) =>
-      apiRequest<{ parlay: MemberWeekParlay | null }>("DELETE", `/api/parlays/${parlayId}/legs/${legId}`),
+      apiRequest<{ parlay: MemberWeekParlay | null }>("DELETE", `/api/parlays/${parlayId}/legs/${legId}${onBehalfQuery(onBehalfOf)}`),
     onSuccess: (data) => {
-      queryClient.setQueryData(myParlayKey(leagueId, weekId), data.parlay ?? null);
+      queryClient.setQueryData(myParlayKey(leagueId, weekId, onBehalfOf), data.parlay ?? null);
       invalidateWeekPickQueries(queryClient, leagueId, weekId);
     },
     onError: () => queryClient.invalidateQueries({ queryKey: myParlayKey(leagueId, weekId) }),
@@ -220,11 +230,13 @@ export function useRejectParlay(leagueId: number, weekId: number) {
 }
 
 /** Open/resolved/dismissed disputes filed against one leg — a member can only see their own. */
-export function useLegDisputes(legId: number) {
+/** `enabled` keeps a list of legs from each asking for its disputes: only
+ * the leg whose dispute sheet is open does. */
+export function useLegDisputes(legId: number, enabled = true) {
   return useQuery<ParlayLegDispute[]>({
     queryKey: ["/api/parlay-legs", legId, "disputes"],
     queryFn: async () => apiRequest("GET", `/api/parlay-legs/${legId}/disputes`),
-    enabled: !!legId,
+    enabled: !!legId && enabled,
   });
 }
 

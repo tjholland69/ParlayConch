@@ -22,7 +22,7 @@ interface LeagueCardProps {
   needsPick?: boolean;
   /** Shows the "Parlay is Open!" box while this week's parlay is still
    * taking picks, with how many legs are in and whether the member's is. */
-  openParlay?: { legCount: number; hasMyPick: boolean };
+  openParlay?: ReturnType<typeof import("@shared/weekParlays").openParlayPrompt>;
   /** Active week id, used to hold the button back once that week's deadline has locked. */
   activeWeekId?: number;
 }
@@ -32,7 +32,6 @@ export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId }
   const { data: lockStatus } = useWeekLockStatus(league.id, activeWeekId ?? 0);
   const showOpenParlay = !!openParlay && !lockStatus?.isLocked;
   const showCreateParlay = needsPick && !showOpenParlay && !lockStatus?.isLocked;
-  const legsIn = `${openParlay?.legCount ?? 0} ${openParlay?.legCount === 1 ? "leg" : "legs"} in`;
 
   const statColor =
     stat && stat.winRate >= 60 ? "#4ade80" : stat && stat.winRate >= 40 ? "#facc15" : "#f87171";
@@ -135,26 +134,22 @@ export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId }
               onPress={() => router.push(`/leagues/${league.id}/build`)}
               style={({ pressed }) => [styles.draftAlert, pressed && styles.pressed]}
               accessibilityRole="button"
-              accessibilityLabel={
-                openParlay!.hasMyPick
-                  ? `The parlay is open in ${league.name}. Your pick is in.`
-                  : `The parlay is open in ${league.name}. Make your pick.`
-              }
+              accessibilityLabel={`${league.name}: ${openParlay!.headline}. ${openParlay!.detail}`}
               testID={`alert-parlay-open-${league.id}`}
             >
               <View style={styles.draftAlertBody}>
                 <View style={styles.draftAlertLabel}>
                   <View style={styles.draftAlertDot} />
                   <Text style={styles.draftAlertText} numberOfLines={1}>
-                    Parlay is Open!
+                    {openParlay!.headline}
                   </Text>
                 </View>
                 <Text style={styles.draftAlertSub} numberOfLines={1}>
-                  {openParlay!.hasMyPick ? `Your pick is in · ${legsIn}` : `Make your pick · ${legsIn}`}
+                  {openParlay!.detail}
                 </Text>
               </View>
               <View style={styles.draftAlertAction}>
-                <Text style={styles.draftAlertActionText}>{openParlay!.hasMyPick ? "View" : "Pick"}</Text>
+                <Text style={styles.draftAlertActionText}>{openParlay!.action}</Text>
                 <Ionicons name="arrow-forward" size={13} color="#fdba74" />
               </View>
             </Pressable>

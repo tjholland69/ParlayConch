@@ -95,8 +95,11 @@ export const leagues = pgTable("leagues", {
   notificationSettings: jsonb("notification_settings").$type<LeagueNotificationSettings>(),
   // What to call the member whose bet busts first each losing week: 'parlay_loser', 'asshole', 'jerry', 'dud', or 'doofus'.
   loserLabel: text("loser_label").default("parlay_loser"),
-  // What to call the member whose bet is the last to be decided in a winning parlay: 'parlay_hero', 'mvp', 'legend', or 'big_time'.
+  // What to call the member whose bet is the last to be decided in a winning parlay: one of HERO_LABELS (shared/leagueLabels.ts).
   heroLabel: text("hero_label").default("parlay_hero"),
+  // The league's own emoji for its shame report. Null uses the defaults (a
+  // siren on the slides, a bell in the text version).
+  shameEmoji: text("shame_emoji"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -243,6 +246,17 @@ export const parlayLegs = pgTable("parlay_legs", {
   // 'exact' = deterministic mid-game detection (totals-over, player props)
   // 'heuristic' = probabilistic garbage-time elimination (spread/moneyline/under)
   decidedConfidence: text("decided_confidence").default("final"),
+  // When the pick was saved. Changing a pick writes a new row, so this is the
+  // time of the pick that stands. Legs from before this column all carry the
+  // time it was added; they keep their id order (see shared/legOrder.ts).
+  createdAt: timestamp("created_at").defaultNow(),
+  // "On Behalf Of": set when someone other than the leg's owner (userId)
+  // made the pick. The owner then has to approve it, or the Parlay Maestro
+  // can override. approvalStatus is null for a pick the owner made themselves.
+  placedByUserId: varchar("placed_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  approvalStatus: text("approval_status"), // null | 'pending' | 'approved'
+  approvalByUserId: varchar("approval_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  approvalAt: timestamp("approval_at"),
 }, (table) => [
   index("parlay_legs_parlay_id_idx").on(table.parlayId),
   index("parlay_legs_user_id_idx").on(table.userId),
@@ -296,6 +310,68 @@ export const leagueWeekLocks = pgTable("league_week_locks", {
   hadMissingBets: boolean("had_missing_bets").notNull().default(false),
 });
 
+// "On Behalf Of" grants made person to person: `ownerUserId` lets
+// `delegateUserId` make their pick in this league. The Parlay Maestro (and
+// lieutenants, when the league allows it) can pick for anyone without one.
+export const pickDelegations = pgTable("pick_delegations", {
+  id: serial("id").primaryKey(),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  ownerUserId: varchar("owner_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  delegateUserId: varchar("delegate_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("pick_delegations_uidx").on(table.leagueId, table.ownerUserId, table.delegateUserId),
+  index("pick_delegations_delegate_idx").on(table.leagueId, table.delegateUserId),
+]);
+
+// A member asking for a locked week to be reopened. Whoever can unlock (the
+// Parlay Maestro, or a lieutenant with the unlock permission) grants or
+// dismisses it; granting unlocks the week.
+export const unlockRequests = pgTable("unlock_requests", {
+  id: serial("id").primaryKey(),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  weekId: integer("week_id")
+    .notNull()
+    .references(() => weeks.id, { onDelete: "cascade" }),
+  requestedBy: varchar("requested_by")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  reason: text("reason"),
+  status: text("status").notNull().default("open"), // 'open' | 'granted' | 'dismissed'
+  resolvedBy: varchar("resolved_by").references(() => users.id, { onDelete: "set null" }),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  index("unlock_requests_league_week_idx").on(table.leagueId, table.weekId),
+]);
+
+// Personal access tokens for the read-only MCP connector (server/mcp.ts).
+// Only a SHA-256 hash is stored: the token itself is shown once, when it's
+// made. `tokenPrefix` is its first few characters, so the owner can tell
+// their tokens apart in Settings.
+export const apiTokens = pgTable("api_tokens", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  tokenPrefix: text("token_prefix").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at"),
+  revokedAt: timestamp("revoked_at"),
+}, (table) => [
+  index("api_tokens_user_id_idx").on(table.userId),
+]);
+
 // League member pokes — an easter egg on the league Members tab. One row per
 // poke; seenAt is set when the recipient pokes back or dismisses it.
 export const leaguePokes = pgTable("league_pokes", {
@@ -322,13 +398,17 @@ export const notifications = pgTable("notifications", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   leagueId: integer("league_id").references(() => leagues.id, { onDelete: "cascade" }),
-  type: text("type").notNull(), // 'announcement', 'parlay_approved', 'parlay_rejected', 'reminder', 'system', 'dispute_resolved'
+  type: text("type").notNull(), // 'announcement', 'parlay_approved', 'parlay_rejected', 'reminder', 'system', 'dispute_resolved', or a NOTIFICATION_EVENTS key (shared/notifications.ts)
   title: text("title").notNull(),
   message: text("message"),
   isRead: boolean("is_read").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // Set for alerts that must reach a member once only (a parlay busting, a
+  // slate wrap-up): a second insert with the same key is skipped.
+  dedupeKey: text("dedupe_key"),
 }, (table) => [
   index("notifications_user_id_idx").on(table.userId),
+  uniqueIndex("notifications_user_dedupe_uidx").on(table.userId, table.dedupeKey),
 ]);
 
 // ─── Custom Indexes ────────────────────────────────────────────────────────
@@ -467,7 +547,7 @@ export type InsertAuditEvent = typeof auditEvents.$inferInsert;
 
 // Schemas
 export const insertLeagueWeekLockSchema = createInsertSchema(leagueWeekLocks).omit({ id: true, lockedAt: true });
-export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, isRead: true, createdAt: true });
+export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, isRead: true, createdAt: true, dedupeKey: true });
 export const insertWeekSchema = createInsertSchema(weeks).omit({ id: true });
 export const insertGameSchema = createInsertSchema(games).omit({ id: true });
 export const insertBetSchema = createInsertSchema(bets).omit({ id: true, userId: true, status: true, createdAt: true });
@@ -477,7 +557,10 @@ export const insertLeagueMemberSchema = createInsertSchema(leagueMembers).omit({
 export const insertTeamSchema = createInsertSchema(teams).omit({ id: true });
 export const insertParlaySchema = createInsertSchema(parlays).omit({ id: true, userId: true, status: true, approvedBy: true, approvedAt: true, createdAt: true, source: true, importBatchId: true, boostPct: true });
 export const insertParlayLegSchema = createInsertSchema(parlayLegs)
-  .omit({ id: true, result: true, decidedAt: true, decidedPlayDesc: true, decidedQuarter: true, decidedClock: true, decidedConfidence: true })
+  .omit({
+    id: true, result: true, decidedAt: true, decidedPlayDesc: true, decidedQuarter: true, decidedClock: true, decidedConfidence: true,
+    createdAt: true, placedByUserId: true, approvalStatus: true, approvalByUserId: true, approvalAt: true,
+  })
   .extend({ userId: z.string().optional() }); // server attaches userId before insert; clients need not supply it
 export const insertImportBatchSchema = createInsertSchema(importBatches).omit({ id: true, uploadedAt: true });
 
@@ -561,6 +644,9 @@ export type CustomIndexShare = typeof customIndexShares.$inferSelect;
 
 export type LeagueWeekLock = typeof leagueWeekLocks.$inferSelect;
 export type LeaguePoke = typeof leaguePokes.$inferSelect;
+export type PickDelegation = typeof pickDelegations.$inferSelect;
+export type ApiToken = typeof apiTokens.$inferSelect;
+export type UnlockRequest = typeof unlockRequests.$inferSelect;
 export type InsertLeagueWeekLock = z.infer<typeof insertLeagueWeekLockSchema>;
 
 export type InsertBet = z.infer<typeof insertBetSchema>;

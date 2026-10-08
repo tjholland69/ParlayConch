@@ -24,7 +24,7 @@ interface EspnScoreboardEvent {
   id: string;
   status: { type: { completed: boolean } };
   competitions: {
-    competitors: { team: { abbreviation: string }; homeAway: "home" | "away" }[];
+    competitors: { team: { abbreviation: string }; homeAway: "home" | "away"; score?: string }[];
   }[];
 }
 
@@ -156,4 +156,44 @@ export async function syncDefensiveStatsFromEspn(
   }
 
   return { events: events.length, matched, players: playerCount, stats: statCount };
+}
+/**
+ * Marks games final from ESPN's scoreboard, which flips to "completed"
+ * within a minute or two of the whistle. nflverse's schedule file (the other
+ * score source) is only refreshed a few times a day, so this is what lets a
+ * result land the same hour the game ends. One request covers the week.
+ *
+ * Only touches games not already final, so it never overwrites a score an
+ * admin corrected, and it's safe to run every few minutes.
+ */
+export async function syncGameScoresFromEspn(
+  season: number,
+  week: number,
+): Promise<{ events: number; updated: number; noMatch: number }> {
+  const events = await fetchEspnWeekEvents(season, week);
+  let updated = 0;
+  let noMatch = 0;
+
+  for (const event of events) {
+    if (!event.status?.type?.completed) continue;
+    const comp = event.competitions?.[0];
+    const home = comp?.competitors?.find((c) => c.homeAway === "home");
+    const away = comp?.competitors?.find((c) => c.homeAway === "away");
+    if (!home || !away) continue;
+    const homeScore = parseInt(home.score ?? "", 10);
+    const awayScore = parseInt(away.score ?? "", 10);
+    if (Number.isNaN(homeScore) || Number.isNaN(awayScore)) continue;
+
+    const game = await findGameInDb(season, week, abbrevToShort(home.team.abbreviation), abbrevToShort(away.team.abbreviation));
+    if (!game) {
+      noMatch++;
+      continue;
+    }
+    if (game.isFinished && game.homeScore !== null && game.awayScore !== null) continue;
+
+    await storage.updateGameScores(game.id, homeScore, awayScore, true);
+    updated++;
+  }
+
+  return { events: events.length, updated, noMatch };
 }

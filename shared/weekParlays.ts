@@ -98,3 +98,32 @@ export function pickStanding(parlay: WeekParlay | null | undefined, userId: stri
     readyToSubmit: open && legs.length >= minLegs && legs.length <= maxLegs,
   };
 }
+
+/**
+ * The line a league tile shows while the week's parlay is taking picks. A
+ * member whose pick is in is never told to finish anything: they're shown
+ * who the parlay is waiting on, and once everyone is in it reads as ready
+ * to lock.
+ */
+export function openParlayPrompt(status: {
+  allSubmitted: boolean;
+  currentUserNeedsPick: boolean;
+  openParlayLegCount: number;
+  submittedCount: number;
+  totalMembers: number;
+}): { headline: string; detail: string; action: "Pick" | "View"; ready: boolean } {
+  const legs = `${status.openParlayLegCount} ${status.openParlayLegCount === 1 ? "leg" : "legs"} in`;
+  if (status.allSubmitted) {
+    return { headline: "Ready to Lock", detail: `Everyone's pick is in · ${legs}`, action: "View", ready: true };
+  }
+  if (status.currentUserNeedsPick) {
+    return { headline: "Parlay is Open!", detail: `Make your pick · ${legs}`, action: "Pick", ready: false };
+  }
+  const waiting = Math.max(0, status.totalMembers - status.submittedCount);
+  return {
+    headline: "Parlay is Open!",
+    detail: `Your pick is in · waiting on ${waiting} more`,
+    action: "View",
+    ready: false,
+  };
+}

@@ -37,7 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "My Leagues", href: "/leagues", icon: Users },
   { label: "Quick Picks", href: "/picks", icon: Trophy },
   { label: "History", href: "/history", icon: History },
-  { label: "Story Studio", href: "/story-studio", icon: Newspaper },
+  { label: "Reports", href: "/reports", icon: Newspaper },
   {
     label: "Index",
     icon: TrendingUp,

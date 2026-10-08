@@ -168,6 +168,7 @@ function HistoryParlayTile({
   participationRate,
   loserLabel,
   heroLabel,
+  shameEmoji,
 }: {
   parlay: ParlayWithLegs;
   onCopySlip: (p: ParlayWithLegs) => void;
@@ -180,6 +181,7 @@ function HistoryParlayTile({
   participationRate?: number;
   loserLabel?: string | null;
   heroLabel?: string | null;
+  shameEmoji?: string | null;
 }) {
 
   if (parlay.status === "void") {
@@ -217,6 +219,7 @@ function HistoryParlayTile({
           participationRate={participationRate}
           loserLabel={loserLabel}
           heroLabel={heroLabel}
+          shameEmoji={shameEmoji}
         />
       </CardErrorBoundary>
     </div>
@@ -365,6 +368,7 @@ export default function History() {
     participationRate: participationById.get(parlay.id),
     loserLabel: leagueById.get(parlay.leagueId)?.loserLabel,
     heroLabel: leagueById.get(parlay.leagueId)?.heroLabel,
+    shameEmoji: leagueById.get(parlay.leagueId)?.shameEmoji,
   });
   const isLoading = leagueId !== undefined ? loadingSingleLeagueParlays : loadingAllLeaguesParlays;
 
@@ -596,6 +600,15 @@ export default function History() {
                   Download .csv
                 </a>
               </DropdownMenuItem>
+              {/* The same rows, with every column described in the file. */}
+              {(["json", "xml", "md"] as const).map((format) => (
+                <DropdownMenuItem key={format} asChild data-testid={`button-export-history-${format}`}>
+                  <a href={`/api/parlay-legs/export.${format}${betHistoryExportQuery(exportOptions)}`} download>
+                    <Download className="w-4 h-4 mr-2" />
+                    Download .{format}
+                  </a>
+                </DropdownMenuItem>
+              ))}
               <DropdownMenuItem
                 disabled={emailExport.isPending}
                 onClick={() => emailExport.mutate(exportOptions)}

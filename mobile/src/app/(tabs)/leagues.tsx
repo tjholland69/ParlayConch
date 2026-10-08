@@ -12,6 +12,7 @@ import {
   Alert,
   StyleSheet,
 } from "react-native";
+import { openParlayPrompt } from "@shared/weekParlays";
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,9 +38,7 @@ export default function LeaguesScreen() {
   const { data: weekStatus } = useActiveWeekStatus();
   const openParlay = (leagueId: number) => {
     const status = weekStatus?.[leagueId];
-    return activeWeek && status?.hasOpenParlay
-      ? { legCount: status.openParlayLegCount, hasMyPick: !status.currentUserNeedsPick }
-      : undefined;
+    return activeWeek && status?.hasOpenParlay ? openParlayPrompt(status) : undefined;
   };
   const needsPick = (leagueId: number) => !!activeWeek && !!weekStatus?.[leagueId]?.currentUserNeedsPick;
 

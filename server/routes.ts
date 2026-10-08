@@ -53,12 +53,25 @@ import {
   createMultiBetParlayInputSchema,
   parlayBoostInputSchema,
   updateUserSettingsSchema,
+  lieutenantPermissionsSchema,
+  notificationPreferencesSchema,
 } from "@shared/routeValidation";
 import { validateMultiBetLegs } from "@shared/multiBetValidation";
 import { syncAllPlayerStatsForWeek } from "./services/nflverse";
 import { abbreviationsForTeam } from "@shared/nflTeams";
 import multer from "multer";
 import { PickRuleError } from "@shared/weekParlays";
+import { notifyLeague, notifyUsers } from "./services/notify";
+import { registerMcpRoutes } from "./mcp";
+import { createApiToken, listApiTokens, revokeApiToken } from "./services/apiTokens";
+import { getLeagueReport } from "./services/reports";
+import { startLiveResultsWorker } from "./jobs/live-results-queue";
+import { isReportId, reportCatalog } from "@shared/reports";
+import { loserLabelText } from "@shared/leagueLabels";
+import { legShortLabel } from "@shared/formatPick";
+import { legsDataset } from "@shared/legsCsv";
+import { EXPORT_CONTENT_TYPES, exportFilename, isExportFormat, serializeDataset, type ExportFormat } from "@shared/dataExport";
+import type { OnBehalfInfo, UnlockRequestWithName, UserSettings } from "@shared/schema";
 
 /**
  * Answers a failed pick request. A broken rule goes back to the member as
@@ -81,6 +94,34 @@ async function hasLeaguePermission(leagueId: number, userId: string, permission:
   const league = await storage.getLeague(leagueId);
   const perms = (league?.lieutenantPermissions as LieutenantPermissions) || DEFAULT_LIEUTENANT_PERMISSIONS;
   return perms[permission];
+}
+
+/** A member's name as it's shown around the app. */
+function displayNameOf(user: { firstName?: string | null; email?: string | null; settings?: unknown } | null | undefined): string {
+  return (user?.settings as UserSettings | null)?.displayName || user?.firstName || user?.email || "Someone";
+}
+
+/**
+ * Who `userId` can make a pick "On Behalf Of" in a league. The Parlay
+ * Maestro can for anyone; so can a lieutenant when the league switches that
+ * on. Anyone else needs the member's own say-so (pick_delegations).
+ */
+async function onBehalfTargetIds(leagueId: number, userId: string): Promise<{ via: OnBehalfInfo["via"]; userIds: Set<string> }> {
+  const [members, forAnyone] = await Promise.all([
+    storage.getLeagueMembers(leagueId),
+    hasLeaguePermission(leagueId, userId, "pickOnBehalf"),
+  ]);
+  const others = members.map(m => m.userId).filter(id => id !== userId);
+  if (forAnyone) {
+    const role = members.find(m => m.userId === userId)?.role;
+    return { via: role === "lieutenant" ? "lieutenant" : "maestro", userIds: new Set(others) };
+  }
+  if (!members.some(m => m.userId === userId)) return { via: null, userIds: new Set() };
+  const granted = (await storage.getPickDelegations(leagueId))
+    .filter(d => d.delegateUserId === userId)
+    .map(d => d.ownerUserId);
+  const userIds = new Set(others.filter(id => granted.includes(id)));
+  return { via: userIds.size > 0 ? "granted" : null, userIds };
 }
 
 /** Active league members, plus super users (who can act in any league). */
@@ -108,11 +149,17 @@ export async function registerRoutes(
   // These two fall back to an in-process timer when there's no Redis.
   await startSeasonRolloverWorker();
   await startWeekRolloverWorker();
+  await startLiveResultsWorker();
   registerRealtimeWebSocket(httpServer, app);
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
   });
+
+  // The read-only MCP connector. It authenticates with its own access
+  // tokens, not the session, so it's registered ahead of the act-for
+  // middleware and never sees an act-for identity.
+  registerMcpRoutes(app);
 
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
@@ -654,6 +701,49 @@ export async function registerRoutes(
     res.send(legsToCsv(rows));
   });
 
+  // The same export as JSON, XML or Markdown (shared/dataExport.ts): each
+  // carries a description of every column, so the file explains itself.
+  app.get("/api/parlay-legs/export.:format(json|xml|md)", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const format = req.params.format as ExportFormat;
+    const options = legExportOptions(req);
+    const rows = await storage.getLegExportRows(userId, options);
+    const league = options.leagueId != null ? await storage.getLeague(options.leagueId) : undefined;
+    const dataset = legsDataset(rows, {
+      league: league?.name ?? "All my leagues",
+      bets: options.mineOnly ? "Mine only" : "Every member's",
+    });
+    res.setHeader("Content-Type", EXPORT_CONTENT_TYPES[format]);
+    res.setHeader("Content-Disposition", `attachment; filename="${exportFilename("parlay_conch_bet_history", format)}"`);
+    res.send(serializeDataset(dataset, format));
+  });
+
+  // ===== REPORTS =====
+  // Canned extracts of a league's data (shared/reports.ts). GET .../reports
+  // lists them; GET .../reports/:reportId returns one as JSON for the app to
+  // draw, or as a file with ?format=csv|json|xml|md.
+  app.get("/api/leagues/:id/reports", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    if (!(await isLeagueMember(leagueId, (req.user as any).claims.sub))) return res.status(403).json({ message: "Not a member of this league" });
+    const league = await storage.getLeague(leagueId);
+    if (!league) return res.status(404).json({ message: "League not found" });
+    res.json(reportCatalog(loserLabelText(league.loserLabel)));
+  });
+
+  app.get("/api/leagues/:id/reports/:reportId", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    if (!(await isLeagueMember(leagueId, (req.user as any).claims.sub))) return res.status(403).json({ message: "Not a member of this league" });
+    if (!isReportId(req.params.reportId)) return res.status(404).json({ message: "No such report" });
+    const report = await getLeagueReport(leagueId, req.params.reportId, req.query.scope === "all" ? "all" : "season");
+    if (!report) return res.status(404).json({ message: "League not found" });
+
+    if (req.query.format == null) return res.json(report);
+    if (!isExportFormat(req.query.format)) return res.status(400).json({ message: "format must be csv, json, xml or md" });
+    res.setHeader("Content-Type", EXPORT_CONTENT_TYPES[req.query.format]);
+    res.setHeader("Content-Disposition", `attachment; filename="${exportFilename(report.dataset.name, req.query.format)}"`);
+    res.send(serializeDataset(report.dataset, req.query.format));
+  });
+
   app.post("/api/parlay-legs/export/email", isAuthenticated, auditLog("bet_history.export_email"), async (req, res) => {
     const userId = (req.user as any).claims.sub;
     // Always the signed-in person's own address, even while acting for
@@ -798,28 +888,68 @@ export async function registerRoutes(
   // the whole parlay, same shape as GET .../my-parlay.
   app.post("/api/leagues/:leagueId/weeks/:weekId/draft-parlay/legs", isAuthenticated, async (req, res) => {
     try {
-      const { parlayId, startNew, ...leg } = draftParlayLegInputSchema.parse(req.body);
+      const { parlayId, startNew, onBehalfOfUserId, ...leg } = draftParlayLegInputSchema.parse(req.body);
       const userId = (req.user as any).claims.sub;
       const leagueId = Number(req.params.leagueId);
       const weekId = Number(req.params.weekId);
       if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
 
-      const saved = await storage.setDraftPick(
-        userId,
-        leagueId,
-        weekId,
-        {
-          gameId: leg.gameId,
-          betType: leg.betType,
-          pick: leg.pick,
-          line: emptyToNull(leg.line),
-          playerName: leg.playerName ?? null,
-          propType: leg.propType ?? null,
-        },
-        { parlayId, startNew },
-      );
+      // "On Behalf Of": the pick belongs to `ownerId`, made by the caller.
+      const ownerId = onBehalfOfUserId && onBehalfOfUserId !== userId ? onBehalfOfUserId : userId;
+      const onBehalf = ownerId !== userId;
+      if (onBehalf && !(await onBehalfTargetIds(leagueId, userId)).userIds.has(ownerId)) {
+        return res.status(403).json({ message: "You aren't allowed to pick on that member's behalf." });
+      }
 
-      res.status(201).json(await storage.getMemberWeekParlay(userId, leagueId, weekId, saved.id));
+      const legInput = {
+        gameId: leg.gameId,
+        betType: leg.betType,
+        pick: leg.pick,
+        line: emptyToNull(leg.line),
+        playerName: leg.playerName ?? null,
+        propType: leg.propType ?? null,
+      };
+      const saved = await storage.setDraftPick(ownerId, leagueId, weekId, legInput, {
+        parlayId,
+        startNew,
+        placedByUserId: onBehalf ? userId : undefined,
+      });
+
+      const [league, actor, week] = await Promise.all([storage.getLeague(leagueId), storage.getUser(userId), storage.getWeek(weekId)]);
+      if (onBehalf) {
+        const game = leg.gameId != null ? await storage.getGame(leg.gameId) : undefined;
+        // The audit trail for the maker half of maker/checker. The actor is
+        // whoever is really signed in, even when they're acting for someone.
+        void recordAuditEvent({
+          eventType: "pick.on_behalf.create",
+          actorUserId: realUserId(req),
+          targetType: "user",
+          targetId: ownerId,
+          ip: req.ip,
+          userAgent: req.get("user-agent") ?? undefined,
+          metadata: { leagueId, weekId, parlayId: saved.id, placedBy: userId, ...legInput },
+        });
+        void notifyUsers([ownerId], {
+          event: "pick_on_behalf",
+          leagueId,
+          actorUserId: userId,
+          title: `${displayNameOf(actor)} made a pick for you`,
+          message: `${legShortLabel(legInput, game)} in ${league?.name ?? "your league"}'s ${week?.label ?? "weekly"} parlay. Approve it or reject it before the parlay locks.`,
+          path: `/leagues/${leagueId}`,
+        });
+      }
+      if (saved.started) {
+        void notifyLeague(leagueId, {
+          event: "parlay_open",
+          actorUserId: userId,
+          title: `${league?.name ?? "Your league"}: the ${week?.label ?? "week's"} parlay is open`,
+          message: `${displayNameOf(actor)} kicked it off. Get your pick in.`,
+          path: `/leagues/${leagueId}`,
+          dedupeKey: `parlay_open:${saved.id}`,
+        });
+      }
+
+      res.status(201).json(await storage.getMemberWeekParlay(ownerId, leagueId, weekId, saved.id));
     } catch (err) {
       sendPickError(res, err, "save pick");
     }
@@ -839,9 +969,13 @@ export async function registerRoutes(
       const canRemoveOthers = await hasLeaguePermission(existing.leagueId, userId, "unselectUserPick");
       const remaining = await storage.removeDraftParlayLeg(userId, parlayId, Number(req.params.legId), { canRemoveOthers });
       // Returned with its legs, like the add route, so the client can swap
-      // its cached copy for this one.
+      // its cached copy for this one. In On Behalf Of mode that copy is the
+      // parlay as the other member sees it.
+      const viewAs = typeof req.query.onBehalfOf === "string" && (await onBehalfTargetIds(existing.leagueId, userId)).userIds.has(req.query.onBehalfOf)
+        ? req.query.onBehalfOf
+        : userId;
       const parlay = remaining
-        ? await storage.getMemberWeekParlay(userId, remaining.leagueId, remaining.weekId, remaining.id)
+        ? await storage.getMemberWeekParlay(viewAs, remaining.leagueId, remaining.weekId, remaining.id)
         : null;
       res.json({ parlay });
     } catch (err) {
@@ -864,9 +998,12 @@ export async function registerRoutes(
 
       // Optional: the "any boost on this parlay?" answer from the submit prompt.
       const boost = req.body && "boostPct" in req.body ? parlayBoostInputSchema.parse(req.body).boostPct : undefined;
-      const canSubmitAny = await hasLeaguePermission(existing.leagueId, userId, "approveRejectParlays");
+      const [canSubmitAny, canOverrideApprovals] = await Promise.all([
+        hasLeaguePermission(existing.leagueId, userId, "approveRejectParlays"),
+        storage.isLeagueAdmin(existing.leagueId, userId),
+      ]);
 
-      res.json(await storage.submitDraftParlay(userId, parlayId, boost, { canSubmitAny }));
+      res.json(await storage.submitDraftParlay(userId, parlayId, boost, { canSubmitAny, canOverrideApprovals }));
     } catch (err) {
       sendPickError(res, err, "submit parlay");
     }
@@ -928,7 +1065,88 @@ export async function registerRoutes(
     const weekId = Number(req.params.weekId);
     if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
     const parlayId = req.query.parlayId != null ? Number(req.query.parlayId) : undefined;
-    res.json(await storage.getMemberWeekParlay(userId, leagueId, weekId, Number.isFinite(parlayId) ? parlayId : undefined));
+    // ?onBehalfOf: the parlay as that member sees it (which picks are taken
+    // depends on whose pick is being made), for On Behalf Of mode.
+    const onBehalfOf = typeof req.query.onBehalfOf === "string" ? req.query.onBehalfOf : undefined;
+    if (onBehalfOf && onBehalfOf !== userId && !(await onBehalfTargetIds(leagueId, userId)).userIds.has(onBehalfOf)) {
+      return res.status(403).json({ message: "You aren't allowed to pick on that member's behalf." });
+    }
+    res.json(await storage.getMemberWeekParlay(onBehalfOf ?? userId, leagueId, weekId, Number.isFinite(parlayId) ? parlayId : undefined));
+  });
+
+  // ===== ON BEHALF OF =====
+  // Who the caller can pick for, and who they've let pick for them.
+  app.get("/api/leagues/:id/on-behalf", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+    const [{ via, userIds }, members, delegations] = await Promise.all([
+      onBehalfTargetIds(leagueId, userId),
+      storage.getLeagueMembersWithUsers(leagueId),
+      storage.getPickDelegations(leagueId),
+    ]);
+    const info: OnBehalfInfo = {
+      via,
+      targets: members
+        .filter(m => userIds.has(m.userId))
+        .map(m => ({ userId: m.userId, name: displayNameOf(m.user) }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      myDelegateIds: delegations.filter(d => d.ownerUserId === userId).map(d => d.delegateUserId),
+    };
+    res.json(info);
+  });
+
+  // A member lets another member pick for them, or takes that back. Always
+  // the caller's own permission to give: nobody grants on someone's behalf.
+  app.put("/api/leagues/:id/pick-delegates/:delegateUserId", isAuthenticated, auditLog("pick.on_behalf.grant", { targetParam: "delegateUserId", targetType: "user" }), async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const delegateUserId = req.params.delegateUserId;
+    const memberIds = new Set((await storage.getLeagueMembers(leagueId)).map(m => m.userId));
+    if (!memberIds.has(userId)) return res.status(403).json({ message: "Not a member of this league" });
+    if (delegateUserId === userId) return res.status(400).json({ message: "You already pick for yourself." });
+    if (!memberIds.has(delegateUserId)) return res.status(404).json({ message: "That member isn't in this league" });
+    await storage.grantPickDelegation(leagueId, userId, delegateUserId);
+    res.json({ success: true });
+  });
+
+  app.delete("/api/leagues/:id/pick-delegates/:delegateUserId", isAuthenticated, auditLog("pick.on_behalf.revoke", { targetParam: "delegateUserId", targetType: "user" }), async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    await storage.revokePickDelegation(leagueId, userId, req.params.delegateUserId);
+    res.json({ success: true });
+  });
+
+  // The checker half: the member a pick was made for approves or rejects
+  // it. The Parlay Maestro can do either in their place (an override).
+  app.post("/api/parlay-legs/:legId/approval", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const legId = Number(req.params.legId);
+      const { action } = z.object({ action: z.enum(["approve", "reject"]) }).parse(req.body);
+      const [row] = await db
+        .select({ leagueId: parlays.leagueId })
+        .from(parlayLegs)
+        .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+        .where(eq(parlayLegs.id, legId));
+      if (!row) return res.status(404).json({ message: "That pick is no longer there." });
+      if (!(await isLeagueMember(row.leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+
+      const canOverride = await storage.isLeagueAdmin(row.leagueId, userId);
+      const result = await storage.resolveLegApproval(legId, userId, action, { canOverride });
+      void recordAuditEvent({
+        eventType: `pick.on_behalf.${action}${result.override ? ".override" : ""}`,
+        actorUserId: realUserId(req),
+        targetType: "parlay_leg",
+        targetId: legId,
+        ip: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+        metadata: { leagueId: result.leagueId, weekId: result.weekId, owner: result.leg.userId, placedBy: result.leg.placedByUserId, decidedBy: userId },
+      });
+      res.json({ success: true, action, override: result.override });
+    } catch (err) {
+      sendPickError(res, err, "decide on pick");
+    }
   });
 
   // Admin: Approve/Reject parlays
@@ -1949,16 +2167,7 @@ export async function registerRoutes(
       const isAdmin = await storage.isLeagueAdmin(leagueId, userId);
       if (!isAdmin) return res.status(403).json({ message: "Parlay Maestro access required" });
 
-      const schema = z.object({
-        approveRejectParlays: z.boolean(),
-        editParlays: z.boolean(),
-        lockParlay: z.boolean(),
-        unlockParlay: z.boolean(),
-        unselectUserPick: z.boolean(),
-        approveMemberInvites: z.boolean(),
-        importHistory: z.boolean(),
-      });
-      const permissions = schema.parse(req.body);
+      const permissions = lieutenantPermissionsSchema.parse(req.body);
       const league = await storage.updateLieutenantPermissions(leagueId, permissions);
       res.json(league);
     } catch (err: any) {
@@ -1980,6 +2189,30 @@ export async function registerRoutes(
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
+  });
+
+  // ===== CONNECTOR ACCESS TOKENS =====
+  // Tokens for the read-only MCP connector (server/mcp.ts). Always the
+  // signed-in person's own, like the settings writes above: acting for a
+  // member must never mint a token that reads as them.
+  app.get("/api/users/me/api-tokens", isAuthenticated, async (req, res) => {
+    res.json(await listApiTokens(realUserId(req)));
+  });
+
+  app.post("/api/users/me/api-tokens", isAuthenticated, auditLog("api_token.create"), async (req, res) => {
+    try {
+      const { name } = z.object({ name: z.string().trim().min(1).max(60) }).parse(req.body);
+      // The token is in this response and nowhere else afterwards.
+      res.status(201).json(await createApiToken(realUserId(req), name));
+    } catch (err: any) {
+      res.status(400).json({ message: err instanceof z.ZodError ? "Give the token a name (up to 60 characters)." : err.message });
+    }
+  });
+
+  app.delete("/api/users/me/api-tokens/:id", isAuthenticated, auditLog("api_token.revoke", { targetParam: "id", targetType: "api_token" }), async (req, res) => {
+    const revoked = await revokeApiToken(realUserId(req), Number(req.params.id));
+    if (!revoked) return res.status(404).json({ message: "Token not found" });
+    res.json({ success: true });
   });
 
   // ===== DEMO FLAGS =====
@@ -2709,12 +2942,7 @@ export async function registerRoutes(
   app.patch("/api/users/me/notification-preferences", isAuthenticated, async (req, res) => {
     try {
       const userId = realUserId(req);
-      const prefs = z.object({
-        email: z.boolean(),
-        sms: z.boolean(),
-        push: z.boolean(),
-        phone: z.string().optional(),
-      }).parse(req.body);
+      const prefs = notificationPreferencesSchema.parse(req.body);
 
       await storage.updateUserSettings(userId, { notificationPreferences: prefs });
       res.json({ success: true });
@@ -2723,56 +2951,193 @@ export async function registerRoutes(
     }
   });
 
-  // Parlay week lock: get status
+  // Parlay week lock: get status, plus what the caller can do about it.
   app.get("/api/leagues/:id/weeks/:weekId/lock", isAuthenticated, async (req, res) => {
     try {
+      const userId = (req.user as any).claims.sub;
       const leagueId = Number(req.params.id);
       const weekId = Number(req.params.weekId);
-      const status = await storage.getWeekLockStatus(leagueId, weekId);
-      res.json(status);
+      const [status, canLockByRole, canUnlock, starters, weekParlays, requests, isMember] = await Promise.all([
+        storage.getWeekLockStatus(leagueId, weekId),
+        hasLeaguePermission(leagueId, userId, "lockParlay"),
+        hasLeaguePermission(leagueId, userId, "unlockParlay"),
+        storage.getWeekStarters(leagueId, weekId),
+        storage.getLeagueParlaysForWeek(leagueId, weekId),
+        storage.getUnlockRequests(leagueId, weekId),
+        isLeagueMember(leagueId, userId),
+      ]);
+      const open = requests.filter(r => r.status === "open");
+      // "Submitted" here means it has gone to a sportsbook: past that point
+      // there's nothing left to reopen.
+      const atSportsbook = weekParlays.some(p => p.status === "sent" || p.status === "placed");
+      const requesters = canUnlock && open.length > 0 ? await storage.getLeagueMembersWithUsers(leagueId) : [];
+      res.json({
+        ...status,
+        viewer: {
+          canLock: canLockByRole || starters.includes(userId),
+          canUnlock,
+          canRequestUnlock: isMember && !canUnlock && status.isLocked && !status.inProgress && !atSportsbook,
+          hasOpenRequest: open.some(r => r.requestedBy === userId),
+        },
+        ...(canUnlock
+          ? {
+              openUnlockRequests: open.map((r): UnlockRequestWithName => ({
+                ...r,
+                requestedByName: displayNameOf(requesters.find(m => m.userId === r.requestedBy)?.user),
+              })),
+            }
+          : {}),
+      });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
   });
 
-  // Parlay week lock: lock the week
-  app.post("/api/leagues/:id/weeks/:weekId/lock", isAuthenticated, async (req, res) => {
+  // Parlay week lock: lock the week. Open to whoever started the week's
+  // parlay, the Parlay Maestro, and a lieutenant with the lock permission.
+  app.post("/api/leagues/:id/weeks/:weekId/lock", isAuthenticated, auditLog("parlay.lock_week", { targetParam: "id", targetType: "league" }), async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
       const leagueId = Number(req.params.id);
       const weekId = Number(req.params.weekId);
 
-      const canLock = await hasLeaguePermission(leagueId, userId, "lockParlay");
-      if (!canLock) return res.status(403).json({ message: "Only the Parlay Maestro (or a Lieutenant with Lock permission) can lock the parlay." });
+      const canLock = (await hasLeaguePermission(leagueId, userId, "lockParlay"))
+        || ((await isLeagueMember(leagueId, userId)) && (await storage.getWeekStarters(leagueId, weekId)).includes(userId));
+      if (!canLock) return res.status(403).json({ message: "Only whoever started this week's parlay, the Parlay Maestro, or a Lieutenant with Lock permission can lock it." });
 
       const current = await storage.getWeekLockStatus(leagueId, weekId);
       if (current.isLocked) return res.status(409).json({ message: "This week's parlay is already locked." });
 
       const { hadMissingBets } = z.object({ hadMissingBets: z.boolean() }).parse(req.body);
-      const lock = await storage.lockWeekParlay(leagueId, weekId, userId, hadMissingBets);
+      const canOverrideApprovals = await storage.isLeagueAdmin(leagueId, userId);
+      const lock = await storage.lockWeekParlay(leagueId, weekId, userId, hadMissingBets, { canOverrideApprovals });
+
+      const [league, actor, week] = await Promise.all([storage.getLeague(leagueId), storage.getUser(userId), storage.getWeek(weekId)]);
+      void notifyLeague(leagueId, {
+        event: "parlay_locked",
+        actorUserId: userId,
+        title: `${league?.name ?? "Your league"}: the ${week?.label ?? "week's"} parlay is locked`,
+        message: `${displayNameOf(actor)} locked it. Picks are final unless it's unlocked.`,
+        path: `/leagues/${leagueId}`,
+      });
       res.json(lock);
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }
   });
 
+  /** Unlocks the week and tells the league. Shared by a direct unlock and a granted request. */
+  async function unlockWeekAndNotify(leagueId: number, weekId: number, userId: string) {
+    await storage.unlockWeekParlay(leagueId, weekId, userId);
+    const [league, actor, week] = await Promise.all([storage.getLeague(leagueId), storage.getUser(userId), storage.getWeek(weekId)]);
+    void notifyLeague(leagueId, {
+      event: "parlay_unlocked",
+      actorUserId: userId,
+      title: `${league?.name ?? "Your league"}: the ${week?.label ?? "week's"} parlay is unlocked`,
+      message: `${displayNameOf(actor)} reopened it, so picks can change again.`,
+      path: `/leagues/${leagueId}`,
+    });
+  }
+
   // Parlay week lock: unlock
-  app.delete("/api/leagues/:id/weeks/:weekId/lock", isAuthenticated, async (req, res) => {
+  app.delete("/api/leagues/:id/weeks/:weekId/lock", isAuthenticated, auditLog("parlay.unlock_week", { targetParam: "id", targetType: "league" }), async (req, res) => {
     try {
       const userId = (req.user as any).claims.sub;
       const leagueId = Number(req.params.id);
       const weekId = Number(req.params.weekId);
 
       const canUnlock = await hasLeaguePermission(leagueId, userId, "unlockParlay");
-      if (!canUnlock) return res.status(403).json({ message: "Only the Parlay Maestro (or a Lieutenant with Unlock permission) can unlock the parlay." });
+      if (!canUnlock) return res.status(403).json({ message: "Only the Parlay Maestro (or a Lieutenant with Unlock permission) can unlock the parlay. You can request an unlock instead." });
 
       const current = await storage.getWeekLockStatus(leagueId, weekId);
       if (current.inProgress) {
         return res.status(409).json({ message: "This week's parlay is in progress and can no longer be unlocked. Make changes in the Data Editor." });
       }
 
-      await storage.unlockWeekParlay(leagueId, weekId);
+      await unlockWeekAndNotify(leagueId, weekId, userId);
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ message: err.message });
+    }
+  });
+
+  // A member who can't unlock asks whoever can. Allowed while the week is
+  // locked, no game has started, and the parlay hasn't gone to a sportsbook.
+  app.post("/api/leagues/:id/weeks/:weekId/unlock-requests", isAuthenticated, auditLog("parlay.unlock_request", { targetParam: "id", targetType: "league" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const leagueId = Number(req.params.id);
+      const weekId = Number(req.params.weekId);
+      if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+      const { reason } = z.object({ reason: z.string().max(300).optional() }).parse(req.body ?? {});
+
+      const [status, weekParlays] = await Promise.all([
+        storage.getWeekLockStatus(leagueId, weekId),
+        storage.getLeagueParlaysForWeek(leagueId, weekId),
+      ]);
+      if (!status.isLocked) return res.status(409).json({ message: "This week isn't locked." });
+      if (status.inProgress) return res.status(409).json({ message: "This week's parlay is in progress and can no longer be unlocked." });
+      if (weekParlays.some(p => p.status === "sent" || p.status === "placed")) {
+        return res.status(409).json({ message: "This parlay has already gone to the sportsbook, so it can't be unlocked." });
+      }
+
+      const request = await storage.createUnlockRequest(leagueId, weekId, userId, reason);
+
+      // Goes to everyone who can grant it: the Maestro, and lieutenants
+      // with the unlock permission.
+      const members = await storage.getLeagueMembers(leagueId);
+      const approvers: string[] = [];
+      for (const m of members) {
+        if (m.role === "admin" || (m.role === "lieutenant" && (await hasLeaguePermission(leagueId, m.userId, "unlockParlay")))) {
+          approvers.push(m.userId);
+        }
+      }
+      const [league, actor, week] = await Promise.all([storage.getLeague(leagueId), storage.getUser(userId), storage.getWeek(weekId)]);
+      void notifyUsers(approvers, {
+        event: "unlock_requested",
+        leagueId,
+        actorUserId: userId,
+        title: `${displayNameOf(actor)} asked to unlock the ${week?.label ?? "week's"} parlay`,
+        message: `${league?.name ?? "Your league"}${request.reason ? `: "${request.reason}"` : ""}. Open the league to unlock it or dismiss the request.`,
+        path: `/leagues/${leagueId}`,
+        dedupeKey: `unlock_request:${request.id}`,
+      });
+      res.status(201).json(request);
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // Whoever can unlock answers a request: granting unlocks the week.
+  app.post("/api/leagues/:id/weeks/:weekId/unlock-requests/:requestId", isAuthenticated, auditLog("parlay.unlock_request.resolve", { targetParam: "requestId", targetType: "unlock_request" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const leagueId = Number(req.params.id);
+      const weekId = Number(req.params.weekId);
+      const requestId = Number(req.params.requestId);
+      const { action } = z.object({ action: z.enum(["grant", "dismiss"]) }).parse(req.body);
+
+      if (!(await hasLeaguePermission(leagueId, userId, "unlockParlay"))) {
+        return res.status(403).json({ message: "Only the Parlay Maestro (or a Lieutenant with Unlock permission) can answer an unlock request." });
+      }
+      const request = (await storage.getUnlockRequests(leagueId, weekId)).find(r => r.id === requestId);
+      if (!request || request.status !== "open") return res.status(404).json({ message: "That request has already been answered." });
+
+      const [league, week] = await Promise.all([storage.getLeague(leagueId), storage.getWeek(weekId)]);
+      if (action === "grant") {
+        // Unlocking grants every open request for the week, this one included.
+        await unlockWeekAndNotify(leagueId, weekId, userId);
+      } else {
+        await storage.resolveUnlockRequest(requestId, userId, "dismissed");
+        await storage.createNotification({
+          userId: request.requestedBy,
+          leagueId,
+          type: "system",
+          title: `Your unlock request was turned down`,
+          message: `${league?.name ?? "Your league"}'s ${week?.label ?? "weekly"} parlay stays locked.`,
+        });
+      }
+      res.json({ success: true, action });
     } catch (err: any) {
       res.status(400).json({ message: err.message });
     }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildShameReport, canShameSeason, shameReportText } from "../../shared/shameReport";
+import { buildShameReport, canShameSeason, shameEmoji, shameReportText } from "../../shared/shameReport";
 
 const game = { homeTeam: "Chiefs", awayTeam: "Bills", spread: "-3.5", overUnder: "47.5" };
 const leg = (id: number, owner: string, result: string | null, extra: Record<string, unknown> = {}) => ({
@@ -49,11 +49,19 @@ describe("shared/shameReport", () => {
     })!;
     const lines = shameReportText(report).split("\n");
     expect(lines[0]).toBe("🔔 Week 5 Shame Report 🔔");
-    expect(lines[1]).toBe("Parlay Loser: Zed (Chiefs -3.5)");
+    expect(lines[1]).toBe("Parlay Loser: Zed");
+    expect(lines).toContain("• Zed: Chiefs -3.5");
     expect(lines).toContain("• Bo: Josh (Rush O74.5)");
     expect(lines).toContain("• Cal: Bills/Chiefs O47.5");
     expect(lines).toContain("• Georgie: Bills ML (-346)");
     expect(lines[lines.length - 1]).toBe("…and 2 more pending in the balance");
+  });
+
+  test("a league's own emoji replaces the bell and the siren", () => {
+    const report = buildShameReport({ legs, bustedLegId: 1, nameOf: (l) => l.owner, weekLabel: "Week 5", loserLabel: "Jerry", emoji: "💩" })!;
+    expect(shameReportText(report).split("\n")[0]).toBe("💩 Week 5 Shame Report 💩");
+    expect(shameEmoji(report)).toBe("💩");
+    expect(shameEmoji(build(1)!)).toBe("🚨");
   });
 
   test("no pending line once every leg has settled", () => {

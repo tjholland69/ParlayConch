@@ -22,11 +22,6 @@ function decidedOrKickoff(leg: DatedLeg): number | null {
   return decidedTime(leg) ?? (leg.game?.gameTime ? new Date(leg.game.gameTime).getTime() : null);
 }
 
-/** Earliest-decided leg first; undated legs last. */
-export function compareLegsByDecided(a: DatedLeg, b: DatedLeg): number {
-  return (decidedOrKickoff(a) ?? Infinity) - (decidedOrKickoff(b) ?? Infinity) || a.id - b.id;
-}
-
 /** When a parlay as a whole was decided: its last leg's decided time. Null for
  * a parlay with no dated legs. Same "ending" as storage.getAllLeagueParlays. */
 export function parlayDecidedTime(parlay: { legs: DatedLeg[] }): number | null {
