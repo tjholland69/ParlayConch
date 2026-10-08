@@ -11,7 +11,6 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { IconButton } from "@/components/ui/IconButton";
 import { Button } from "@/components/ui/Button";
 import { useLegDisputes, useFileDispute } from "@/hooks/use-parlays";
 
@@ -22,17 +21,17 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 };
 
 /**
- * Mobile port of the web's DisputeLegDialog — lets a member dispute the
- * result of their own leg. Only the "result is wrong" reason is supported
- * here (see useFileDispute for why "entered incorrectly", which requires a
- * screenshot, is web-only for now).
+ * Mobile port of the web's DisputeLegDialog: lets a member dispute the result
+ * of their own leg. Opened by tapping their bet on a parlay card (LegRow).
+ * A leg that already has a dispute waiting shows where that stands instead
+ * of the form. Only the "result is wrong" reason is supported here (see
+ * useFileDispute for why "entered incorrectly", which requires a screenshot,
+ * is web-only for now).
  */
-export function DisputeLegBadge({ legId }: { legId: number }) {
-  const [open, setOpen] = useState(false);
+export function DisputeLegSheet({ legId, visible, onClose }: { legId: number; visible: boolean; onClose: () => void }) {
   const [justification, setJustification] = useState("");
   const insets = useSafeAreaInsets();
-
-  const { data: disputes } = useLegDisputes(legId);
+  const { data: disputes } = useLegDisputes(legId, visible);
   const fileDispute = useFileDispute(legId);
   const openDispute = disputes?.find((d) => d.status === "open");
 
@@ -40,69 +39,66 @@ export function DisputeLegBadge({ legId }: { legId: number }) {
     if (!justification.trim()) return;
     fileDispute.mutate(justification.trim(), {
       onSuccess: () => {
-        setOpen(false);
+        onClose();
         setJustification("");
       },
     });
   }
 
-  if (openDispute) {
-    const meta = STATUS_META[openDispute.status] ?? STATUS_META.open;
-    return (
-      <View style={[styles.badge, { borderColor: meta.color + "66" }]}>
-        <Ionicons name="flag" size={11} color={meta.color} />
-        <Text style={[styles.badgeText, { color: meta.color }]} numberOfLines={1}>
-          Disputed — {meta.label}
-        </Text>
-      </View>
-    );
-  }
-
   return (
-    <>
-      <IconButton onPress={() => setOpen(true)} accessibilityLabel="Dispute this bet">
-        <Ionicons name="flag-outline" size={18} color="#64748b" />
-      </IconButton>
-
-      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalWrap}>
-          <Pressable style={styles.modalBackdrop} onPress={() => setOpen(false)} />
-          <View style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>Dispute this bet</Text>
-              <Pressable onPress={() => setOpen(false)} hitSlop={12}>
-                <Ionicons name="close" size={22} color="#475569" />
-              </Pressable>
-            </View>
-
-            <Text style={styles.inputLabel}>What's wrong?</Text>
-            <Text style={styles.reasonNote}>The result shown for this leg is incorrect.</Text>
-
-            <Text style={[styles.inputLabel, { marginTop: 14 }]}>Justification</Text>
-            <TextInput
-              value={justification}
-              onChangeText={setJustification}
-              placeholder="Explain what you think is wrong…"
-              placeholderTextColor="#64748b"
-              style={styles.textarea}
-              multiline
-              numberOfLines={4}
-              autoFocus
-            />
-
-            <Button
-              fullWidth
-              onPress={handleSubmit}
-              disabled={!justification.trim() || fileDispute.isPending}
-              loading={fileDispute.isPending}
-            >
-              Submit Dispute
-            </Button>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalWrap}>
+        <Pressable style={styles.modalBackdrop} onPress={onClose} />
+        <View style={[styles.sheet, { paddingBottom: insets.bottom + 24 }]}>
+          <View style={styles.sheetHandle} />
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle}>Dispute this bet</Text>
+            <Pressable onPress={onClose} hitSlop={12} accessibilityLabel="Close">
+              <Ionicons name="close" size={22} color="#475569" />
+            </Pressable>
           </View>
-        </KeyboardAvoidingView>
-      </Modal>
-    </>
+
+          {openDispute ? (
+            <>
+              <View style={[styles.badge, { borderColor: STATUS_META.open.color + "66" }]}>
+                <Ionicons name="flag" size={11} color={STATUS_META.open.color} />
+                <Text style={[styles.badgeText, { color: STATUS_META.open.color }]} numberOfLines={1}>
+                  Disputed: {STATUS_META.open.label}
+                </Text>
+              </View>
+              <Text style={[styles.reasonNote, { marginTop: 12, marginBottom: 20 }]}>{openDispute.justification}</Text>
+              <Button fullWidth variant="outline" onPress={onClose}>Close</Button>
+            </>
+          ) : (
+            <>
+              <Text style={styles.inputLabel}>What's wrong?</Text>
+              <Text style={styles.reasonNote}>The result shown for this leg is incorrect.</Text>
+
+              <Text style={[styles.inputLabel, { marginTop: 14 }]}>Justification</Text>
+              <TextInput
+                value={justification}
+                onChangeText={setJustification}
+                placeholder="Explain what you think is wrong…"
+                placeholderTextColor="#64748b"
+                style={styles.textarea}
+                multiline
+                numberOfLines={4}
+                autoFocus
+              />
+
+              <Button
+                fullWidth
+                onPress={handleSubmit}
+                disabled={!justification.trim() || fileDispute.isPending}
+                loading={fileDispute.isPending}
+              >
+                Submit Dispute
+              </Button>
+            </>
+          )}
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
   );
 }
 
@@ -115,7 +111,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    maxWidth: 180,
+    alignSelf: "flex-start",
   },
   badgeText: { fontSize: 11, fontWeight: "600", flexShrink: 1 },
   modalWrap: { flex: 1, justifyContent: "flex-end" },

@@ -185,7 +185,9 @@ export function useLeaguesActiveStatus() {
   });
 }
 
-export function useLeagueDataStats(leagueId: number) {
+/** `enabled` lets a page hold this back until its tab is opened: it is one
+ * of the heavier league queries (two full standings passes). */
+export function useLeagueDataStats(leagueId: number, enabled = true) {
   return useQuery<LeagueDataStats>({
     queryKey: ['/api/leagues', leagueId, 'data-stats'],
     queryFn: async () => {
@@ -193,7 +195,7 @@ export function useLeagueDataStats(leagueId: number) {
       if (!res.ok) throw new Error("Failed to fetch league data stats");
       return res.json();
     },
-    enabled: !!leagueId,
+    enabled: !!leagueId && enabled,
   });
 }
 
@@ -271,7 +273,7 @@ export type MissedWeeksSummary = {
   memberSince: string | null;
 };
 
-export function useLeagueRecords(leagueId: number) {
+export function useLeagueRecords(leagueId: number, enabled = true) {
   return useQuery<LeagueRecordEntry[]>({
     queryKey: ["/api/leagues", leagueId, "records"],
     queryFn: async () => {
@@ -279,7 +281,7 @@ export function useLeagueRecords(leagueId: number) {
       if (!res.ok) throw new Error("Failed to fetch league records");
       return res.json();
     },
-    enabled: !!leagueId,
+    enabled: !!leagueId && enabled,
   });
 }
 
@@ -381,12 +383,23 @@ export function useJoinLeague() {
  * shared/weekParlays.ts). Realtime events refresh it; the interval covers a
  * server running without Redis, so another member's pick still shows up.
  */
-export function useMyParlay(leagueId: number, weekId: number) {
+/**
+ * Cache key for the week's parlay as one member sees it. In On Behalf Of
+ * mode that member is `onBehalfOf`, kept under its own key so switching who
+ * you're picking for never shows the wrong member's picks.
+ */
+export function myParlayKey(leagueId: number, weekId: number, onBehalfOf?: string) {
+  const key: (string | number)[] = [api.parlays.myForWeek.path, leagueId, weekId];
+  return onBehalfOf ? [...key, onBehalfOf] : key;
+}
+
+export function useMyParlay(leagueId: number, weekId: number, onBehalfOf?: string) {
   return useQuery<MemberWeekParlay | null>({
     refetchInterval: 10_000,
-    queryKey: [api.parlays.myForWeek.path, leagueId, weekId],
+    queryKey: myParlayKey(leagueId, weekId, onBehalfOf),
     queryFn: async () => {
-      const url = buildUrl(api.parlays.myForWeek.path, { leagueId, weekId });
+      const base = buildUrl(api.parlays.myForWeek.path, { leagueId, weekId });
+      const url = onBehalfOf ? `${base}?onBehalfOf=${encodeURIComponent(onBehalfOf)}` : base;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch parlay");
       return res.json();
@@ -498,7 +511,7 @@ type DraftParlayLegInput = ParlayLegInput & {
   startNew?: boolean;
 };
 
-function invalidateDraftParlayQueries(queryClient: ReturnType<typeof useQueryClient>, leagueId: number, weekId: number) {
+export function invalidateDraftParlayQueries(queryClient: ReturnType<typeof useQueryClient>, leagueId: number, weekId: number) {
   queryClient.invalidateQueries({ queryKey: ['/api/leagues/active-week-status'] });
   queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'] });
   queryClient.invalidateQueries({ queryKey: [api.parlays.myForWeek.path, leagueId, weekId] });
@@ -539,8 +552,8 @@ export function useAddDraftLeg() {
 
   return useMutation({
     mutationKey: DRAFT_LEG_MUTATION_KEY,
-    onMutate: async ({ leagueId, weekId, leg, userId }) => {
-      const key = [api.parlays.myForWeek.path, leagueId, weekId];
+    onMutate: async ({ leagueId, weekId, leg, userId, onBehalfOf }) => {
+      const key = myParlayKey(leagueId, weekId, onBehalfOf);
       await queryClient.cancelQueries({ queryKey: key });
       const optimisticLegId = -Date.now();
       queryClient.setQueryData<DraftParlayCache>(key, (current) => {
@@ -564,11 +577,13 @@ export function useAddDraftLeg() {
       });
       return { optimisticLegId };
     },
-    mutationFn: async (data: { leagueId: number; weekId: number; leg: DraftParlayLegInput; userId?: string }) => {
+    // `userId` is whose pick it is (for the optimistic tile). `onBehalfOf` is
+    // set in On Behalf Of mode, when that member isn't the one tapping.
+    mutationFn: async (data: { leagueId: number; weekId: number; leg: DraftParlayLegInput; userId?: string; onBehalfOf?: string }) => {
       const res = await fetch(`/api/leagues/${data.leagueId}/weeks/${data.weekId}/draft-parlay/legs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data.leg),
+        body: JSON.stringify(data.onBehalfOf ? { ...data.leg, onBehalfOfUserId: data.onBehalfOf } : data.leg),
         credentials: "include",
       });
       if (!res.ok) {
@@ -581,12 +596,12 @@ export function useAddDraftLeg() {
       // The response is the full draft, so the real leg replaces the
       // optimistic one without waiting on a refetch.
       if (queryClient.isMutating({ mutationKey: DRAFT_LEG_MUTATION_KEY }) > 1) return;
-      queryClient.setQueryData<DraftParlayCache>([api.parlays.myForWeek.path, variables.leagueId, variables.weekId], parlay);
+      queryClient.setQueryData<DraftParlayCache>(myParlayKey(variables.leagueId, variables.weekId, variables.onBehalfOf), parlay);
     },
     onError: (error, variables, context) => {
       if (context) {
         queryClient.setQueryData<DraftParlayCache>(
-          [api.parlays.myForWeek.path, variables.leagueId, variables.weekId],
+          myParlayKey(variables.leagueId, variables.weekId, variables.onBehalfOf),
           (current) => removeLegFromDraftCache(current, context.optimisticLegId),
         );
       }
@@ -606,13 +621,14 @@ export function useRemoveDraftLeg() {
     mutationKey: DRAFT_LEG_MUTATION_KEY,
     // Unselects the tile straight away; if the server refuses, the refetch
     // in onSettled puts the leg back.
-    onMutate: async ({ legId, leagueId, weekId }) => {
-      const key = [api.parlays.myForWeek.path, leagueId, weekId];
+    onMutate: async ({ legId, leagueId, weekId, onBehalfOf }) => {
+      const key = myParlayKey(leagueId, weekId, onBehalfOf);
       await queryClient.cancelQueries({ queryKey: key });
       queryClient.setQueryData<DraftParlayCache>(key, (current) => removeLegFromDraftCache(current, legId));
     },
-    mutationFn: async (data: { parlayId: number; legId: number; leagueId: number; weekId: number }) => {
-      const res = await fetch(`/api/parlays/${data.parlayId}/legs/${data.legId}`, {
+    mutationFn: async (data: { parlayId: number; legId: number; leagueId: number; weekId: number; onBehalfOf?: string }) => {
+      const query = data.onBehalfOf ? `?onBehalfOf=${encodeURIComponent(data.onBehalfOf)}` : "";
+      const res = await fetch(`/api/parlays/${data.parlayId}/legs/${data.legId}${query}`, {
         method: "DELETE",
         credentials: "include",
       });
@@ -1263,7 +1279,7 @@ export function useLockWeekParlay(leagueId: number, weekId: number) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'] });
+      invalidateDraftParlayQueries(queryClient, leagueId, weekId);
       toast({ title: "Parlay Locked", description: "No further submissions or edits are allowed for this week." });
     },
     onError: (error: Error) => {
@@ -1288,7 +1304,7 @@ export function useUnlockWeekParlay(leagueId: number, weekId: number) {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/leagues', leagueId, 'weeks', weekId, 'lock'] });
+      invalidateDraftParlayQueries(queryClient, leagueId, weekId);
       toast({ title: "Parlay Unlocked", description: "Submissions are now open again for this week." });
     },
     onError: (error: Error) => {

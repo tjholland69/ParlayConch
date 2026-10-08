@@ -172,3 +172,68 @@ export function useInviteByEmail(leagueId: number) {
     },
   });
 }
+
+function invalidateWeekLock(queryClient: ReturnType<typeof useQueryClient>, leagueId: number, weekId: number) {
+  queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "lock"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "parlays"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "my-parlay"] });
+}
+
+/** Asks whoever can unlock the week (the Parlay Maestro, or a permitted lieutenant) to do so. */
+export function useRequestUnlock(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (reason?: string) =>
+      apiRequest("POST", `/api/leagues/${leagueId}/weeks/${weekId}/unlock-requests`, { reason }),
+    onSuccess: () => invalidateWeekLock(queryClient, leagueId, weekId),
+  });
+}
+
+/** Grants (which unlocks the week) or dismisses an unlock request. */
+export function useResolveUnlockRequest(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ requestId, action }: { requestId: number; action: "grant" | "dismiss" }) =>
+      apiRequest("POST", `/api/leagues/${leagueId}/weeks/${weekId}/unlock-requests/${requestId}`, { action }),
+    onSuccess: () => invalidateWeekLock(queryClient, leagueId, weekId),
+  });
+}
+
+/** Who the caller can pick for in this league ("On Behalf Of"), and who can pick for them. */
+export function useOnBehalfInfo(leagueId: number) {
+  return useQuery<import("@shared/schema").OnBehalfInfo>({
+    queryKey: ["/api/leagues", leagueId, "on-behalf"],
+    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/on-behalf`),
+    enabled: !!leagueId,
+    staleTime: 60_000,
+  });
+}
+
+/** Approves or rejects a pick that was made on a member's behalf. */
+export function useResolveLegApproval(leagueId: number, weekId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ legId, action }: { legId: number; action: "approve" | "reject" }) =>
+      apiRequest("POST", `/api/parlay-legs/${legId}/approval`, { action }),
+    onSuccess: () => invalidateWeekLock(queryClient, leagueId, weekId),
+  });
+}
+
+/** The reports a league offers (shared/reports.ts). */
+export function useLeagueReports(leagueId: number, enabled = true) {
+  return useQuery<import("@shared/reports").ReportCatalogEntry[]>({
+    queryKey: ["/api/leagues", leagueId, "reports"],
+    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/reports`),
+    enabled: !!leagueId && enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** One report, loaded when it's opened. */
+export function useLeagueReport(leagueId: number, reportId: import("@shared/reports").ReportId | null) {
+  return useQuery<import("@shared/reports").Report>({
+    queryKey: ["/api/leagues", leagueId, "reports", reportId],
+    queryFn: async () => apiRequest("GET", `/api/leagues/${leagueId}/reports/${reportId}`),
+    enabled: !!leagueId && !!reportId,
+  });
+}

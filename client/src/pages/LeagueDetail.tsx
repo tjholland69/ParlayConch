@@ -31,6 +31,8 @@ import { SortHeader } from "@/components/SortHeader";
 import { BoostDialog } from "@/components/BoostDialog";
 import { useColumnSort } from "@/hooks/use-column-sort";
 import { standingsCsv } from "@shared/standingsExport";
+import { OnBehalfBar, PendingApprovals, PickDelegatesCard, UnlockRequests } from "@/components/OnBehalfControls";
+import { useOnBehalfInfo } from "@/hooks/use-on-behalf";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
 import { PageLoader } from "@/components/PageLoader";
 import { UserAvatar } from "@/components/UserAvatar";
@@ -66,6 +68,7 @@ function AllParlaysList({
   participationById,
   loserLabel,
   heroLabel,
+  shameEmoji,
   canManage,
   shouldVirtualize,
   hasNextPage,
@@ -81,6 +84,7 @@ function AllParlaysList({
   participationById: Map<number, number>;
   loserLabel: string | null | undefined;
   heroLabel: string | null | undefined;
+  shameEmoji: string | null | undefined;
   canManage: boolean;
   shouldVirtualize: boolean;
   hasNextPage: boolean;
@@ -107,6 +111,7 @@ function AllParlaysList({
         participationRate={participationById.get(parlay.id) ?? 0}
         loserLabel={loserLabel}
         heroLabel={heroLabel}
+        shameEmoji={shameEmoji}
       />
     </CardErrorBoundary>
   );
@@ -301,18 +306,6 @@ function StandingsList({ list, exportName }: { list: UserStat[]; exportName: str
           ))}
         </div>
       </div>
-      <div className="flex justify-end">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 gap-1.5 text-xs text-muted-foreground"
-          onClick={() => downloadStandingsCsv(`${exportName}.csv`, sorted)}
-          data-testid={`button-export-${exportName}`}
-        >
-          <Download className="w-3.5 h-3.5" />
-          Export CSV
-        </Button>
-      </div>
       {sorted.map((stat) => {
         const rank = rankByUser.get(stat.userId) ?? 0;
         return (
@@ -364,6 +357,18 @@ function StandingsList({ list, exportName }: { list: UserStat[]; exportName: str
         </div>
         );
       })}
+      <div className="flex justify-end pt-1">
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 gap-1.5 text-xs text-muted-foreground"
+          onClick={() => downloadStandingsCsv(`${exportName}.csv`, sorted)}
+          data-testid={`button-export-${exportName}`}
+        >
+          <Download className="w-3.5 h-3.5" />
+          Export CSV
+        </Button>
+      </div>
     </div>
   );
 }
@@ -435,7 +440,11 @@ export default function LeagueDetail() {
 
   const { data: stats } = useLeagueStats(leagueId);
   const { data: overviewStats } = useLeaguesOverviewStats();
-  const { data: dataStats, isLoading: loadingDataStats } = useLeagueDataStats(leagueId);
+  // League Data and Records are the two heaviest reads on this page, and
+  // only their own tabs use them, so they wait until that tab is opened
+  // rather than loading (and reloading on every act-for switch) with Open
+  // Parlays.
+  const { data: dataStats, isLoading: loadingDataStats } = useLeagueDataStats(leagueId, activeTab === "data");
   const {
     data: allParlaysPages,
     isLoading: loadingAllParlays,
@@ -450,7 +459,14 @@ export default function LeagueDetail() {
 
   const { data: games } = useGames(activeWeekId || 0);
   const { data: leagueParlays } = useLeagueParlays(leagueId, activeWeekId || 0);
-  const { data: weekParlay } = useMyParlay(leagueId, activeWeekId || 0);
+  // On Behalf Of mode: the member whose pick is being made, when it isn't
+  // the viewer. `pickerId` is whose pick the tiles and chips treat as "mine".
+  const { data: onBehalfInfo } = useOnBehalfInfo(leagueId);
+  const [onBehalfChoice, setOnBehalfOf] = useState<string | undefined>(undefined);
+  // Dropped the moment the viewer can no longer pick for that member.
+  const onBehalfOf = onBehalfInfo?.targets.some(t => t.userId === onBehalfChoice) ? onBehalfChoice : undefined;
+  const pickerId = onBehalfOf ?? effectiveUserId;
+  const { data: weekParlay } = useMyParlay(leagueId, activeWeekId || 0, onBehalfOf);
   // In a league that runs more than one parlay a week: the member chose to
   // start another instead of looking at the one already submitted. Nothing
   // exists on the server until their first pick creates it, so until then
@@ -507,7 +523,7 @@ export default function LeagueDetail() {
   const dismissPoke = useDismissPoke(leagueId);
 
   // Records tab state
-  const { data: leagueRecords, isLoading: loadingRecords } = useLeagueRecords(leagueId);
+  const { data: leagueRecords, isLoading: loadingRecords } = useLeagueRecords(leagueId, activeTab === "records");
   const [lookthroughRecord, setLookthroughRecord] = useState<LeagueRecordEntry | null>(null);
   const isParticipationLookthrough = lookthroughRecord?.lookthroughKind === "participation";
   const { data: lookthroughLegs, isLoading: loadingLookthrough } = useParlayLegsByIds(
@@ -537,7 +553,7 @@ export default function LeagueDetail() {
   // this member's own (one, or an optimistic one still being saved, which
   // has a negative id). Rules: shared/weekParlays.ts.
   const parlayLegs = myParlay?.legs ?? [];
-  const myLegs = parlayLegs.filter(l => l.id < 0 || l.userId === effectiveUserId);
+  const myLegs = parlayLegs.filter(l => l.id < 0 || l.userId === pickerId);
   const myLeg = myLegs[0];
 
   const legsForGame = (gameId: number) => parlayLegs.filter(l => l.gameId === gameId);
@@ -551,10 +567,21 @@ export default function LeagueDetail() {
   const takenByOther = (gameId: number, betType: string, _pick?: string) =>
     (myParlay?.taken ?? []).find(t => t.gameId === gameId && marketOf(t.betType) === marketOf(betType));
 
+  // The other member picked the opposite side of this market: this side is
+  // ruled out by their pick, not the one they took.
+  const isVoidedSide = (gameId: number, betType: string, pick: string) => {
+    const taken = takenByOther(gameId, betType);
+    return !!taken && !(taken.betType === betType && taken.pick === pick);
+  };
+
+  // Same thing for the viewer's own pick: the side of the market they didn't take.
+  const isMyVoidedSide = (gameId: number, betType: string, pick: string) =>
+    myLegs.some(l => l.gameId === gameId && marketOf(l.betType) === marketOf(betType) && !(l.betType === betType && l.pick === pick));
+
   const savePick = (leg: { gameId: number; betType: string; pick: string; line?: string }) => {
     if (!activeWeekId || !leagueId) return;
     addDraftLeg.mutate(
-      { leagueId, weekId: activeWeekId, leg: startingNew ? { ...leg, startNew: true } : leg, userId: effectiveUserId },
+      { leagueId, weekId: activeWeekId, leg: startingNew ? { ...leg, startNew: true } : leg, userId: pickerId, onBehalfOf },
       { onSuccess: () => setStartingNew(false) },
     );
   };
@@ -565,7 +592,7 @@ export default function LeagueDetail() {
     if (existing) {
       // A negative id is a pick still being saved (see useAddDraftLeg).
       if (!myParlay || existing.id < 0) return;
-      removeDraftLeg.mutate({ parlayId: myParlay.id, legId: existing.id, leagueId, weekId: activeWeekId });
+      removeDraftLeg.mutate({ parlayId: myParlay.id, legId: existing.id, leagueId, weekId: activeWeekId, onBehalfOf });
       return;
     }
     if (takenByOther(game.id, betType)) return;
@@ -674,6 +701,8 @@ export default function LeagueDetail() {
               isPast={isPast}
               isSelected={isMySelection(game.id, 'spread', 'away')}
               takenBy={takenByOther(game.id, 'spread', 'away')?.takenBy}
+              voided={isVoidedSide(game.id, 'spread', 'away')}
+              voidedByMe={isMyVoidedSide(game.id, 'spread', 'away')}
               capReached={capReached}
               onClick={() => toggleLeg(game, 'spread', 'away')}
               testId={`button-spread-away-${game.id}`}
@@ -684,6 +713,8 @@ export default function LeagueDetail() {
               isPast={isPast}
               isSelected={isMySelection(game.id, 'moneyline', 'away')}
               takenBy={takenByOther(game.id, 'moneyline', 'away')?.takenBy}
+              voided={isVoidedSide(game.id, 'moneyline', 'away')}
+              voidedByMe={isMyVoidedSide(game.id, 'moneyline', 'away')}
               capReached={capReached}
               onClick={() => toggleLeg(game, 'moneyline', 'away')}
               testId={`button-ml-away-${game.id}`}
@@ -695,6 +726,8 @@ export default function LeagueDetail() {
               isPast={isPast}
               isSelected={isMySelection(game.id, 'over', 'over')}
               takenBy={takenByOther(game.id, 'over', 'over')?.takenBy}
+              voided={isVoidedSide(game.id, 'over', 'over')}
+              voidedByMe={isMyVoidedSide(game.id, 'over', 'over')}
               capReached={capReached}
               onClick={() => toggleLeg(game, 'over', 'over')}
               testId={`button-over-${game.id}`}
@@ -706,6 +739,8 @@ export default function LeagueDetail() {
               isPast={isPast}
               isSelected={isMySelection(game.id, 'spread', 'home')}
               takenBy={takenByOther(game.id, 'spread', 'home')?.takenBy}
+              voided={isVoidedSide(game.id, 'spread', 'home')}
+              voidedByMe={isMyVoidedSide(game.id, 'spread', 'home')}
               capReached={capReached}
               onClick={() => toggleLeg(game, 'spread', 'home')}
               testId={`button-spread-home-${game.id}`}
@@ -716,6 +751,8 @@ export default function LeagueDetail() {
               isPast={isPast}
               isSelected={isMySelection(game.id, 'moneyline', 'home')}
               takenBy={takenByOther(game.id, 'moneyline', 'home')?.takenBy}
+              voided={isVoidedSide(game.id, 'moneyline', 'home')}
+              voidedByMe={isMyVoidedSide(game.id, 'moneyline', 'home')}
               capReached={capReached}
               onClick={() => toggleLeg(game, 'moneyline', 'home')}
               testId={`button-ml-home-${game.id}`}
@@ -727,6 +764,8 @@ export default function LeagueDetail() {
               isPast={isPast}
               isSelected={isMySelection(game.id, 'under', 'under')}
               takenBy={takenByOther(game.id, 'under', 'under')?.takenBy}
+              voided={isVoidedSide(game.id, 'under', 'under')}
+              voidedByMe={isMyVoidedSide(game.id, 'under', 'under')}
               capReached={capReached}
               onClick={() => toggleLeg(game, 'under', 'under')}
               testId={`button-under-${game.id}`}
@@ -950,8 +989,10 @@ export default function LeagueDetail() {
             </Card>
           ) : (
           <>
-          {/* Lock header row — visible to Parlay Maestro */}
-          {league.isAdmin && (
+          {/* Lock header row: for whoever can lock or unlock this week (the
+              Parlay Maestro, permitted lieutenants, and whoever started the
+              week's parlay). */}
+          {(league.isAdmin || lockStatus?.viewer?.canLock || lockStatus?.viewer?.canUnlock) && (
             <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-card/40 border border-white/5">
               <div className="flex items-center gap-2 text-sm text-muted-foreground flex-wrap">
                 <Users className="w-4 h-4" />
@@ -994,17 +1035,19 @@ export default function LeagueDetail() {
                     <Badge className="bg-red-500/20 text-red-400 border-red-500/30" data-testid="badge-parlay-locked">
                       <Lock className="w-3 h-3 mr-1" />Locked
                     </Badge>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => unlockParlay.mutate()}
-                      disabled={unlockParlay.isPending}
-                      data-testid="button-unlock-parlay"
-                    >
-                      <LockOpen className="w-4 h-4 mr-1" />Unlock
-                    </Button>
+                    {(lockStatus.viewer?.canUnlock ?? league.isAdmin) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => unlockParlay.mutate()}
+                        disabled={unlockParlay.isPending}
+                        data-testid="button-unlock-parlay"
+                      >
+                        <LockOpen className="w-4 h-4 mr-1" />Unlock
+                      </Button>
+                    )}
                   </>
-                ) : (
+                ) : !(lockStatus?.viewer?.canLock ?? league.isAdmin) ? null : (
                   <Button
                     size="sm"
                     onClick={() => {
@@ -1046,12 +1089,23 @@ export default function LeagueDetail() {
                     ? "Games have started, so picks are final."
                     : "No new picks or submissions until it's unlocked."}
                 </p>
+                <UnlockRequests leagueId={leagueId} weekId={activeWeekId} lockStatus={lockStatus} />
               </div>
             </div>
           )}
 
           {!lockStatus?.isLocked && (!myParlay || myParlay.status === "draft") && (!!myParlay || iAmMissing || !lockStatus || startingNew) ? (
             <>
+              <OnBehalfBar info={onBehalfInfo} targetId={onBehalfOf} onChange={setOnBehalfOf} />
+              <PendingApprovals
+                parlay={myParlay}
+                games={allSlateGames}
+                members={members}
+                viewerId={effectiveUserId}
+                isAdmin={!!league.isAdmin}
+                leagueId={leagueId}
+                weekId={activeWeekId}
+              />
               {/* The shared parlay so far: every member's pick, this member's first. */}
               <Card className="bg-card/50 border-white/5" data-testid="card-open-parlay">
                 <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0">
@@ -1085,7 +1139,7 @@ export default function LeagueDetail() {
                         ? "Your pick starts another parlay for this week."
                         : "Each member adds one pick. Yours starts this week's parlay."
                       : parlayLegs.length < minLegs
-                      ? `${minLegs - parlayLegs.length} more ${minLegs - parlayLegs.length === 1 ? "pick" : "picks"} needed before it can be submitted. ${myLeg ? "Your pick is saved." : "Pick a market below to add yours."}`
+                      ? `${minLegs - parlayLegs.length} more ${minLegs - parlayLegs.length === 1 ? "pick" : "picks"} needed before it can be submitted. ${onBehalfOf ? (myLeg ? "Their pick is saved." : "Pick a market below to add theirs.") : myLeg ? "Your pick is saved." : "Pick a market below to add yours."}`
                       : canSubmitRole
                       ? "Enough picks are in. Submit when the league is ready."
                       : `${myLeg ? "Your pick is saved. " : ""}Whoever started the parlay, or the Parlay Maestro, submits it.`}
@@ -1102,15 +1156,16 @@ export default function LeagueDetail() {
                             className={cn("text-sm", mine && "border-primary/60 bg-primary/10")}
                             data-testid={mine ? `badge-my-leg-${leg.id}` : `badge-parlay-leg-${leg.id}`}
                           >
-                            <span className="mr-1 text-muted-foreground">{mine ? "You" : getDisplayName(leg.user, "Member")}:</span>
+                            <span className="mr-1 text-muted-foreground">{mine && !onBehalfOf ? "You" : getDisplayName(leg.user, "Member")}:</span>
                             {legChipLabel(leg, game)}
+                            {leg.approvalStatus === "pending" && <span className="ml-1 text-xs text-amber-300">· awaiting approval</span>}
                           </Badge>
                         );
                       })}
                     </div>
                   )}
                   {myPointsMoved != null && (
-                    <div className="flex items-center gap-3 pt-1" data-testid="control-alternate-line">
+                    <div className="flex w-fit items-center gap-3 rounded-xl border border-primary/60 bg-primary/5 px-3 py-2" data-testid="control-alternate-line">
                       <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Alternate line</span>
                       <Button
                         size="icon"
@@ -1186,6 +1241,7 @@ export default function LeagueDetail() {
                   leagueId={leagueId}
                   weekId={activeWeekId}
                   startNew={startingNew}
+                  onBehalfOf={onBehalfOf}
                   open={!!propDialogGame}
                   onOpenChange={(open) => !open && setPropDialogGame(null)}
                 />
@@ -1255,6 +1311,7 @@ export default function LeagueDetail() {
                             participationRate={openParticipationRate}
                             loserLabel={league.loserLabel}
                             heroLabel={league.heroLabel}
+                            shameEmoji={league.shameEmoji}
                           />
                         </CardErrorBoundary>
                       </div>
@@ -1527,6 +1584,7 @@ export default function LeagueDetail() {
                 participationById={participationById}
                 loserLabel={league.loserLabel}
                 heroLabel={league.heroLabel}
+                shameEmoji={league.shameEmoji}
                 canManage={!!league.isAdmin}
                 shouldVirtualize={shouldVirtualize}
                 hasNextPage={!!hasNextPage}
@@ -1722,6 +1780,7 @@ export default function LeagueDetail() {
 
         {/* Members Tab */}
         <TabsContent value="members" className="space-y-4">
+          <PickDelegatesCard leagueId={leagueId} members={members} selfId={effectiveUserId} />
           <Card className="bg-card/50 border-white/5">
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="flex items-center gap-2">

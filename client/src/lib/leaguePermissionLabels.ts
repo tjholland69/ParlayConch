@@ -10,6 +10,7 @@ export const PERMISSION_LABELS: { key: keyof LieutenantPermissions; label: strin
   { key: "lockParlay", label: "Lock Weekly Parlay", description: "Can lock the week's parlay to prevent further submissions", group: "Parlay Management" },
   { key: "unlockParlay", label: "Unlock Weekly Parlay", description: "Can unlock a previously locked parlay to re-open submissions", group: "Parlay Management" },
   { key: "unselectUserPick", label: "Remove a Member's Pick", description: "Can clear an individual pick from another member's parlay (secondary approvals will apply)", group: "Parlay Management" },
+  { key: "pickOnBehalf", label: "Pick On Behalf Of Anyone", description: "Can make a pick for any member. The member is asked to approve it. Off, a lieutenant needs each member's own permission, like everyone else", group: "Parlay Management" },
   // Member management
   { key: "approveMemberInvites", label: "Approve Member Invites", description: "Can approve pending invite requests submitted by regular members", group: "Member Management" },
 ];

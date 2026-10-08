@@ -19,6 +19,7 @@ import type {
   StoryReport, InsertStoryReport, UpdateStoryReport, StorySection, StoryReportWithSections,
   AuditEvent, InsertAuditEvent, Player, PlayerWeekStat, InsertPlayer, InsertPlayerWeekStat,
   InsertBet, InsertLeague, InsertParlay, InsertParlayLeg, InsertImportBatch,
+  PickDelegation, UnlockRequest,
 } from "./db-schema";
 
 export type {
@@ -28,6 +29,7 @@ export type {
   StoryReport, InsertStoryReport, UpdateStoryReport, StorySection, StoryReportWithSections,
   AuditEvent, InsertAuditEvent, Player, PlayerWeekStat, InsertPlayer, InsertPlayerWeekStat,
   InsertBet, InsertLeague, InsertParlay, InsertParlayLeg, InsertImportBatch,
+  PickDelegation, UnlockRequest,
 };
 
 export type LieutenantPermissions = {
@@ -37,6 +39,9 @@ export type LieutenantPermissions = {
   lockParlay: boolean;
   unlockParlay: boolean;
   unselectUserPick: boolean;
+  /** Make a pick "On Behalf Of" any member. Off, a lieutenant needs the
+   * member's own say-so like anyone else (see pick_delegations). */
+  pickOnBehalf: boolean;
   // Member management
   approveMemberInvites: boolean;
   // Data / admin
@@ -52,6 +57,7 @@ export const DEFAULT_LIEUTENANT_PERMISSIONS: LieutenantPermissions = {
   lockParlay: false,
   unlockParlay: false,
   unselectUserPick: false,
+  pickOnBehalf: false,
   approveMemberInvites: false,
   importHistory: false,
 };
@@ -61,6 +67,9 @@ export type UserNotificationPreferences = {
   sms: boolean;
   push: boolean;
   phone?: string;
+  /** Which alerts the member wants, by NOTIFICATION_EVENTS key. An alert
+   * left out follows its default (shared/notifications.ts). */
+  events?: Record<string, boolean>;
 };
 
 export type UserRegion = {
@@ -257,6 +266,43 @@ export type WeekLockStatus = {
   allSubmitted: boolean;
   /** Members with no leg in this week's parlay yet. */
   missingMemberIds: string[];
+  /**
+   * What the caller can do about the lock. Lock: whoever started the week's
+   * parlay, the Parlay Maestro, or a lieutenant with the lock permission.
+   * Unlock: the Maestro, or a lieutenant with the unlock permission; anyone
+   * else can ask for one while the parlay hasn't gone to a sportsbook.
+   */
+  viewer?: {
+    canLock: boolean;
+    canUnlock: boolean;
+    canRequestUnlock: boolean;
+    /** The caller already has a request waiting. */
+    hasOpenRequest: boolean;
+  };
+  /** Unlock requests waiting on an answer. Only sent to whoever can unlock. */
+  openUnlockRequests?: UnlockRequestWithName[];
+};
+
+/** A connector token as its owner sees it in Settings: never the token itself. */
+export type ApiTokenSummary = {
+  id: number;
+  name: string;
+  /** The first characters of the token, to tell tokens apart. */
+  tokenPrefix: string;
+  createdAt: string | Date;
+  lastUsedAt: string | Date | null;
+};
+
+export type UnlockRequestWithName = UnlockRequest & { requestedByName: string };
+
+/** GET /api/leagues/:id/on-behalf: the caller's "On Behalf Of" standing in a league. */
+export type OnBehalfInfo = {
+  /** Why the caller can pick for others, or null when they can't. */
+  via: "maestro" | "lieutenant" | "granted" | null;
+  /** Members the caller can pick for. Empty hides On Behalf Of mode. */
+  targets: { userId: string; name: string }[];
+  /** Members the caller has allowed to pick for them. */
+  myDelegateIds: string[];
 };
 
 export type ImportParlayLeg = Omit<InsertParlayLeg, 'parlayId'> & { result?: string | null };

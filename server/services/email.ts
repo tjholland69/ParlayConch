@@ -228,3 +228,36 @@ export async function sendBetHistoryExportEmail(opts: {
     attachments: [{ filename: opts.filename, content: Buffer.from(opts.csv, "utf8") }],
   });
 }
+
+/**
+ * A notification (shared/notifications.ts) as an email, for members who
+ * turned the email channel on. `path` is where its button leads in the app.
+ */
+export async function sendNotificationEmail(opts: {
+  toEmail: string;
+  toName: string | null;
+  title: string;
+  message: string;
+  path?: string;
+}): Promise<void> {
+  const { client, fromEmail } = await getUncachableResendClient();
+
+  const escape = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const greeting = opts.toName ? `Hi ${escape(opts.toName)},` : "Hey there,";
+  const appUrl = `https://parlayconch.com${opts.path ?? ""}`;
+  const html = baseHtml(`
+    <h1>${escape(opts.title)}</h1>
+    <p>${greeting}</p>
+    ${opts.message ? `<p>${escape(opts.message)}</p>` : ""}
+    <a class="cta" href="${appUrl}">Open Parlay.Conch →</a>
+    <hr class="divider" />
+    <p style="font-size:13px;">You can change which alerts you get in Settings.</p>
+  `);
+
+  await sendChecked(client, {
+    from: `Parlay.Conch <${fromEmail}>`,
+    to: opts.toEmail,
+    subject: opts.title,
+    html,
+  });
+}

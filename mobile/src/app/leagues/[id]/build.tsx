@@ -12,7 +12,13 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLeagues, useWeekLockStatus } from "@/hooks/use-leagues";
+import {
+  useLeagues,
+  useWeekLockStatus,
+  useLeagueMembersWithUsers,
+  useOnBehalfInfo,
+  useResolveLegApproval,
+} from "@/hooks/use-leagues";
 import { useActiveWeek, useGames } from "@/hooks/use-weeks";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import {
@@ -21,6 +27,7 @@ import {
   useRemovePick,
   useSubmitDraftParlay,
   useCancelParlay,
+  myParlayKey,
   type PickInput,
 } from "@/hooks/use-parlays";
 import { GamePickCard } from "@/components/GamePickCard";
@@ -91,10 +98,19 @@ export default function BuildPickScreen() {
   const { data: leagues, isLoading: leagueLoading } = useLeagues();
   const league = leagues?.find((l) => l.id === leagueId);
   const { data: lockStatus, isLoading: lockLoading } = useWeekLockStatus(leagueId, readOnly ? 0 : weekId);
-  const { data: weekParlay, isLoading: myParlayLoading } = useMyParlay(leagueId, readOnly ? 0 : weekId, { live: true });
+  // On Behalf Of mode: the member whose pick is being made, when it isn't
+  // the viewer. `pickerId` is whose pick the screen treats as "mine".
+  const { data: onBehalfInfo } = useOnBehalfInfo(readOnly ? 0 : leagueId);
+  const [onBehalfChoice, setOnBehalfOf] = useState<string | undefined>(undefined);
+  const onBehalfTarget = onBehalfInfo?.targets.find((t) => t.userId === onBehalfChoice);
+  const onBehalfOf = onBehalfTarget?.userId;
+  const pickerId = onBehalfOf ?? effectiveUserId;
+  const { data: members } = useLeagueMembersWithUsers(readOnly ? 0 : leagueId);
+  const resolveApproval = useResolveLegApproval(leagueId, weekId);
+  const { data: weekParlay, isLoading: myParlayLoading } = useMyParlay(leagueId, readOnly ? 0 : weekId, { live: true, onBehalfOf });
   const { data: games, isLoading: gamesLoading } = useGames(weekId);
-  const setPick = useSetPick(leagueId, weekId);
-  const removePick = useRemovePick(leagueId, weekId);
+  const setPick = useSetPick(leagueId, weekId, onBehalfOf);
+  const removePick = useRemovePick(leagueId, weekId, onBehalfOf);
   const submitDraftParlay = useSubmitDraftParlay(leagueId, weekId);
   const cancelParlay = useCancelParlay(leagueId, weekId);
   const [propGame, setPropGame] = useState<Game | null>(null);
@@ -110,7 +126,7 @@ export default function BuildPickScreen() {
   // While starting a new parlay there's nothing on the server yet, so the
   // screen shows an empty one until the first pick creates it.
   const parlay = startingNew ? null : weekParlay ?? null;
-  const standing = pickStanding(parlay, effectiveUserId, minLegs, maxLegs);
+  const standing = pickStanding(parlay, pickerId, minLegs, maxLegs);
   // Picks can change while the parlay is open, or before anyone has started one.
   const canPick = !readOnly && !lockStatus?.isLocked && (!parlay || standing.open);
   const savedLeg = standing.myLeg as ParlayLegRow | undefined;
@@ -151,8 +167,8 @@ export default function BuildPickScreen() {
             setStartingNew(false);
           } else {
             // Read fresh: an earlier save may have changed which leg is mine.
-            const current = queryClient.getQueryData<MemberWeekParlay | null>(["/api/leagues", leagueId, "weeks", weekId, "my-parlay"]);
-            const mine = current?.legs.find((l) => l.userId === effectiveUserId);
+            const current = queryClient.getQueryData<MemberWeekParlay | null>(myParlayKey(leagueId, weekId, onBehalfOf));
+            const mine = current?.legs.find((l) => l.userId === pickerId);
             if (current && mine) await removePick.mutateAsync({ parlayId: current.id, legId: mine.id });
           }
         } catch (err) {
@@ -301,10 +317,50 @@ export default function BuildPickScreen() {
   // member's row shows what they just chose.
   const slipRows = useMemo(() => {
     const others = (parlay?.legs ?? [])
-      .filter((l) => l.userId !== effectiveUserId)
+      .filter((l) => l.userId !== pickerId)
       .map((l) => ({ key: `leg-${l.id}`, owner: legOwnerName(l.user), leg: toSelectedLeg(l), mine: false }));
-    return [...(myPick ? [{ key: "mine", owner: "You", leg: myPick, mine: true }] : []), ...others];
-  }, [parlay?.legs, effectiveUserId, myPick]);
+    return [...(myPick ? [{ key: "mine", owner: onBehalfTarget?.name ?? "You", leg: myPick, mine: true }] : []), ...others];
+  }, [parlay?.legs, pickerId, myPick, onBehalfTarget?.name]);
+
+  // Every member and their pick, for the summary at the top. Members still
+  // to pick come first and are highlighted.
+  const pickSummary = useMemo(() => {
+    const legByUser = new Map((parlay?.legs ?? []).map((l) => [l.userId, l]));
+    return (members ?? [])
+      .filter((m: any) => m.isActive !== false)
+      .map((m: any) => {
+        const isPicker = m.userId === pickerId;
+        const saved = legByUser.get(m.userId);
+        // The picker's row shows the pick being saved, like the slip does.
+        const leg = isPicker ? myPick : saved ? toSelectedLeg(saved) : null;
+        return {
+          userId: m.userId as string,
+          name: m.userId === effectiveUserId ? "You" : legOwnerName(m.user, "Member"),
+          leg,
+          awaitingApproval: saved?.approvalStatus === "pending",
+        };
+      })
+      .sort((a, b) => Number(!!a.leg) - Number(!!b.leg) || a.name.localeCompare(b.name));
+  }, [members, parlay?.legs, pickerId, myPick, effectiveUserId]);
+
+  // Picks made on a member's behalf that the member hasn't answered yet.
+  const pendingApprovals = (parlay?.legs ?? []).filter((l) => l.approvalStatus === "pending");
+
+  function chooseOnBehalfOf() {
+    const targets = onBehalfInfo?.targets ?? [];
+    if (targets.length === 1) {
+      setOnBehalfOf(targets[0].userId);
+      return;
+    }
+    Alert.alert("Pick on behalf of…", "The pick you make will be theirs, and they'll be asked to approve it.", [
+      ...targets.map((t) => ({ text: t.name, onPress: () => setOnBehalfOf(t.userId) })),
+      { text: "Cancel", style: "cancel" as const },
+    ]);
+  }
+
+  function decideApproval(legId: number, action: "approve" | "reject") {
+    resolveApproval.mutate({ legId, action }, { onError: (err: Error) => Alert.alert("Couldn't save", err.message || "Please try again.") });
+  }
   const legCount = slipRows.length;
   const needed = Math.max(0, minLegs - legCount);
 
@@ -369,6 +425,98 @@ export default function BuildPickScreen() {
         data={visibleGames}
         keyExtractor={(g) => String(g.id)}
         contentContainerStyle={styles.listContent}
+        ListHeaderComponent={readOnly ? null : (
+          <View>
+            {/* On Behalf Of mode: only for members who can pick for someone. */}
+            {onBehalfTarget ? (
+              <View style={styles.onBehalfBanner} testID="banner-on-behalf-mode">
+                <Ionicons name="people-circle-outline" size={18} color="#fbbf24" />
+                <Text style={styles.onBehalfBannerText} numberOfLines={2}>
+                  On Behalf Of {onBehalfTarget.name}. They'll be asked to approve the pick.
+                </Text>
+                <Pressable
+                  onPress={() => !pending && setOnBehalfOf(undefined)}
+                  style={({ pressed }) => [styles.onBehalfExit, pressed && { opacity: 0.7 }]}
+                  hitSlop={8}
+                  accessibilityRole="button"
+                  accessibilityLabel="Exit On Behalf Of mode"
+                  testID="button-exit-on-behalf"
+                >
+                  <Text style={styles.onBehalfExitText}>Exit</Text>
+                </Pressable>
+              </View>
+            ) : canPick && (onBehalfInfo?.targets.length ?? 0) > 0 ? (
+              <Pressable
+                onPress={() => !pending && chooseOnBehalfOf()}
+                style={({ pressed }) => [styles.onBehalfBtn, pressed && { opacity: 0.7 }]}
+                accessibilityRole="button"
+                testID="button-on-behalf-mode"
+              >
+                <Ionicons name="people-circle-outline" size={16} color="#93c5fd" />
+                <Text style={styles.onBehalfBtnText}>
+                  {onBehalfInfo!.targets.length === 1 ? `Pick On Behalf Of ${onBehalfInfo!.targets[0].name}` : "On Behalf Of…"}
+                </Text>
+              </Pressable>
+            ) : null}
+
+            {pendingApprovals.map((leg) => {
+              const mine = leg.userId === effectiveUserId;
+              const canDecide = mine || !!league?.isAdmin;
+              const maker = (members ?? []).find((m: any) => m.userId === leg.placedByUserId);
+              return (
+                <View key={leg.id} style={styles.approvalCard} testID={`row-pending-approval-${leg.id}`}>
+                  <Text style={styles.approvalTitle} numberOfLines={2}>
+                    {shortLegLabel(toSelectedLeg(leg), gamesById.get(leg.gameId as number))}
+                  </Text>
+                  <Text style={styles.approvalSub} numberOfLines={2}>
+                    Picked by {maker ? legOwnerName((maker as any).user, "a member") : "a member"} for {mine ? "you" : legOwnerName(leg.user, "a member")}.
+                    {canDecide ? "" : " Waiting on their approval."}
+                  </Text>
+                  {canDecide && (
+                    <View style={styles.approvalActions}>
+                      <Pressable
+                        onPress={() => decideApproval(leg.id, "reject")}
+                        disabled={resolveApproval.isPending}
+                        style={({ pressed }) => [styles.approvalReject, pressed && { opacity: 0.7 }]}
+                        testID={`button-reject-pick-${leg.id}`}
+                      >
+                        <Text style={styles.approvalRejectText}>{mine ? "Reject" : "Remove"}</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => decideApproval(leg.id, "approve")}
+                        disabled={resolveApproval.isPending}
+                        style={({ pressed }) => [styles.approvalApprove, pressed && { opacity: 0.85 }]}
+                        testID={`button-approve-pick-${leg.id}`}
+                      >
+                        <Text style={styles.approvalApproveText}>{mine ? "Approve" : "Override: approve"}</Text>
+                      </Pressable>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+
+            {/* Everyone's pick so far. Members still to pick are listed
+                first and highlighted. */}
+            {pickSummary.length > 0 && (
+              <View style={styles.summaryCard} testID="list-pick-summary">
+                <Text style={styles.summaryTitle}>
+                  Picks so far · {pickSummary.filter((r) => r.leg).length} of {pickSummary.length} in
+                </Text>
+                {pickSummary.map((row) => (
+                  <View key={row.userId} style={[styles.summaryRow, !row.leg && styles.summaryRowOpen]}>
+                    <Text style={[styles.summaryName, !row.leg && styles.summaryNameOpen]} numberOfLines={1}>{row.name}</Text>
+                    <Text style={[styles.summaryPick, !row.leg && styles.summaryPickOpen]} numberOfLines={1}>
+                      {row.leg
+                        ? `${shortLegLabel(row.leg, gamesById.get(row.leg.gameId))}${row.awaitingApproval ? " · awaiting approval" : ""}`
+                        : "Pick is open"}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
         ListEmptyComponent={
           <View style={styles.emptyBlock}>
             <Text style={styles.emptyTitle}>No games this week</Text>
@@ -408,9 +556,9 @@ export default function BuildPickScreen() {
             </Text>
             <Text style={styles.slipSummary} numberOfLines={slipExpanded ? undefined : 1} testID="text-my-pick">
               {myPick
-                ? `Your pick: ${shortLegLabel(myPick, gamesById.get(myPick.gameId))}`
+                ? `${onBehalfTarget ? `${onBehalfTarget.name}'s` : "Your"} pick: ${shortLegLabel(myPick, gamesById.get(myPick.gameId))}`
                 : canPick
-                  ? "Tap a market to make your pick"
+                  ? `Tap a market to make ${onBehalfTarget ? "their" : "your"} pick`
                   : "You don't have a pick in this parlay"}
             </Text>
           </View>
@@ -541,6 +689,80 @@ const styles = StyleSheet.create({
     borderBottomColor: "#2a3447",
   },
   headerCount: { fontSize: 14, fontWeight: "700", color: "#f1f5f9" },
+  onBehalfBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(147, 197, 253, 0.4)",
+    marginBottom: 12,
+  },
+  onBehalfBtnText: { fontSize: 14, fontWeight: "600", color: "#93c5fd" },
+  onBehalfBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.5)",
+    backgroundColor: "rgba(245, 158, 11, 0.1)",
+    marginBottom: 12,
+  },
+  onBehalfBannerText: { flex: 1, fontSize: 13, fontWeight: "600", color: "#fbbf24" },
+  onBehalfExit: {
+    minHeight: 36,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.6)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  onBehalfExitText: { fontSize: 13, fontWeight: "700", color: "#fbbf24" },
+  approvalCard: {
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(245, 158, 11, 0.4)",
+    backgroundColor: "rgba(245, 158, 11, 0.06)",
+    marginBottom: 12,
+    gap: 4,
+  },
+  approvalTitle: { fontSize: 14, fontWeight: "700", color: "#f1f5f9" },
+  approvalSub: { fontSize: 12, color: "#94a3b8" },
+  approvalActions: { flexDirection: "row", gap: 10, marginTop: 8 },
+  approvalReject: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  approvalRejectText: { fontSize: 14, fontWeight: "600", color: "#94a3b8" },
+  approvalApprove: { flex: 1, minHeight: 44, borderRadius: 10, backgroundColor: "#2563eb", alignItems: "center", justifyContent: "center" },
+  approvalApproveText: { fontSize: 14, fontWeight: "700", color: "#ffffff" },
+  summaryCard: {
+    backgroundColor: "#1c2538",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    padding: 12,
+    marginBottom: 12,
+    gap: 4,
+  },
+  summaryTitle: { fontSize: 11, fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 },
+  summaryRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 5, paddingHorizontal: 8, borderRadius: 8 },
+  summaryRowOpen: { backgroundColor: "rgba(245, 158, 11, 0.1)" },
+  summaryName: { width: 96, fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
+  summaryNameOpen: { color: "#fbbf24" },
+  summaryPick: { flex: 1, fontSize: 13, color: "#cbd5e1" },
+  summaryPickOpen: { color: "#fbbf24", fontStyle: "italic" },
   headerHint: { fontSize: 13, color: "#94a3b8" },
   previewBanner: {
     flexDirection: "row",

@@ -13,6 +13,7 @@ import {
   MAX_POINTS_MOVE,
   POINTS_STEP,
   type SelectedLeg,
+  type TakenMarket,
   type TakenMarkets,
 } from "@/lib/pickHelpers";
 
@@ -36,6 +37,11 @@ type MarketBtnProps = {
   onPress: () => void;
   accessibilityLabel: string;
   flex?: number;
+  /** Another member has this market. Their side reads "Taken by", the other
+   * side "Voided by"; both are greyed out and can't be tapped. */
+  taken?: { by: string; voided: boolean } | null;
+  /** The viewer picked the other side: marked with an x, still tappable to switch. */
+  voidedByMe?: boolean;
 };
 
 function MarketButton({
@@ -46,14 +52,19 @@ function MarketButton({
   onPress,
   accessibilityLabel,
   flex = 1,
+  taken,
+  voidedByMe,
 }: MarketBtnProps) {
+  const caption = taken ? `${taken.voided ? "Voided" : "Taken"} by ${taken.by}` : voidedByMe ? "Voided by you" : null;
+  // A check on the side that was picked, an x on the side that pick ruled out.
+  const corner = selected || (taken && !taken.voided) ? "checkmark" : taken || voidedByMe ? "close" : null;
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
       accessibilityState={{ selected, disabled }}
-      accessibilityLabel={accessibilityLabel}
+      accessibilityLabel={caption ? `${accessibilityLabel}. ${caption}` : accessibilityLabel}
       style={({ pressed }) => [
         styles.marketBtn,
         { flex },
@@ -62,10 +73,17 @@ function MarketButton({
         pressed && !disabled && styles.marketBtnPressed,
       ]}
     >
+      {corner && (
+        <View style={styles.marketCorner} pointerEvents="none">
+          <Ionicons name={corner} size={12} color={selected ? "#ffffff" : "#94a3b8"} />
+        </View>
+      )}
       <Text style={[styles.marketPrimary, selected && styles.marketPrimarySelected]} numberOfLines={1}>
         {primary}
       </Text>
-      {secondary ? (
+      {caption && !selected ? (
+        <Text style={styles.marketCaption} numberOfLines={1}>{caption}</Text>
+      ) : secondary ? (
         <Text style={[styles.marketSecondary, selected && styles.marketSecondarySelected]} numberOfLines={1}>
           {secondary}
         </Text>
@@ -107,10 +125,16 @@ export function GamePickCard({
   const past = readOnly || isGamePast(game);
   const awaySpread = awaySpreadDisplay(game.spread);
   const homeSpread = game.spread || null;
-  const hasPick = !!selectedLeg;
-  const spreadTaken = !!takenBy?.spread && selectedLeg?.betType !== "spread";
+    const spreadTaken = !!takenBy?.spread && selectedLeg?.betType !== "spread";
   const moneylineTaken = !!takenBy?.moneyline && selectedLeg?.betType !== "moneyline";
   const totalTaken = !!takenBy?.total && selectedLeg?.betType !== "over" && selectedLeg?.betType !== "under";
+  // What each button says about its own side of a market.
+  const takenSide = (market: TakenMarket | undefined, isTaken: boolean, betType: string, pick: string) =>
+    isTaken && market ? { by: market.by, voided: !(market.betType === betType && market.pick === pick) } : null;
+  const sameMarket = (a: string, b: string) =>
+    a === b || ((a === "over" || a === "under") && (b === "over" || b === "under"));
+  const voidedByMe = (betType: string, pick: string) =>
+    !past && !!selectedLeg && sameMarket(selectedLeg.betType, betType) && !(selectedLeg.betType === betType && selectedLeg.pick === pick);
   const showPointsControl = !past && !!selectedLeg && !!onAdjustPoints && canBuyPoints(selectedLeg.betType);
   const currentPoints = selectedLeg ? derivePointsMoved(game, selectedLeg.betType, selectedLeg.pick, selectedLeg.line) : 0;
   const canSellPoints = currentPoints > -MAX_POINTS_MOVE;
@@ -137,13 +161,7 @@ export function GamePickCard({
   };
 
   return (
-    <View
-      style={[
-        styles.card,
-        past && styles.cardPast,
-        hasPick && styles.cardPicked,
-      ]}
-    >
+    <View style={[styles.card, past && styles.cardPast]}>
       <View style={styles.metaRow}>
         <Text style={styles.metaText}>
           {game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}
@@ -206,6 +224,8 @@ export function GamePickCard({
             selected={selectedLeg?.betType === "spread" && selectedLeg?.pick === "away"}
             disabled={past || !game.spread || spreadTaken}
             onPress={() => select("spread", "away")}
+            taken={takenSide(takenBy?.spread, spreadTaken, "spread", "away")}
+            voidedByMe={voidedByMe("spread", "away")}
             accessibilityLabel={`${game.awayTeam} spread ${awaySpread || "unavailable"}`}
           />
           <MarketButton
@@ -214,12 +234,11 @@ export function GamePickCard({
             selected={selectedLeg?.betType === "spread" && selectedLeg?.pick === "home"}
             disabled={past || !game.spread || spreadTaken}
             onPress={() => select("spread", "home")}
+            taken={takenSide(takenBy?.spread, spreadTaken, "spread", "home")}
+            voidedByMe={voidedByMe("spread", "home")}
             accessibilityLabel={`${game.homeTeam} spread ${homeSpread || "unavailable"}`}
           />
         </View>
-        {spreadTaken && (
-          <Text style={styles.takenText}>Spread taken by {takenBy!.spread}</Text>
-        )}
         <View style={styles.pickGridRow}>
           <MarketButton
             primary={game.moneylineAway || "—"}
@@ -227,6 +246,8 @@ export function GamePickCard({
             selected={selectedLeg?.betType === "moneyline" && selectedLeg?.pick === "away"}
             disabled={past || !game.moneylineAway || moneylineTaken}
             onPress={() => select("moneyline", "away")}
+            taken={takenSide(takenBy?.moneyline, moneylineTaken, "moneyline", "away")}
+            voidedByMe={voidedByMe("moneyline", "away")}
             accessibilityLabel={`${game.awayTeam} moneyline ${game.moneylineAway || "unavailable"}`}
           />
           <MarketButton
@@ -235,12 +256,11 @@ export function GamePickCard({
             selected={selectedLeg?.betType === "moneyline" && selectedLeg?.pick === "home"}
             disabled={past || !game.moneylineHome || moneylineTaken}
             onPress={() => select("moneyline", "home")}
+            taken={takenSide(takenBy?.moneyline, moneylineTaken, "moneyline", "home")}
+            voidedByMe={voidedByMe("moneyline", "home")}
             accessibilityLabel={`${game.homeTeam} moneyline ${game.moneylineHome || "unavailable"}`}
           />
         </View>
-        {moneylineTaken && (
-          <Text style={styles.takenText}>Moneyline taken by {takenBy!.moneyline}</Text>
-        )}
         <View style={styles.pickGridRow}>
           <MarketButton
             primary={`O ${game.overUnder || "—"}`}
@@ -248,6 +268,8 @@ export function GamePickCard({
             selected={selectedLeg?.betType === "over" && selectedLeg?.pick === "over"}
             disabled={past || !game.overUnder || totalTaken}
             onPress={() => select("over", "over")}
+            taken={takenSide(takenBy?.total, totalTaken, "over", "over")}
+            voidedByMe={voidedByMe("over", "over")}
             accessibilityLabel={`Over ${game.overUnder || "unavailable"}`}
           />
           <MarketButton
@@ -256,12 +278,11 @@ export function GamePickCard({
             selected={selectedLeg?.betType === "under" && selectedLeg?.pick === "under"}
             disabled={past || !game.overUnder || totalTaken}
             onPress={() => select("under", "under")}
+            taken={takenSide(takenBy?.total, totalTaken, "under", "under")}
+            voidedByMe={voidedByMe("under", "under")}
             accessibilityLabel={`Under ${game.overUnder || "unavailable"}`}
           />
         </View>
-        {totalTaken && (
-          <Text style={styles.takenText}>Total taken by {takenBy!.total}</Text>
-        )}
       </View>
 
       {game.isFinished && game.awayScore != null && game.homeScore != null && (
@@ -273,7 +294,10 @@ export function GamePickCard({
         </View>
       )}
 
+      {/* The pick and its line controls sit in one outlined panel inside the
+          card. The colored outline used to go around the whole card. */}
       {selectedLeg && (
+        <View style={styles.pickPanel}>
         <View style={styles.selectionStrip}>
           <Ionicons name="checkmark-circle" size={18} color="#2563eb" />
           <Text style={styles.selectionLabel} numberOfLines={1}>
@@ -289,7 +313,6 @@ export function GamePickCard({
             <Text style={styles.clearBtnText}>Clear</Text>
           </Pressable>
         </View>
-      )}
 
       {/* Alternate line: the two step buttons sit either side of the line
           they change. Nothing else in the row is tappable, so no press
@@ -341,6 +364,8 @@ export function GamePickCard({
           </View>
         </View>
       )}
+        </View>
+      )}
 
       {!past && onAddProp && (
         <Pressable
@@ -367,9 +392,14 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   cardPast: { opacity: 0.45 },
-  cardPicked: {
+  pickPanel: {
+    marginTop: 14,
+    borderWidth: 1.5,
     borderColor: "#2563eb",
-    borderLeftWidth: 3,
+    borderRadius: 12,
+    backgroundColor: "rgba(37, 99, 235, 0.06)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
   metaRow: {
     flexDirection: "row",
@@ -406,7 +436,8 @@ const styles = StyleSheet.create({
   record: { fontSize: 12, color: "#64748b", marginTop: 2 },
   pickGrid: { gap: 8 },
   pickGridRow: { flexDirection: "row", gap: 8 },
-  takenText: { fontSize: 11, color: "#64748b", marginTop: -2 },
+  marketCorner: { position: "absolute", top: 4, right: 5 },
+  marketCaption: { fontSize: 10, color: "#94a3b8", marginTop: 2 },
   marketBtn: {
     minHeight: 52,
     borderRadius: 10,
@@ -441,10 +472,6 @@ const styles = StyleSheet.create({
   finalScore: { fontSize: 14, fontWeight: "700", color: "#f1f5f9", fontVariant: ["tabular-nums"] },
   finalLabel: { fontSize: 11, fontWeight: "600", color: "#94a3b8" },
   selectionStrip: {
-    marginTop: 14,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: "#2a3447",
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
@@ -477,7 +504,7 @@ const styles = StyleSheet.create({
   },
   addPropBtnText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
   pointsBlock: {
-    marginTop: 10,
+    marginTop: 4,
     paddingTop: 10,
     borderTopWidth: 1,
     borderTopColor: "#2a3447",

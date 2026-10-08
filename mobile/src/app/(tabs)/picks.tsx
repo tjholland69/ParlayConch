@@ -18,7 +18,8 @@ import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
 import { useActiveWeekStatus, useMyParlay, useMyParlayHistory } from "@/hooks/use-parlays";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { format, formatDistanceToNow, isPast } from "date-fns";
-import type { ParlayWithLegs, Week } from "@shared/schema";
+import type { ActiveWeekStatus, ParlayWithLegs, Week } from "@shared/schema";
+import { sortParlayLegs } from "@shared/legOrder";
 import { CHIP_MIN_HEIGHT, shadows } from "@/lib/theme";
 import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { LegRow, legOwnerName } from "@/components/LegLookthrough";
@@ -47,6 +48,7 @@ function ParlayTile({
   glow,
   ctaLabel,
   tint,
+  progress,
   children,
 }: {
   icon: IconName;
@@ -67,6 +69,10 @@ function ParlayTile({
   ctaLabel?: string;
   /** Faint wash over the card, e.g. the red-to-green result color. */
   tint?: string;
+  /** How full an open parlay is, 0 to 1 (members with a pick in / members).
+   * Fills the tile from the left like a loading bar, as the league tiles on
+   * the web's Quick Picks do. */
+  progress?: number;
   /** Shown under the tile's text, e.g. the expanded list of legs. */
   children?: React.ReactNode;
 }) {
@@ -87,6 +93,12 @@ function ParlayTile({
       <Animated.View style={[styles.shadowWrap, glow && styles.shadowWrapGlow, glowStyle]}>
         <View style={[styles.parlayCard, { backgroundColor: bg, borderColor: border }]}>
           {tint ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} /> : null}
+          {progress != null && progress > 0 ? (
+            <View
+              pointerEvents="none"
+              style={[styles.progressFill, { width: `${Math.round(Math.min(1, progress) * 100)}%`, backgroundColor: iconColor }]}
+            />
+          ) : null}
           {/* Left accent bar */}
           <View style={[styles.accentBar, { backgroundColor: iconColor }]} />
 
@@ -128,7 +140,7 @@ function ParlayTile({
 
 /** For a league where the member still owes a pick this week: either the
  * league's parlay is open and waiting on them, or nobody has started one. */
-function NeedsPickTile({ leagueId, weekId, leagueName }: { leagueId: number; weekId: number; leagueName: string }) {
+function NeedsPickTile({ leagueId, weekId, leagueName, status }: { leagueId: number; weekId: number; leagueName: string; status?: ActiveWeekStatus }) {
   const router = useRouter();
   const effectiveUserId = useEffectiveUserId();
   const { data: parlay, isLoading } = useMyParlay(leagueId, weekId);
@@ -188,7 +200,8 @@ function NeedsPickTile({ leagueId, weekId, leagueName }: { leagueId: number; wee
       iconColor="#f59e0b"
       leagueName={leagueName}
       statusLabel={parlay ? "Parlay is Open!" : "No parlay yet this week"}
-      metaLabel={parlay ? `${legCount} ${legCount === 1 ? "leg" : "legs"} in · yours isn't yet` : undefined}
+      metaLabel={parlay ? `${membersInLabel(status, legCount)} · yours isn't yet` : undefined}
+      progress={parlay ? membersInProgress(status) : undefined}
       bg="#1c1a0a"
       border="#3d2e00"
       actionIcon="create-outline"
@@ -212,11 +225,23 @@ const STATUS_META: Record<string, { icon: IconName; iconColor: string; label: st
   pending: { icon: "time-outline", iconColor: "#38bdf8", label: "Pending review", bg: "#10283a", border: "#2b7ba3" },
 };
 
-function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueName: string }) {
+/** "3 of 5 members in", or the leg count until the week's status has loaded. */
+function membersInLabel(status: ActiveWeekStatus | undefined, legCount: number): string {
+  if (!status?.totalMembers) return `${legCount} ${legCount === 1 ? "leg" : "legs"} in`;
+  return `${status.submittedCount} of ${status.totalMembers} members in`;
+}
+
+function membersInProgress(status: ActiveWeekStatus | undefined): number | undefined {
+  return status?.totalMembers ? status.submittedCount / status.totalMembers : undefined;
+}
+
+function HistoryTile({ parlay, leagueName, status }: { parlay: ParlayWithLegs; leagueName: string; status?: ActiveWeekStatus }) {
   const router = useRouter();
+  const effectiveUserId = useEffectiveUserId();
   const [expanded, setExpanded] = useState(false);
   const meta = STATUS_META[parlay.status ?? "pending"] ?? STATUS_META.pending;
-  const legs = parlay.legs ?? [];
+  // Listed in the order that fits where the parlay is (shared/legOrder.ts).
+  const legs = sortParlayLegs(parlay);
   const legCount = legs.length;
   const isDraft = parlay.status === "draft";
   const tally = legTally(legs);
@@ -231,10 +256,11 @@ function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueNam
       icon={meta.icon}
       iconColor={scaleColor ?? meta.iconColor}
       leagueName={leagueName}
-      statusLabel={isParlayInProgress(parlay) ? "In progress" : meta.label}
+      statusLabel={isParlayInProgress(parlay) ? "In progress" : isDraft && status?.allSubmitted ? "Ready to Lock" : meta.label}
+      progress={isDraft ? membersInProgress(status) : undefined}
       metaLabel={
         isDraft
-          ? `${legCount} ${legCount === 1 ? "leg" : "legs"} in · your pick is saved`
+          ? `${membersInLabel(status, legCount)} · your pick is saved`
           : [
               parlay.week?.label ?? "Week",
               `${legCount} ${legCount === 1 ? "leg" : "legs"}`,
@@ -255,7 +281,13 @@ function HistoryTile({ parlay, leagueName }: { parlay: ParlayWithLegs; leagueNam
       {expanded && !isDraft && (
         <View style={styles.tileLegs} testID={`legs-parlay-${parlay.id}`}>
           {legs.map((leg) => (
-            <LegRow key={leg.id} leg={leg} ownerName={legOwnerName(leg.user)} week={parlay.week} />
+            <LegRow
+              key={leg.id}
+              leg={leg}
+              ownerName={legOwnerName(leg.user)}
+              week={parlay.week}
+              disputable={leg.userId === effectiveUserId}
+            />
           ))}
           <Pressable
             onPress={openLeague}
@@ -695,9 +727,15 @@ export default function PicksScreen() {
             leagueId={item.leagueId}
             weekId={item.weekId}
             leagueName={item.leagueName}
+            status={weekStatus?.[item.leagueId]}
           />
         ) : (
-          <HistoryTile parlay={item.parlay} leagueName={leagueName(item.parlay.leagueId)} />
+          <HistoryTile
+            parlay={item.parlay}
+            leagueName={leagueName(item.parlay.leagueId)}
+            // Only the active week's parlay has a live "members in" count.
+            status={item.parlay.weekId === activeWeek?.id ? weekStatus?.[item.parlay.leagueId] : undefined}
+          />
         )
       }
       ListFooterComponent={
@@ -738,6 +776,7 @@ export default function PicksScreen() {
 }
 
 const styles = StyleSheet.create({
+  progressFill: { position: "absolute", top: 0, bottom: 0, left: 0, opacity: 0.16 },
   container: { flex: 1, backgroundColor: "#141926" },
   content: { padding: 20 },
   centered: {

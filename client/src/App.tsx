@@ -22,7 +22,7 @@ import LeagueDetail from "@/pages/LeagueDetail";
 import Settings from "@/pages/Settings";
 import NotFound from "@/pages/not-found";
 
-const StoryStudio = lazy(() => import("@/pages/StoryStudio"));
+const Reports = lazy(() => import("@/pages/Reports"));
 const LeagueSettings = lazy(() => import("@/pages/LeagueSettings"));
 const DemoDataEditor = lazy(() => import("@/pages/DemoDataEditor"));
 const ScreenshotImport = lazy(() => import("@/pages/ScreenshotImport"));
@@ -122,7 +122,9 @@ function Router() {
               <Route path="/" component={Dashboard} />
               <Route path="/picks" component={Picks} />
               <Route path="/history" component={History} />
-              <Route path="/story-studio" component={StoryStudio} />
+              <Route path="/reports" component={Reports} />
+              {/* Story Studio moved under Reports; its old link still lands there. */}
+              <Route path="/story-studio" component={Reports} />
               <Route path="/index/advanced" component={IndexAdvanced} />
               <Route path="/index/custom" component={CustomIndexes} />
               <Route path="/leagues" component={Leagues} />

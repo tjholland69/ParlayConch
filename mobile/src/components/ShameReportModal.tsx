@@ -16,10 +16,16 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Button } from "@/components/ui/Button";
-import { shamePendingLine, shameReportText, type ShameReport } from "@shared/shameReport";
+import type { ParlayStory } from "@shared/parlayStory";
 
 const SLIDE_MS = 10_000;
 const SLIDE_COUNT = 2;
+
+/** A lost parlay's story is red, a won one's green. */
+const THEME = {
+  shame: { background: "#2a0a0d", accent: "#fca5a5" },
+  locks: { background: "#06251a", accent: "#6ee7b7" },
+} as const;
 
 /**
  * Saves the slide on screen as a PNG and returns its file path, or null if
@@ -39,19 +45,20 @@ async function captureSlide(view: View | null): Promise<string | null> {
 }
 
 /**
- * The weekly shame report as a two-slide story: first who ruined the parlay,
- * then every losing bet. Each slide runs on a timer shown in the bar at the
+ * A parlay report as a two-slide story. The Shame Report: who ruined a lost
+ * parlay, then every losing bet. The Locks Report: who brought a won parlay
+ * home, then every bet in it. Each slide runs on a timer shown in the bar at the
  * top. Tap to skip ahead (or the left edge to go back), press and hold to
- * pause. When the last slide runs out the story closes; the card's Shame
- * report chip brings it back. Either slide can be shared as an image, or the
+ * pause. When the last slide runs out the story closes; the card's report
+ * chip brings it back. Either slide can be shared as an image, or the
  * whole report as text. Mirrors web's ShameReportDialog.
  */
 export function ShameReportModal({
-  report,
+  story,
   visible,
   onClose,
 }: {
-  report: ShameReport;
+  story: ParlayStory;
   visible: boolean;
   onClose: () => void;
 }) {
@@ -60,6 +67,7 @@ export function ShameReportModal({
   const [slide, setSlide] = useState(0);
   const slideRef = useRef<View>(null);
   const [sharing, setSharing] = useState(false);
+  const theme = THEME[story.kind];
   const [holding, setHolding] = useState(false);
   const paused = holding || sharing;
 
@@ -121,7 +129,7 @@ export function ShameReportModal({
     setSharing(true);
     try {
       const uri = Platform.OS === "ios" ? await captureSlide(slideRef.current) : null;
-      await Share.share(uri ? { url: uri } : { message: shameReportText(report) });
+      await Share.share(uri ? { url: uri } : { message: story.text });
     } catch {
       // Dismissing the share sheet isn't an error worth surfacing.
     } finally {
@@ -132,7 +140,7 @@ export function ShameReportModal({
   async function shareText() {
     setSharing(true);
     try {
-      await Share.share({ message: shameReportText(report) });
+      await Share.share({ message: story.text });
     } catch {
       // Dismissed.
     } finally {
@@ -140,11 +148,11 @@ export function ShameReportModal({
     }
   }
 
-  const pendingLine = shamePendingLine(report.pendingCount);
+  const pendingLine = story.footnote;
 
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={onClose} statusBarTranslucent>
-      <View style={[styles.screen, { paddingTop: insets.top + 12, paddingBottom: insets.bottom + 16 }]}>
+      <View style={[styles.screen, { backgroundColor: theme.background, paddingTop: insets.top + 12, paddingBottom: insets.bottom + 16 }]}>
         <View style={styles.progressRow}>
           {Array.from({ length: SLIDE_COUNT }, (_, i) => (
             <View key={i} style={styles.progressTrack}>
@@ -161,7 +169,7 @@ export function ShameReportModal({
             </View>
           ))}
         </View>
-        <Pressable onPress={onClose} hitSlop={12} style={styles.close} accessibilityLabel="Close shame report">
+        <Pressable onPress={onClose} hitSlop={12} style={styles.close} accessibilityLabel={`Close ${story.title}`}>
           <Ionicons name="close" size={24} color="rgba(255,255,255,0.7)" />
         </Pressable>
 
@@ -180,24 +188,24 @@ export function ShameReportModal({
         >
           {/* Everything in this view is what a shared slide image shows.
               collapsable={false} keeps it a real native view to capture. */}
-          <View ref={slideRef} collapsable={false} style={styles.capture}>
-            <Text style={styles.kicker} numberOfLines={1}>{report.weekLabel} · Shame Report</Text>
+          <View ref={slideRef} collapsable={false} style={[styles.capture, { backgroundColor: theme.background }]}>
+            <Text style={styles.kicker} numberOfLines={1}>{story.weekLabel} · {story.title}</Text>
             {slide === 0 ? (
               <View style={styles.loserSlide} testID="slide-shame-loser">
-                <Text style={styles.siren}>🚨</Text>
-                <Text style={styles.loserLabel}>{report.loserLabel}</Text>
-                <Text style={styles.loserName} adjustsFontSizeToFit numberOfLines={2}>{report.loserName}</Text>
-                <Text style={styles.ruinedWith}>ruined it with</Text>
-                <Text style={styles.loserPick}>{report.loserPick}</Text>
+                <Text style={styles.siren}>{story.emoji}</Text>
+                <Text style={[styles.loserLabel, { color: theme.accent }]}>{story.leadLabel}</Text>
+                <Text style={styles.loserName} adjustsFontSizeToFit numberOfLines={2}>{story.leadName}</Text>
+                <Text style={styles.ruinedWith}>{story.leadCaption}</Text>
+                <Text style={styles.loserPick}>{story.leadPick}</Text>
               </View>
             ) : (
               <View style={styles.listSlide} testID="slide-shame-list">
-                <Text style={styles.listTitle}>The Losing Bets</Text>
+                <Text style={styles.listTitle}>{story.listTitle}</Text>
                 <ScrollView contentContainerStyle={styles.list}>
-                  {report.losers.map((l) => (
+                  {story.rows.map((l) => (
                     <View key={l.legId} style={styles.listRow}>
-                      <Text style={[styles.listName, l.isParlayLoser && styles.listNameLoser]}>
-                        {l.isParlayLoser ? "🚨 " : ""}{l.name}
+                      <Text style={[styles.listName, l.highlight && { color: theme.accent }]}>
+                        {l.highlight ? `${story.emoji} ` : ""}{l.name}
                       </Text>
                       <Text style={styles.listPick}>{l.pick}</Text>
                     </View>
@@ -271,6 +279,5 @@ const styles = StyleSheet.create({
   list: { paddingTop: 20, gap: 18 },
   listRow: { alignItems: "center" },
   listName: { fontSize: 18, fontWeight: "800", color: "#ffffff", textAlign: "center" },
-  listNameLoser: { color: "#fca5a5" },
   listPick: { marginTop: 2, fontSize: 14, color: "rgba(255,255,255,0.7)", textAlign: "center" },
 });

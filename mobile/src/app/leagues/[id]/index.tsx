@@ -31,8 +31,13 @@ import {
   useUnlockWeekParlay,
   useInviteByEmail,
   useLeagueDataStats,
+  useRequestUnlock,
+  useResolveUnlockRequest,
+  useLeagueReports,
+  useLeagueReport,
   type LeagueRecordEntry,
 } from "@/hooks/use-leagues";
+import type { ReportId } from "@shared/reports";
 import {
   useAllLeagueParlaysForWeeks,
   useApproveParlay,
@@ -42,7 +47,10 @@ import {
 } from "@/hooks/use-parlays";
 import { BoostSheet } from "@/components/BoostSheet";
 import { ShameReportModal } from "@/components/ShameReportModal";
-import { buildShameReport, canShameSeason } from "@shared/shameReport";
+import { canShameSeason } from "@shared/shameReport";
+import { buildParlayStory } from "@shared/parlayStory";
+import { heroLabelText as heroLabelFor, loserLabelText as loserLabelFor } from "@shared/leagueLabels";
+import { sortParlayLegs } from "@shared/legOrder";
 import { standingsText } from "@shared/standingsExport";
 import { boostLabel } from "@shared/parlayBoost";
 import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
@@ -55,48 +63,89 @@ import { SPORTSBOOK_PROVIDERS, pickDeepLinkGames, type SportsbookProvider, type 
 import type { ParlayWithLegs } from "@shared/schema";
 import { getSlate } from "@shared/slate";
 import { isParlayInProgress, legTally } from "@shared/parlayProgress";
-import { LegRow, LegLookthroughSheet, legOwnerName } from "@/components/LegLookthrough";
+import { LegRow, VoidLegRow, LegLookthroughSheet, legOwnerName } from "@/components/LegLookthrough";
 import { webLeagueSettingsUrl } from "@/lib/pickHelpers";
 import { shadows } from "@/lib/theme";
 import { getOpenParlayVisualStyle, getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
 import { getHeroLeg } from "@/lib/parlayHero";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
-import { DisputeLegBadge } from "@/components/DisputeLegSheet";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 type MCIIconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
 
 type ParlayLegWithGame = ParlayWithLegs["legs"][number];
 
-type Tab = "parlays" | "members" | "stats";
+type Tab = "parlays" | "members" | "stats" | "reports";
 
 const TAB_LABELS: Record<Tab, string> = {
   parlays: "Parlays",
   members: "Members",
   stats: "Stats",
+  reports: "Reports",
 };
 
 const TAB_ICONS: Record<Tab, React.ComponentProps<typeof Ionicons>["name"]> = {
   parlays: "documents-outline",
   members: "people-outline",
   stats: "bar-chart-outline",
+  reports: "reader-outline",
 };
 
-const LOSER_LABEL_TEXT: Record<string, string> = {
-  parlay_loser: "Parlay Loser",
-  asshole: "Asshole",
-  jerry: "Jerry",
-  dud: "Dud",
-  doofus: "Doofus",
-};
+/**
+ * One report in a bottom sheet: its bars, then a button that shares the text
+ * version (Messages, Copy, …). The pared-down mobile take on the web's
+ * Reports page: no file downloads, and no Story Studio.
+ */
+function ReportSheet({ leagueId, reportId, title, onClose }: { leagueId: number; reportId: ReportId | null; title: string; onClose: () => void }) {
+  const { data: report, isLoading, isError } = useLeagueReport(leagueId, reportId);
+  return (
+    <LegLookthroughSheet visible={!!reportId} title={title} isLoading={isLoading} onClose={onClose}>
+      {isError || !report ? (
+        <Text style={styles.reportEmpty}>Couldn't load this report. Try again in a moment.</Text>
+      ) : (
+        <ScrollView style={{ flexGrow: 0 }}>
+          <Text style={styles.reportChartTitle}>{report.chart.title}</Text>
+          {report.chart.bars.length === 0 ? (
+            <Text style={styles.reportEmpty}>Nothing to chart yet.</Text>
+          ) : (
+            report.chart.bars.map((bar) => (
+              <View key={bar.label} style={styles.reportBarRow} accessibilityLabel={`${bar.label}: ${bar.display}`}>
+                <Text style={styles.reportBarLabel} numberOfLines={1}>{bar.label}</Text>
+                <View style={styles.reportBarTrack}>
+                  <View style={[styles.reportBarFill, { width: `${Math.max(0, Math.min(100, (bar.value / (report.chart.max || 1)) * 100))}%` }]} />
+                </View>
+                <Text style={styles.reportBarValue}>{bar.display}</Text>
+              </View>
+            ))
+          )}
+          <Text style={styles.reportText} selectable testID="text-report-sms">{report.text}</Text>
+          <Pressable
+            onPress={() => void Share.share({ message: report.text }).catch(() => undefined)}
+            style={({ pressed }) => [styles.reportShareBtn, pressed && { opacity: 0.8 }]}
+            accessibilityRole="button"
+            testID="button-report-share-text"
+          >
+            <Ionicons name="share-outline" size={16} color="#ffffff" />
+            <Text style={styles.reportShareText}>Share as text</Text>
+          </Pressable>
+        </ScrollView>
+      )}
+    </LegLookthroughSheet>
+  );
+}
 
-const HERO_LABEL_TEXT: Record<string, string> = {
-  parlay_hero: "Parlay Hero",
-  mvp: "MVP",
-  legend: "Legend",
-  big_time: "Big Time",
-};
+/** The Parlays tab's filters, as they apply to one leg. Filters narrow the
+ * legs shown inside each card; the cards themselves always stay. */
+type LegFilter = { member: string; betType: string; result: string };
+
+function legMatchesFilter(leg: { userId: string | null; betType: string; result: string | null }, filter: LegFilter): boolean {
+  if (filter.member !== "all" && leg.userId !== filter.member) return false;
+  if (filter.betType !== "all" && leg.betType !== filter.betType) return false;
+  if (filter.result === "pending") return !leg.result;
+  if (filter.result !== "all" && leg.result !== filter.result) return false;
+  return true;
+}
 
 function ParlayCard({
   parlay,
@@ -106,6 +155,9 @@ function ParlayCard({
   preferredSportsbook,
   loserLabel,
   heroLabel,
+  shameEmoji,
+  legFilter,
+  members,
 }: {
   parlay: ParlayWithLegs;
   isAdmin: boolean;
@@ -114,6 +166,11 @@ function ParlayCard({
   preferredSportsbook: SportsbookProvider | undefined;
   loserLabel?: string | null;
   heroLabel?: string | null;
+  shameEmoji?: string | null;
+  /** Narrows the legs listed inside the card. The header, tally and mix bar
+   * always describe the whole parlay. */
+  legFilter: LegFilter;
+  members: any[] | undefined;
 }) {
   const router = useRouter();
   const effectiveUserId = useEffectiveUserId();
@@ -145,6 +202,23 @@ function ParlayCard({
     "Unknown";
 
   const legs = parlay.legs ?? [];
+  const filtering = legFilter.member !== "all" || legFilter.betType !== "all" || legFilter.result !== "all";
+  // In the order that fits where the parlay is (shared/legOrder.ts), then
+  // narrowed by the tab's filters.
+  const shownLegs = sortParlayLegs(parlay).filter((l) => legMatchesFilter(l, legFilter));
+  // Members with no bet in a parlay that's past picking are Void for it.
+  // Left out while a result or bet-type filter is on: a Void has neither.
+  const voidMembers =
+    parlay.status === "draft" || parlay.status === "void" || legFilter.betType !== "all" || legFilter.result !== "all"
+      ? []
+      : (members ?? []).filter(
+          (m: any) =>
+            m.isActive !== false &&
+            !legs.some((l) => l.userId === m.userId) &&
+            (legFilter.member === "all" || legFilter.member === m.userId) &&
+            // Only members who were in the league when the parlay was made.
+            (!m.startDate || !parlay.createdAt || new Date(m.startDate) <= new Date(parlay.createdAt)),
+        );
   const { pct, label: tallyLabel } = legTally(legs);
   const visual = getParlayVisualStyle(pct, 1);
   // Until a leg is decided there's no win % to color by, so an open parlay
@@ -154,8 +228,8 @@ function ParlayCard({
 
   const bustedLeg = getBustedLeg(parlay);
   const heroLeg = getHeroLeg(parlay);
-  const loserLabelText = LOSER_LABEL_TEXT[loserLabel ?? "parlay_loser"] ?? LOSER_LABEL_TEXT.parlay_loser;
-  const heroLabelText = HERO_LABEL_TEXT[heroLabel ?? "parlay_hero"] ?? HERO_LABEL_TEXT.parlay_hero;
+  const loserLabelText = loserLabelFor(loserLabel);
+  const heroLabelText = heroLabelFor(heroLabel);
   const heroMemberName = heroLeg?.user
     ? heroLeg.user.settings?.displayName ?? heroLeg.user.firstName ?? heroLeg.user.email ?? "Unknown"
     : name;
@@ -164,16 +238,22 @@ function ParlayCard({
     ? bustedLeg.user.settings?.displayName ?? bustedLeg.user.firstName ?? bustedLeg.user.email ?? "Unknown"
     : name;
 
-  // Only a lost parlay from the season being played has a shame report;
-  // built on demand, when it's opened.
-  const canShame = !!bustedLeg && canShameSeason(parlay.week?.season, currentSeason);
-  const shameReport = shameOpen
-    ? buildShameReport({
+  // A settled parlay from the season being played has a report: the Shame
+  // Report if it lost, The Locks Report if it won. Built on demand, when
+  // it's opened.
+  const thisSeason = canShameSeason(parlay.week?.season, currentSeason);
+  const canShame = !!bustedLeg && thisSeason;
+  const canLocks = !!heroLeg && thisSeason;
+  const story = shameOpen
+    ? buildParlayStory({
         legs,
         bustedLegId: bustedLeg?.id,
+        heroLegId: heroLeg?.id,
         nameOf: (l) => l.user?.settings?.displayName ?? l.user?.firstName ?? l.user?.email ?? "Unknown",
         weekLabel: parlay.week?.label ?? `Week ${parlay.weekId}`,
-        loserLabel: loserLabelText,
+        loserLabel,
+        heroLabel,
+        shameEmoji,
       })
     : null;
 
@@ -183,6 +263,9 @@ function ParlayCard({
   const decisiveLeg = bustedLeg ?? heroLeg;
   const decidedSlate = decisiveLeg?.game?.gameTime ? getSlate(new Date(decisiveLeg.game.gameTime)) : null;
 
+  // Only the statuses the Maestro acts on get an icon. Every other parlay
+  // used to fall through to a clock, which sat on settled parlays too and
+  // meant nothing there; the status line and the tally already say it.
   const statusIcon =
     parlay.status === "approved"
       ? ("checkmark-circle" as const)
@@ -192,7 +275,7 @@ function ParlayCard({
       ? ("paper-plane-outline" as const)
       : parlay.status === "placed"
       ? ("checkmark-done-circle" as const)
-      : ("time-outline" as const);
+      : null;
 
   const statusColor =
     parlay.status === "approved"
@@ -375,7 +458,7 @@ function ParlayCard({
           <Text style={[styles.parlayCardFraction, { color: pctColor }]}>{tallyLabel}</Text>
         )}
 
-        <Ionicons name={statusIcon} size={22} color={statusColor} />
+        {statusIcon && <Ionicons name={statusIcon} size={22} color={statusColor} />}
       </Pressable>
 
       {/* Bet-type mix stays visible when collapsed — it's the at-a-glance summary. */}
@@ -385,7 +468,7 @@ function ParlayCard({
 
       {/* Promo boost: a rocket, on the expanded card only. Lit when a boost
           is set; tapping it opens the boost sheet for whoever can set it. */}
-      {(showBoostChip || canShame) && (
+      {(showBoostChip || canShame || canLocks) && (
         <View style={styles.cardChipRow}>
           {showBoostChip && (
             <Pressable
@@ -413,13 +496,25 @@ function ParlayCard({
               accessibilityLabel="Open the shame report"
               testID={`button-shame-report-${parlay.id}`}
             >
-              <Text style={[styles.boostChipText, styles.shameChipText]}>🚨 Shame report</Text>
+              <Text style={[styles.boostChipText, styles.shameChipText]}>{shameEmoji || "🚨"} Shame report</Text>
+            </Pressable>
+          )}
+          {canLocks && (
+            <Pressable
+              onPress={() => setShameOpen(true)}
+              style={({ pressed }) => [styles.boostChip, styles.locksChip, pressed && { opacity: 0.7 }]}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Open The Locks Report"
+              testID={`button-locks-report-${parlay.id}`}
+            >
+              <Text style={[styles.boostChipText, styles.locksChipText]}>🔒 Locks report</Text>
             </Pressable>
           )}
         </View>
       )}
-      {shameReport && (
-        <ShameReportModal report={shameReport} visible={shameOpen} onClose={() => setShameOpen(false)} />
+      {story && (
+        <ShameReportModal story={story} visible={shameOpen} onClose={() => setShameOpen(false)} />
       )}
       <BoostSheet
         visible={boostOpen}
@@ -437,16 +532,28 @@ function ParlayCard({
         }
       />
 
-      {!collapsed && legs.length > 0 && (
+      {!collapsed && (legs.length > 0 || voidMembers.length > 0) && (
         <View style={styles.legsSection}>
-          {legs.map((leg: ParlayLegWithGame) => (
+          {filtering && (
+            <Text style={styles.legFilterNote} testID={`text-leg-filter-${parlay.id}`}>
+              {shownLegs.length === 0 && voidMembers.length === 0
+                ? "No legs in this parlay match the filters."
+                : `Showing ${shownLegs.length} of ${legs.length} leg${legs.length !== 1 ? "s" : ""}`}
+            </Text>
+          )}
+          {shownLegs.map((leg: ParlayLegWithGame) => (
             <LegRow
               key={leg.id}
               leg={leg}
               ownerName={legOwnerName(leg.user)}
               week={parlay.week}
-              trailing={leg.userId === effectiveUserId ? <DisputeLegBadge legId={leg.id} /> : undefined}
+              // Your own bet is a link to the dispute sheet. Nobody can
+              // dispute a bet on someone else's behalf.
+              disputable={leg.userId === effectiveUserId}
             />
+          ))}
+          {voidMembers.map((m: any) => (
+            <VoidLegRow key={m.userId} ownerName={memberDisplayName(m)} />
           ))}
         </View>
       )}
@@ -884,6 +991,7 @@ export default function LeagueDetailScreen() {
         memberCount?: number;
         loserLabel?: string | null;
         heroLabel?: string | null;
+        shameEmoji?: string | null;
       }>("GET", `/api/leagues/${leagueId}`),
     enabled: !!leagueId,
   });
@@ -928,6 +1036,14 @@ export default function LeagueDetailScreen() {
   const { data: myParlay } = useMyParlay(leagueId, weekId);
   const lockWeek = useLockWeekParlay(leagueId, weekId);
   const unlockWeek = useUnlockWeekParlay(leagueId, weekId);
+  const requestUnlock = useRequestUnlock(leagueId, weekId);
+  const resolveUnlockRequest = useResolveUnlockRequest(leagueId, weekId);
+  // Lock: whoever started the week's parlay, the Maestro, or a lieutenant
+  // with the permission. Unlock: the Maestro or a permitted lieutenant.
+  const canLock = lockStatus?.viewer?.canLock ?? isAdmin;
+  const canUnlock = lockStatus?.viewer?.canUnlock ?? isAdmin;
+  const { data: reportCatalog, isLoading: reportsLoading } = useLeagueReports(leagueId, activeTab === "reports");
+  const [openReportId, setOpenReportId] = useState<ReportId | null>(null);
   const inviteByEmail = useInviteByEmail(leagueId);
 
   const leagueName = league?.name ?? "League";
@@ -951,25 +1067,9 @@ export default function LeagueDetailScreen() {
   // instead of showing the user's own name once selected.
   const effectiveMemberFilter = memberFilter === "me" ? (effectiveUserId ?? "me") : memberFilter;
   const filtersActive = memberFilter !== "all" || betTypeFilter !== "all" || resultFilter !== "all";
-  const filteredParlays = (parlays ?? []).filter((parlay: ParlayWithLegs) => {
-    const legs = parlay.legs ?? [];
-    if (
-      effectiveMemberFilter !== "all" &&
-      parlay.userId !== effectiveMemberFilter &&
-      !legs.some((l) => l.userId === effectiveMemberFilter)
-    ) {
-      return false;
-    }
-    if (betTypeFilter !== "all" && !legs.some((l) => l.betType === betTypeFilter)) return false;
-    if (resultFilter !== "all") {
-      if (resultFilter === "pending") {
-        if (!legs.some((l) => !l.result)) return false;
-      } else if (!legs.some((l) => l.result === resultFilter)) {
-        return false;
-      }
-    }
-    return true;
-  });
+  // The filters work on legs, like the web's: every parlay card stays, and
+  // each lists only the legs that match (see ParlayCard's legFilter).
+  const legFilter: LegFilter = { member: effectiveMemberFilter, betType: betTypeFilter, result: resultFilter };
 
   function openManageOnWeb() {
     WebBrowser.openBrowserAsync(webLeagueSettingsUrl(leagueId, API_BASE_URL));
@@ -1132,7 +1232,7 @@ export default function LeagueDetailScreen() {
         {/* Submitted-count / lock control is league-management chrome tied to
             the Parlays view — showing it under Members/Stats too was exactly
             the "full league info that doesn't belong here" clutter. */}
-        {isAdmin && activeWeek && activeTab === "parlays" && (
+        {(isAdmin || canLock || canUnlock) && activeWeek && activeTab === "parlays" && (
           <View style={styles.adminBar}>
             <View style={{ flex: 1 }}>
               <Text style={styles.adminBarText}>
@@ -1151,7 +1251,9 @@ export default function LeagueDetailScreen() {
             </View>
             {inProgress ? (
               <Text style={styles.adminBarWaiting} testID="text-lock-final">Picks are final</Text>
-            ) : isLocked ? (
+            ) : isLocked && !canUnlock ? (
+              <Text style={styles.adminBarWaiting}>Locked</Text>
+            ) : !isLocked && !canLock ? null : isLocked ? (
               <Pressable
                 onPress={handleUnlockPress}
                 disabled={unlockWeek.isPending}
@@ -1189,9 +1291,32 @@ export default function LeagueDetailScreen() {
           </View>
         )}
 
+        {/* Unlock requests waiting on whoever can unlock. */}
+        {canUnlock && activeTab === "parlays" && (lockStatus?.openUnlockRequests ?? []).map((r) => (
+          <View key={r.id} style={styles.unlockRequestBar} testID={`row-unlock-request-${r.id}`}>
+            <Text style={styles.unlockRequestText} numberOfLines={2}>
+              {r.requestedByName} asked for an unlock{r.reason ? `: "${r.reason}"` : ""}
+            </Text>
+            <Pressable
+              onPress={() => resolveUnlockRequest.mutate({ requestId: r.id, action: "grant" }, { onError: (err: Error) => Alert.alert("Couldn't unlock", err.message) })}
+              disabled={resolveUnlockRequest.isPending}
+              style={({ pressed }) => [styles.adminActionBtn, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.adminActionText}>Unlock</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => resolveUnlockRequest.mutate({ requestId: r.id, action: "dismiss" })}
+              disabled={resolveUnlockRequest.isPending}
+              hitSlop={8}
+            >
+              <Text style={styles.clearFiltersText}>Dismiss</Text>
+            </Pressable>
+          </View>
+        ))}
+
         {/* Tabs */}
         <View style={styles.tabBar}>
-          {(["parlays", "stats", "members"] as Tab[]).map((tab) => {
+          {(["parlays", "stats", "members", "reports"] as Tab[]).map((tab) => {
             const active = activeTab === tab;
             return (
               <Pressable
@@ -1222,6 +1347,7 @@ export default function LeagueDetailScreen() {
               refreshing={
                 activeTab === "parlays" ? parlaysLoading :
                 activeTab === "members" ? membersLoading :
+                activeTab === "reports" ? reportsLoading :
                 statsLoading
               }
               onRefresh={() => {
@@ -1271,6 +1397,34 @@ export default function LeagueDetailScreen() {
                     This week is locked and you didn't submit a pick.
                   </Text>
                 </View>
+              )}
+              {/* A member who can't unlock asks whoever can. */}
+              {lockStatus?.viewer?.canRequestUnlock && (
+                lockStatus.viewer.hasOpenRequest ? (
+                  <View style={styles.missedBanner} testID="text-unlock-requested">
+                    <Ionicons name="time-outline" size={16} color="#f59e0b" />
+                    <Text style={styles.missedBannerText}>Unlock requested. Waiting on the Parlay Maestro.</Text>
+                  </View>
+                ) : (
+                  <Pressable
+                    style={({ pressed }) => [styles.requestUnlockBtn, pressed && { opacity: 0.7 }]}
+                    disabled={requestUnlock.isPending}
+                    onPress={() =>
+                      Alert.alert("Request an unlock?", "The Parlay Maestro will be asked to reopen this week so picks can change.", [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Send request",
+                          onPress: () => requestUnlock.mutate(undefined, { onError: (err: Error) => Alert.alert("Couldn't send the request", err.message) }),
+                        },
+                      ])
+                    }
+                    accessibilityRole="button"
+                    testID="button-request-unlock"
+                  >
+                    <Ionicons name="lock-open-outline" size={15} color="#93c5fd" />
+                    <Text style={styles.requestUnlockText}>Request unlock</Text>
+                  </Pressable>
+                )
               )}
               {!parlaysLoading && parlays && parlays.length > 0 && (
                 <View style={styles.filterSection}>
@@ -1329,16 +1483,8 @@ export default function LeagueDetailScreen() {
                       : "No picks have been submitted for this week."}
                   </Text>
                 </View>
-              ) : filteredParlays.length === 0 ? (
-                <View style={styles.emptyState}>
-                  <View style={styles.emptyIcon}>
-                    <Ionicons name="filter-outline" size={28} color="#2563eb" />
-                  </View>
-                  <Text style={styles.emptyTitle}>No parlays match</Text>
-                  <Text style={styles.emptySubtitle}>Try clearing a filter.</Text>
-                </View>
               ) : (
-                filteredParlays.map((parlay: ParlayWithLegs) => (
+                parlays.map((parlay: ParlayWithLegs) => (
                   <ParlayCard
                     key={parlay.id}
                     parlay={parlay}
@@ -1348,6 +1494,9 @@ export default function LeagueDetailScreen() {
                     preferredSportsbook={preferredSportsbook}
                     loserLabel={league?.loserLabel}
                     heroLabel={league?.heroLabel}
+                    shameEmoji={league?.shameEmoji}
+                    legFilter={legFilter}
+                    members={members}
                   />
                 ))
               )}
@@ -1434,8 +1583,40 @@ export default function LeagueDetailScreen() {
               )}
             </>
           )}
+
+          {/* REPORTS: the canned extracts, each as bars plus shareable text. */}
+          {activeTab === "reports" && (
+            <>
+              {reportsLoading ? (
+                <ActivityIndicator color="#2563eb" style={styles.tabLoader} />
+              ) : (
+                (reportCatalog ?? []).map((r) => (
+                  <Pressable
+                    key={r.id}
+                    onPress={() => setOpenReportId(r.id)}
+                    style={({ pressed }) => [styles.reportTile, pressed && { opacity: 0.7 }]}
+                    accessibilityRole="button"
+                    testID={`button-report-${r.id}`}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.reportTileTitle}>{r.title}</Text>
+                      <Text style={styles.reportTileDesc}>{r.description}</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color="#64748b" />
+                  </Pressable>
+                ))
+              )}
+            </>
+          )}
         </ScrollView>
       </View>
+
+      <ReportSheet
+        leagueId={leagueId}
+        reportId={openReportId}
+        title={reportCatalog?.find((r) => r.id === openReportId)?.title ?? "Report"}
+        onClose={() => setOpenReportId(null)}
+      />
 
       <Modal
         visible={inviteOpen}
@@ -1619,6 +1800,64 @@ const styles = StyleSheet.create({
   shareStandingsText: { fontSize: 13, fontWeight: "600", color: "#93c5fd" },
   shameChip: { borderStyle: "solid", borderColor: "rgba(248, 113, 113, 0.35)", backgroundColor: "rgba(248, 113, 113, 0.08)" },
   shameChipText: { color: "#fca5a5" },
+  locksChip: { borderStyle: "solid", borderColor: "rgba(52, 211, 153, 0.35)", backgroundColor: "rgba(52, 211, 153, 0.08)" },
+  locksChipText: { color: "#6ee7b7" },
+  unlockRequestBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "rgba(245, 158, 11, 0.08)",
+    borderBottomWidth: 1,
+    borderColor: "#2a3447",
+  },
+  unlockRequestText: { flex: 1, fontSize: 13, color: "#f1f5f9" },
+  requestUnlockBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    minHeight: 44,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(147, 197, 253, 0.4)",
+    marginBottom: 12,
+  },
+  requestUnlockText: { fontSize: 14, fontWeight: "600", color: "#93c5fd" },
+  reportTile: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#1c2538",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    padding: 14,
+    marginBottom: 10,
+  },
+  reportTileTitle: { fontSize: 15, fontWeight: "700", color: "#f1f5f9" },
+  reportTileDesc: { fontSize: 12, color: "#94a3b8", marginTop: 3 },
+  reportChartTitle: { fontSize: 11, fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 },
+  reportBarRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
+  reportBarLabel: { width: 92, fontSize: 13, color: "#f1f5f9" },
+  reportBarTrack: { flex: 1, height: 10, borderTopRightRadius: 4, borderBottomRightRadius: 4, backgroundColor: "#141926", overflow: "hidden" },
+  reportBarFill: { height: 10, borderTopRightRadius: 4, borderBottomRightRadius: 4, backgroundColor: "#2563eb" },
+  reportBarValue: { width: 44, textAlign: "right", fontSize: 13, fontWeight: "700", color: "#f1f5f9", fontVariant: ["tabular-nums"] },
+  reportText: { marginTop: 14, padding: 12, borderRadius: 10, backgroundColor: "#141926", fontSize: 13, lineHeight: 19, color: "#cbd5e1" },
+  reportShareBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    minHeight: 46,
+    borderRadius: 12,
+    backgroundColor: "#2563eb",
+    marginTop: 12,
+  },
+  reportShareText: { fontSize: 15, fontWeight: "700", color: "#ffffff" },
+  reportEmpty: { fontSize: 13, color: "#94a3b8", paddingVertical: 20 },
+  legFilterNote: { fontSize: 11, color: "#93c5fd", paddingBottom: 6 },
   boostChip: {
     paddingHorizontal: 10,
     paddingVertical: 5,

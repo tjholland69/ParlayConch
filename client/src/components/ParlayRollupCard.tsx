@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/components/ui/sheet";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, ChevronDown, ChevronUp, Scissors, Info, Copy, Check, Clock, Megaphone, RefreshCw } from "lucide-react";
+import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, ChevronDown, ChevronUp, Scissors, Info, Copy, Check, Clock, Megaphone, RefreshCw, LockKeyhole, UserCheck } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
@@ -21,7 +21,9 @@ import { getBustedLeg } from "@/lib/parlayLoser";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { DisputeLegDialog } from "@/components/DisputeLegDialog";
 import { getHeroLeg } from "@/lib/parlayHero";
-import { compareLegsByDecided } from "@/lib/decidedTime";
+import { sortParlayLegs } from "@shared/legOrder";
+import { heroLabelText as heroLabelFor, loserLabelText as loserLabelFor } from "@shared/leagueLabels";
+import { buildParlayStory } from "@shared/parlayStory";
 import { ParlayMixBar } from "@/components/ParlayMixBar";
 import { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 import { legLabel } from "@/lib/legLabel";
@@ -31,7 +33,7 @@ import { getSlate } from "@shared/slate";
 import { boostLabel } from "@shared/parlayBoost";
 import { BoostDialog } from "@/components/BoostDialog";
 import { ShameReportDialog } from "@/components/ShameReportDialog";
-import { buildShameReport, canShameSeason } from "@shared/shameReport";
+import { canShameSeason } from "@shared/shameReport";
 import { isParlayInProgress, legTally } from "@shared/parlayProgress";
 
 export { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
@@ -43,7 +45,12 @@ const PICK_OPTIONS: Record<string, string[]> = {
   under: ["under"],
   player_prop: ["over", "under", "yes", "no"],
 };
-const STATUSES = ["pending", "approved", "rejected", "win", "loss", "push", "void"] as const;
+// Every status a parlay can hold, so the Data Editor's dropdown always shows
+// the real one. It used to leave out the first and the two sportsbook states,
+// and a parlay in any of them showed a blank dropdown.
+const STATUSES = ["draft", "pending", "approved", "sent", "placed", "rejected", "win", "loss", "push", "void"] as const;
+const STATUS_LABELS: Record<string, string> = { draft: "Open (draft)" };
+const statusLabel = (s: string) => STATUS_LABELS[s] ?? s.charAt(0).toUpperCase() + s.slice(1);
 // A parlay must be decided (not "Open"/pending, not rejected or void) before it
 // can be cloned — cloning is meant to reuse a settled parlay's picks as a
 // starting point, not fork one that's still in progress.
@@ -224,10 +231,12 @@ export type ParlayCardProps = {
   readOnly?: boolean;
   /** 0-1 share of the league that submitted a parlay for this parlay's week — drives color boldness. */
   participationRate?: number;
-  /** League's chosen name for whoever busts a loss first — one of LOSER_LABEL_TEXT's keys. */
+  /** League's chosen name for whoever busts a loss first: a key of LOSER_LABEL_TEXT (shared/leagueLabels.ts). */
   loserLabel?: string | null;
-  /** League's chosen name for whoever's winning leg is decided last — one of HERO_LABEL_TEXT's keys. */
+  /** League's chosen name for whoever's winning leg is decided last: a key of HERO_LABEL_TEXT. */
   heroLabel?: string | null;
+  /** The league's own emoji for its shame report, if it set one. */
+  shameEmoji?: string | null;
   /** When provided (readOnly views only), shows a "copy bet slip" button in the header. */
   onCopySlip?: (parlay: ParlayWithLegs) => void;
   /** Id of the parlay whose slip was most recently copied — swaps the copy icon to a checkmark. */
@@ -238,21 +247,6 @@ export type ParlayCardProps = {
    * still set the promo boost on someone else's parlay (an owner always can
    * on their own). */
   canManage?: boolean;
-};
-
-const LOSER_LABEL_TEXT: Record<string, string> = {
-  parlay_loser: "Parlay Loser",
-  asshole: "Asshole",
-  jerry: "Jerry",
-  dud: "Dud",
-  doofus: "Doofus",
-};
-
-const HERO_LABEL_TEXT: Record<string, string> = {
-  parlay_hero: "Parlay Hero",
-  mvp: "MVP",
-  legend: "Legend",
-  big_time: "Big Time",
 };
 
 function logStatus(log: EnrichLog) {
@@ -314,7 +308,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   selectMode = false, isSelected = false, onToggleSelect = () => {},
   legSelectMode = false, selectedLegIds, onToggleLegSelect = () => {},
   collapseSignal = 0, expandSignal = 0, versionNumber, readOnly = false, canManage = false,
-  participationRate = 1, loserLabel = "parlay_loser", heroLabel = "parlay_hero",
+  participationRate = 1, loserLabel = "parlay_loser", heroLabel = "parlay_hero", shameEmoji,
   onCopySlip, copiedId = null, defaultExpanded = false,
 }: ParlayCardProps) {
   const deleteParlay = useDeleteParlay(leagueId);
@@ -382,9 +376,9 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
 
   const memberName = getDisplayName(parlay.user, `User #${shortId(parlay.userId)}`);
   const bustedLeg = getBustedLeg(parlay);
-  const loserLabelText = LOSER_LABEL_TEXT[loserLabel ?? "parlay_loser"] ?? LOSER_LABEL_TEXT.parlay_loser;
+  const loserLabelText = loserLabelFor(loserLabel);
   const heroLeg = getHeroLeg(parlay);
-  const heroLabelText = HERO_LABEL_TEXT[heroLabel ?? "parlay_hero"] ?? HERO_LABEL_TEXT.parlay_hero;
+  const heroLabelText = heroLabelFor(heroLabel);
   const heroMemberName = heroLeg?.user
     ? getDisplayName(heroLeg.user, `User #${shortId(heroLeg.userId)}`)
     : memberName;
@@ -394,18 +388,24 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
     ? getDisplayName(bustedLeg.user, `User #${shortId(bustedLeg.userId)}`)
     : memberName;
 
-  // Only a lost parlay from the season being played has a shame report;
-  // built on demand, when it's opened.
+  // A settled parlay from the season being played has a report: the Shame
+  // Report if it lost, The Locks Report if it won. Built on demand, when
+  // it's opened.
   const { data: allWeeks } = useWeeks();
-  const canShame = !!bustedLeg && canShameSeason(parlay.week?.season, allWeeks?.find(w => w.isActive)?.season);
+  const thisSeason = canShameSeason(parlay.week?.season, allWeeks?.find(w => w.isActive)?.season);
+  const canShame = !!bustedLeg && thisSeason;
+  const canLocks = !!heroLeg && thisSeason;
   const [shameOpen, setShameOpen] = useState(false);
-  const shameReport = shameOpen
-    ? buildShameReport({
+  const story = shameOpen
+    ? buildParlayStory({
         legs: parlay.legs,
         bustedLegId: bustedLeg?.id,
+        heroLegId: heroLeg?.id,
         nameOf: (l) => getDisplayName(l.user, `User #${shortId(l.userId)}`),
         weekLabel: parlay.week?.label ?? `Week ${parlay.weekId}`,
-        loserLabel: loserLabelText,
+        loserLabel,
+        heroLabel,
+        shameEmoji,
       })
     : null;
 
@@ -417,11 +417,10 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const decisiveLeg = bustedLeg ?? heroLeg;
   const decidedSlate = decisiveLeg?.game?.gameTime ? getSlate(new Date(decisiveLeg.game.gameTime)) : null;
 
-  // Earliest decided (or, once resolved, finished) leg first; legs still
-  // pending decision have no resolvable timestamp and fall back to their
-  // scheduled kickoff so they order sensibly relative to already-decided
-  // legs instead of all landing arbitrarily at the end.
-  const sortedLegs = [...parlay.legs].sort(compareLegsByDecided);
+  // Until a game kicks off, legs are listed in the order they were picked.
+  // After that they follow the week: settled legs by when they were decided,
+  // legs still to play by kickoff (shared/legOrder.ts).
+  const sortedLegs = sortParlayLegs(parlay);
 
   return (
     <>
@@ -604,6 +603,18 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                 <Megaphone className="w-3.5 h-3.5" />
               </button>
             )}
+            {canLocks && !selectMode && (
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); setShameOpen(true); }}
+                title="The Locks Report"
+                aria-label="Open The Locks Report"
+                className="p-1.5 rounded-md text-muted-foreground hover:text-emerald-300 hover:bg-white/10 transition-colors shrink-0"
+                data-testid={`button-locks-report-${parlay.id}`}
+              >
+                <LockKeyhole className="w-3.5 h-3.5" />
+              </button>
+            )}
 
             {readOnly && onCopySlip && parlay.status !== "void" && (
               <button
@@ -627,7 +638,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {STATUSES.map(s => <SelectItem key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>)}
+                    {STATUSES.map(s => <SelectItem key={s} value={s}>{statusLabel(s)}</SelectItem>)}
                   </SelectContent>
                 </Select>
 
@@ -861,6 +872,19 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                                   {leg.user ? getDisplayName(leg.user, `User #${shortId(leg.userId)}`) : "Unknown Owner"}
                                 </span>
                               )}
+                              {leg.placedByUserId && leg.placedByUserId !== leg.userId && (() => {
+                                const maker = members?.find(m => m.userId === leg.placedByUserId);
+                                const by = maker ? getDisplayName(maker.user, "another member") : "another member";
+                                return (
+                                  <span
+                                    className="shrink-0"
+                                    title={leg.approvalStatus === "pending" ? `Picked by ${by} on their behalf. Waiting on approval.` : `Picked by ${by} on their behalf. Approved.`}
+                                    data-testid={`icon-on-behalf-${leg.id}`}
+                                  >
+                                    <UserCheck className={cn("w-3 h-3", leg.approvalStatus === "pending" ? "text-amber-400" : "text-emerald-400")} aria-label="Picked on their behalf" />
+                                  </span>
+                                );
+                              })()}
                             </div>
                           </td>
                           <td className="px-3 py-2 font-medium truncate max-w-[160px] sm:max-w-[220px] lg:max-w-none">{legLabel(leg)}</td>
@@ -1041,8 +1065,8 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
       })()}
 
       {/* Outside the admin-only block below: read-only cards open these too. */}
-      {shameReport && (
-        <ShameReportDialog report={shameReport} open={shameOpen} onOpenChange={setShameOpen} />
+      {story && (
+        <ShameReportDialog story={story} open={shameOpen} onOpenChange={setShameOpen} />
       )}
 
       <BoostDialog

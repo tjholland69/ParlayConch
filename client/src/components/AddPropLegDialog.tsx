@@ -111,12 +111,15 @@ export function AddPropLegDialog({
   open,
   onOpenChange,
   startNew,
+  onBehalfOf,
 }: {
   game: Game;
   leagueId: number;
   weekId: number;
   /** The pick starts another parlay rather than joining the open one. */
   startNew?: boolean;
+  /** On Behalf Of mode: the member this prop pick is for. */
+  onBehalfOf?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -157,7 +160,8 @@ export function AddPropLegDialog({
       {
         leagueId,
         weekId,
-        userId: effectiveUserId,
+        userId: onBehalfOf ?? effectiveUserId,
+        onBehalfOf,
         leg: {
           gameId: game.id,
           betType: "player_prop",

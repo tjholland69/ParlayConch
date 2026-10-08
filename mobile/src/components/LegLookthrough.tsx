@@ -3,7 +3,8 @@ import { ActivityIndicator, Modal, Pressable, ScrollView, StyleSheet, Text, View
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { Game, ParlayLegWithParlayContext } from "@shared/schema";
-import { formatPickLabel, withPlusSign } from "@shared/formatPick";
+import { legLookthroughLabel, withPlusSign } from "@shared/formatPick";
+import { DisputeLegSheet } from "@/components/DisputeLegSheet";
 import { resolveResultDetail } from "@shared/legJustification";
 import { getSlate } from "@shared/slate";
 
@@ -17,6 +18,7 @@ export function legOwnerName(user: UserLike, fallback = "Unknown"): string {
   return user?.settings?.displayName ?? user?.firstName ?? user?.email ?? fallback;
 }
 
+/** The fields LegRow reads. `ReactNode` is still used by the sheet below. */
 export type LegRowLeg = {
   id: number;
   parlayId: number;
@@ -35,6 +37,7 @@ export type LegRowLeg = {
 };
 
 const RESULT_COLORS: Record<string, string> = { win: "#22c55e", loss: "#ef4444", push: "#94a3b8" };
+const RESULT_LABELS: Record<string, string> = { win: "Won", loss: "Lost", push: "Push" };
 
 function kickoffLabel(gameTime: Date | string): string {
   return new Date(gameTime).toLocaleString("en-US", {
@@ -49,28 +52,28 @@ function kickoffLabel(gameTime: Date | string): string {
 
 /**
  * One parlay leg, the same two lines everywhere a leg is listed:
- *   Bet Owner · Matchup/Prop - Pick · Odds
+ *   Bet Owner · the bet ("Lamar Jackson - Rush Yds O 25")        Result
  *   Week + Year · AWAY@HOME · Slate
- * Tapping it opens the game details underneath.
+ * The right side holds the result and nothing else. Tapping the row opens
+ * the game details underneath. On the member's own bet (`disputable`) the
+ * bet text is a link that opens the dispute sheet.
  */
 export function LegRow({
   leg,
   ownerName,
   week,
-  trailing,
+  disputable,
 }: {
   leg: LegRowLeg;
   ownerName: string;
   week?: { label: string; season: number } | null;
-  /** Extra control at the end of the first line, e.g. the dispute flag. */
-  trailing?: ReactNode;
+  /** The viewer's own bet: tapping the bet text disputes it. */
+  disputable?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [disputeOpen, setDisputeOpen] = useState(false);
   const game = leg.game;
-  const subject =
-    leg.betType === "player_prop"
-      ? leg.playerName || "Player"
-      : `${game?.awayTeam ?? "?"} @ ${game?.homeTeam ?? "?"}`;
+  const label = legLookthroughLabel(leg, game);
   const odds = withPlusSign(leg.odds);
   const resultColor = RESULT_COLORS[leg.result ?? ""] ?? "#cbd5e1";
   const secondLine = [
@@ -95,11 +98,27 @@ export function LegRow({
         <View style={styles.line}>
           <View style={[styles.dot, { backgroundColor: resultColor }]} />
           <Text style={styles.owner} numberOfLines={1}>{ownerName}</Text>
-          <Text style={[styles.pick, { color: resultColor }]} numberOfLines={1} ellipsizeMode="tail">
-            {subject} - {formatPickLabel(leg)}
+          {disputable ? (
+            <Text
+              style={[styles.pick, styles.pickLink, { color: resultColor }]}
+              numberOfLines={1}
+              ellipsizeMode="tail"
+              onPress={() => setDisputeOpen(true)}
+              suppressHighlighting
+              accessibilityRole="link"
+              accessibilityLabel={`${label}. Dispute this bet`}
+              testID={`link-dispute-leg-${leg.id}`}
+            >
+              {label}
+            </Text>
+          ) : (
+            <Text style={[styles.pick, { color: resultColor }]} numberOfLines={1} ellipsizeMode="tail">
+              {label}
+            </Text>
+          )}
+          <Text style={[styles.result, { color: resultColor }]} testID={`text-leg-result-${leg.id}`}>
+            {RESULT_LABELS[leg.result ?? ""] ?? "Pending"}
           </Text>
-          {odds ? <Text style={styles.odds}>{odds}</Text> : null}
-          {trailing}
         </View>
         <View style={styles.line}>
           <Text style={styles.meta} numberOfLines={1}>{secondLine || "—"}</Text>
@@ -109,6 +128,7 @@ export function LegRow({
       {open && (
         <View style={styles.details}>
           {game?.gameTime ? <Text style={styles.detailText}>Kickoff: {kickoffLabel(game.gameTime)} ET</Text> : null}
+          {odds ? <Text style={styles.detailText}>Odds: {odds}</Text> : null}
           {score ? <Text style={styles.detailText}>{score}</Text> : null}
           <Text style={styles.detailText}>
             {leg.result ? `${leg.result.toUpperCase()}: ${resolveResultDetail(leg, game)}` : "Not settled yet"}
@@ -118,6 +138,21 @@ export function LegRow({
           </Text>
         </View>
       )}
+      {disputable && <DisputeLegSheet legId={leg.id} visible={disputeOpen} onClose={() => setDisputeOpen(false)} />}
+    </View>
+  );
+}
+
+/** A member with no bet in a locked parlay: listed with the legs, as Void. */
+export function VoidLegRow({ ownerName }: { ownerName: string }) {
+  return (
+    <View style={[styles.row, styles.voidRow]}>
+      <View style={styles.line}>
+        <View style={[styles.dot, { backgroundColor: "#475569" }]} />
+        <Text style={styles.owner} numberOfLines={1}>{ownerName}</Text>
+        <Text style={[styles.pick, { color: "#64748b" }]} numberOfLines={1}>No pick</Text>
+        <Text style={[styles.result, { color: "#64748b" }]}>Void</Text>
+      </View>
     </View>
   );
 }
@@ -195,7 +230,9 @@ const styles = StyleSheet.create({
   dot: { width: 7, height: 7, borderRadius: 4, flexShrink: 0 },
   owner: { fontSize: 12, fontWeight: "700", color: "#94a3b8", maxWidth: "26%", flexShrink: 0 },
   pick: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: "600" },
-  odds: { fontSize: 12, fontWeight: "700", color: "#94a3b8", flexShrink: 0, fontVariant: ["tabular-nums"] },
+  pickLink: { textDecorationLine: "underline" },
+  result: { fontSize: 12, fontWeight: "700", flexShrink: 0, minWidth: 48, textAlign: "right" },
+  voidRow: { opacity: 0.7 },
   meta: { flex: 1, minWidth: 0, fontSize: 11, color: "#64748b", marginLeft: 13 },
   pressed: { opacity: 0.65 },
   details: { marginTop: 6, marginLeft: 13, paddingLeft: 10, borderLeftWidth: 2, borderColor: "#2a3447", gap: 2 },

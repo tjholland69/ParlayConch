@@ -16,6 +16,10 @@ The repository includes a React web application, an Express API, a PostgreSQL da
 - Parse sportsbook screenshots with an OpenAI-compatible vision model
 - Enrich games and results with The Odds API and nflverse data
 - Send league invitations and in-app notifications
+- Make a pick "On Behalf Of" another member, with that member's approval
+- Lock a week, and let members request an unlock
+- Run canned reports (standings, weekly loser, bet-type allocation) as a graphic, as text, or as a CSV, JSON, XML or Markdown file
+- Share a Shame Report for a lost parlay and a Locks Report for a won one
 - Assign configurable permissions to league lieutenants
 - Mark users and leagues as demo or QA data
 - Synchronize updates across connected browsers with WebSockets
@@ -321,10 +325,49 @@ There is no public API for granting this role.
 4. The storage layer writes the parlay and legs in a transaction.
 5. A league administrator may approve or reject the submission.
 6. Score enrichment resolves game-based leg results.
-7. Leg results are rolled up to a parlay-level `win`, `loss`, or `push`.
+7. Leg results are rolled up to a parlay-level `win` or `loss`. A leg can push; a parlay can't. A pushed leg drops out of the ticket without losing it.
 8. Redis and WebSockets notify connected clients to refresh affected queries.
 
 Submitting again for the same user, league, and week replaces the existing parlay legs.
+
+## Locking, and picking for someone else
+
+**Locking.** Whoever started the week's parlay, the Parlay Maestro, or a lieutenant with the lock permission can lock the week. Locking moves an open parlay to `pending`. Unlocking (the Maestro, or a lieutenant with the unlock permission) reopens a `pending` parlay as a draft so picks can change; one already approved or sent to a sportsbook stays put. Any other member can request an unlock while no game has started and the parlay hasn't gone to a sportsbook.
+
+**On Behalf Of.** The Maestro can make a pick for any member. A lieutenant can too when the league turns on the "Pick On Behalf Of Anyone" permission. Anyone else needs the member's own permission, which the member gives on the league's Members tab (`pick_delegations`). The pick belongs to the member (`parlay_legs.user_id`), records who made it (`placed_by_user_id`), and waits on the member's approval (`approval_status`). A parlay with a pick still waiting can't be submitted or locked, unless the Maestro does it, which is recorded as the Maestro's approval. Every step writes an audit event (`pick.on_behalf.*`).
+
+## Notifications
+
+`shared/notifications.ts` is the catalog of alerts (new parlay open, locked, unlocked, busted, end-of-slate update, a pick made for you, unlock requested). `server/services/notify.ts` sends them: every alert goes to the in-app inbox, and to email for members who switch it on (needs `RESEND_API_KEY`). Members choose their alerts in Settings. Text and push have a switch but no provider yet; `CHANNEL_SENDERS` in `notify.ts` is where one plugs in.
+
+## Reports and exports
+
+`GET /api/leagues/:id/reports/:reportId` returns a report (`shared/reports.ts`) for the app to draw. Add `?format=csv|json|xml|md` for a file. Bet history exports the same way from `/api/parlay-legs/export.{csv,json,xml,md}`. JSON, XML and Markdown carry a description of every column, so a file can be read without the app (see `shared/dataExport.ts`).
+
+## AI connector (MCP)
+
+`POST /mcp` is a read-only [Model Context Protocol](https://modelcontextprotocol.io) server (`server/mcp.ts`), so a member's AI assistant can answer questions about their leagues. It runs inside the web service; there is nothing extra to deploy.
+
+- **Auth:** a personal access token, made in the web app under Settings > Account > AI Assistant Access and sent as `Authorization: Bearer pc_...`. Only a hash is stored. A token reads the leagues its owner belongs to and nothing else, and can be revoked there.
+- **Read-only:** no tool makes a pick, locks a week or changes a setting.
+- **Limits:** 120 requests a minute per token.
+
+| Tool | Returns |
+|---|---|
+| `list_leagues` | The member's leagues, with ids, roles, members and the league's loser and hero labels |
+| `list_reports` | The reports a league offers |
+| `get_report` | A report's rows with a description of every column (JSON or Markdown) |
+| `get_bet_history` | Individual bets, filterable by league, season, week, owner, bet type and result |
+| `get_current_week` | This week's parlay: open, locked or in progress, every bet, who hasn't picked |
+| `get_glossary` | What the app's terms mean (`shared/glossary.ts`) |
+
+To connect a client that takes a config file (Claude Code, for example):
+
+```bash
+claude mcp add --transport http parlay-conch \
+  https://parlayconch.com/mcp \
+  --header "Authorization: Bearer <your token>"
+```
 
 ## Player props
 
@@ -339,6 +382,8 @@ Player-prop legs use:
 Supported prop categories include passing, rushing, receiving, touchdowns, interceptions, sacks, tackles, and kicking statistics.
 
 Game-score enrichment cannot resolve player props. They are resolved manually or through the player-stat enrichment flow.
+
+While games are on, `server/jobs/live-results-queue.ts` checks every 5 minutes: final scores come from ESPN's scoreboard, so game bets settle minutes after a game ends. Props wait on player stats. Sacks and tackles come from ESPN and are quick; passing, rushing and receiving stats come from nflverse, which publishes some hours later, and are retried every 30 minutes until they land.
 
 ## Data imports and enrichment
 

@@ -1,3 +1,4 @@
+import { NOTIFICATION_EVENTS } from "@shared/notifications";
 import {
   View,
   Text,
@@ -28,7 +29,7 @@ import { useTeams } from "@/hooks/use-teams";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
-type NotificationPreferences = { email: boolean; sms: boolean; push: boolean; phone?: string };
+type NotificationPreferences = { email: boolean; sms: boolean; push: boolean; phone?: string; events?: Record<string, boolean> };
 const DEFAULT_NOTIF_PREFS: NotificationPreferences = { email: true, sms: false, push: true };
 
 type ThemeMode = "dark" | "light" | "system";
@@ -485,6 +486,32 @@ export default function SettingsScreen() {
             />
           }
         />
+      </View>
+
+      {/* Which alerts. Each one shows in the app's inbox, and on any channel
+          switched on above. */}
+      <Section label="Alert me when" />
+      <View style={styles.card}>
+        {NOTIFICATION_EVENTS.map((event, i) => (
+          <View key={event.key}>
+            {i > 0 && <Divider />}
+            <Row
+              icon="notifications-circle-outline"
+              label={event.label}
+              value={event.required ? "Always on" : undefined}
+              right={
+                <Switch
+                  value={event.required || (notifPrefs.events?.[event.key] ?? event.defaultOn)}
+                  disabled={event.required}
+                  onValueChange={(val) => updateNotifPref({ events: { ...notifPrefs.events, [event.key]: val } })}
+                  trackColor={{ false: "#1e2a3b", true: accent }}
+                  thumbColor="#ffffff"
+                  testID={`switch-alert-${event.key}`}
+                />
+              }
+            />
+          </View>
+        ))}
       </View>
 
       {/* Preferences */}
