@@ -15,7 +15,7 @@ import {
   Platform,
 } from "react-native";
 import { useLocalSearchParams, Stack, useRouter } from "expo-router";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useQuery } from "@tanstack/react-query";
 import * as WebBrowser from "expo-web-browser";
@@ -53,7 +53,9 @@ import { heroLabelText as heroLabelFor, loserLabelText as loserLabelFor } from "
 import { sortParlayLegs } from "@shared/legOrder";
 import { standingsText } from "@shared/standingsExport";
 import { boostLabel } from "@shared/parlayBoost";
-import { useMarkParlaySent } from "@/hooks/use-parlay-transitions";
+import { useConfirmParlayPlaced, useReopenParlay, useSuss } from "@/hooks/use-parlay-extras";
+import { SussMeter } from "@/components/SussMeter";
+import { parlaySlipText } from "@shared/betSlip";
 import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { useAuth } from "@/hooks/use-auth";
@@ -62,8 +64,8 @@ import { format } from "date-fns";
 import { SPORTSBOOK_PROVIDERS, pickDeepLinkGames, type SportsbookProvider, type DeepLinkGame } from "@shared/sportsbook-providers";
 import type { ParlayWithLegs } from "@shared/schema";
 import { getSlate } from "@shared/slate";
-import { isParlayInProgress, legTally } from "@shared/parlayProgress";
-import { LegRow, VoidLegRow, LegLookthroughSheet, legOwnerName } from "@/components/LegLookthrough";
+import { canConfirmPlaced, isParlayInProgress, isParlayLocked, legTally } from "@shared/parlayProgress";
+import { LegsBySlate, LegRow, VoidLegRow, LegLookthroughSheet, legOwnerName } from "@/components/LegLookthrough";
 import { webLeagueSettingsUrl } from "@/lib/pickHelpers";
 import { shadows } from "@/lib/theme";
 import { getOpenParlayVisualStyle, getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
@@ -97,38 +99,83 @@ const TAB_ICONS: Record<Tab, React.ComponentProps<typeof Ionicons>["name"]> = {
  * version (Messages, Copy, …). The pared-down mobile take on the web's
  * Reports page: no file downloads, and no Story Studio.
  */
+/** The view as a PNG file, or null where the capture module isn't in this build (Expo Go). */
+async function captureAsImage(view: View | null): Promise<string | null> {
+  if (!view) return null;
+  try {
+    const { captureRef } = require("react-native-view-shot") as typeof import("react-native-view-shot");
+    return await captureRef(view, { format: "png", quality: 1, result: "tmpfile" });
+  } catch {
+    return null;
+  }
+}
+
 function ReportSheet({ leagueId, reportId, title, onClose }: { leagueId: number; reportId: ReportId | null; title: string; onClose: () => void }) {
   const { data: report, isLoading, isError } = useLeagueReport(leagueId, reportId);
+  const graphicRef = useRef<View>(null);
+  const [sharingImage, setSharingImage] = useState(false);
+
+  // The graphic as a picture for the group chat. Falls back to the text
+  // where a picture can't be made.
+  async function shareImage() {
+    if (!report || sharingImage) return;
+    setSharingImage(true);
+    try {
+      const uri = await captureAsImage(graphicRef.current);
+      await Share.share(uri ? { url: uri } : { message: report.text });
+    } catch {
+      // The share sheet was dismissed.
+    } finally {
+      setSharingImage(false);
+    }
+  }
+
   return (
     <LegLookthroughSheet visible={!!reportId} title={title} isLoading={isLoading} onClose={onClose}>
       {isError || !report ? (
         <Text style={styles.reportEmpty}>Couldn't load this report. Try again in a moment.</Text>
       ) : (
         <ScrollView style={{ flexGrow: 0 }}>
-          <Text style={styles.reportChartTitle}>{report.chart.title}</Text>
-          {report.chart.bars.length === 0 ? (
-            <Text style={styles.reportEmpty}>Nothing to chart yet.</Text>
-          ) : (
-            report.chart.bars.map((bar) => (
-              <View key={bar.label} style={styles.reportBarRow} accessibilityLabel={`${bar.label}: ${bar.display}`}>
-                <Text style={styles.reportBarLabel} numberOfLines={1}>{bar.label}</Text>
-                <View style={styles.reportBarTrack}>
-                  <View style={[styles.reportBarFill, { width: `${Math.max(0, Math.min(100, (bar.value / (report.chart.max || 1)) * 100))}%` }]} />
+          {/* collapsable={false} keeps this a real native view, so it can be captured. */}
+          <View ref={graphicRef} collapsable={false} style={styles.reportGraphic}>
+            <Text style={styles.reportGraphicTitle}>{report.dataset.title}</Text>
+            <Text style={styles.reportChartTitle}>{report.chart.title}</Text>
+            {report.chart.bars.length === 0 ? (
+              <Text style={styles.reportEmpty}>Nothing to chart yet.</Text>
+            ) : (
+              report.chart.bars.map((bar) => (
+                <View key={bar.label} style={styles.reportBarRow} accessibilityLabel={`${bar.label}: ${bar.display}`}>
+                  <Text style={styles.reportBarLabel} numberOfLines={1}>{bar.label}</Text>
+                  <View style={styles.reportBarTrack}>
+                    <View style={[styles.reportBarFill, { width: `${Math.max(0, Math.min(100, (bar.value / (report.chart.max || 1)) * 100))}%` }]} />
+                  </View>
+                  <Text style={styles.reportBarValue}>{bar.display}</Text>
                 </View>
-                <Text style={styles.reportBarValue}>{bar.display}</Text>
-              </View>
-            ))
-          )}
+              ))
+            )}
+          </View>
           <Text style={styles.reportText} selectable testID="text-report-sms">{report.text}</Text>
-          <Pressable
-            onPress={() => void Share.share({ message: report.text }).catch(() => undefined)}
-            style={({ pressed }) => [styles.reportShareBtn, pressed && { opacity: 0.8 }]}
-            accessibilityRole="button"
-            testID="button-report-share-text"
-          >
-            <Ionicons name="share-outline" size={16} color="#ffffff" />
-            <Text style={styles.reportShareText}>Share as text</Text>
-          </Pressable>
+          <View style={styles.reportShareRow}>
+            <Pressable
+              onPress={shareImage}
+              disabled={sharingImage}
+              style={({ pressed }) => [styles.reportShareBtn, styles.reportShareBtnHalf, pressed && { opacity: 0.8 }]}
+              accessibilityRole="button"
+              testID="button-report-share-image"
+            >
+              {sharingImage ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="image-outline" size={16} color="#ffffff" />}
+              <Text style={styles.reportShareText}>Share as image</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => void Share.share({ message: report.text }).catch(() => undefined)}
+              style={({ pressed }) => [styles.reportShareBtn, styles.reportShareBtnHalf, styles.reportShareBtnAlt, pressed && { opacity: 0.8 }]}
+              accessibilityRole="button"
+              testID="button-report-share-text"
+            >
+              <Ionicons name="share-outline" size={16} color="#ffffff" />
+              <Text style={styles.reportShareText}>Share as text</Text>
+            </Pressable>
+          </View>
         </ScrollView>
       )}
     </LegLookthroughSheet>
@@ -158,8 +205,13 @@ function ParlayCard({
   shameEmoji,
   legFilter,
   members,
+  leagueName,
+  bulk,
 }: {
   parlay: ParlayWithLegs;
+  /** Expand All / Collapse All from the top of the list: `n` changes on each press. */
+  bulk?: { n: number; collapsed: boolean };
+  leagueName?: string;
   isAdmin: boolean;
   leagueId: number;
   weekId: number;
@@ -176,8 +228,15 @@ function ParlayCard({
   const effectiveUserId = useEffectiveUserId();
   const approveParlay = useApproveParlay(leagueId, weekId);
   const rejectParlay = useRejectParlay(leagueId, weekId);
-  const markParlaySent = useMarkParlaySent(leagueId, weekId);
-  const [collapsed, setCollapsed] = useState(true);
+  // A card mounted after the last Expand All / Collapse All takes that state.
+  const [collapsed, setCollapsed] = useState(bulk && bulk.n > 0 ? bulk.collapsed : true);
+  useEffect(() => {
+    if (bulk && bulk.n > 0) setCollapsed(bulk.collapsed);
+  }, [bulk?.n]);
+  // The Suss Meter shows on an open parlay's picks (votes are cast on the pick screen).
+  const { data: suss } = useSuss(leagueId, parlay.weekId, parlay.status === "draft");
+  const confirmPlaced = useConfirmParlayPlaced(leagueId);
+  const reopenParlay = useReopenParlay(leagueId);
   const [boostOpen, setBoostOpen] = useState(false);
   const setBoost = useSetParlayBoost(leagueId, weekId);
   // Same rule the server enforces: the parlay's owner or the Parlay Maestro.
@@ -288,17 +347,57 @@ function ParlayCard({
       ? "#22c55e"
       : "#f59e0b";
 
+  // Locked: closed to picks and not settled yet.
+  const locked = isParlayLocked(parlay);
   // Once a game on the ticket kicks off, an open parlay is simply in progress.
   const statusLabel = isParlayInProgress(parlay)
     ? "In progress"
-    : parlay.status === "sent"
-      ? "Sent — awaiting confirmation"
-      : parlay.status === "placed"
+    : parlay.status === "placed"
       ? "Placed"
+      : locked
+      ? "Locked"
+      : parlay.status === "draft"
+      ? "Open"
       : parlay.status;
 
-  const canModerate = isAdmin && parlay.status === "pending";
-  const canSendToSportsbook = isAdmin && parlay.status === "approved";
+  const canModerate = isAdmin && parlay.status === "pending" && !isParlayInProgress(parlay);
+  // Only a locked parlay goes to a sportsbook, and any member can take it
+  // there: an open one can still change, a settled one is over.
+  const canSendToSportsbook = locked;
+
+  const slipText = () =>
+    parlaySlipText({ leagueName, weekLabel: parlay.week?.label, legs: sortParlayLegs(parlay) });
+
+  // There's no callback from a sportsbook, so the member says so themselves.
+  function askIfPlaced() {
+    if (!canConfirmPlaced(parlay)) return;
+    Alert.alert("Did you place this bet?", "Marking it placed tells the league the parlay is in. Any member can confirm.", [
+      { text: "Not yet", style: "cancel" },
+      { text: "Yes, it's placed", onPress: () => markPlaced() },
+    ]);
+  }
+  function markPlaced() {
+    confirmPlaced.mutate(parlay.id, {
+      onError: (err: Error) => Alert.alert("Couldn't mark it placed", err.message || "Please try again."),
+    });
+  }
+  function confirmReopen() {
+    Alert.alert(
+      "Bust and reopen this parlay?",
+      "It goes back to open and the week unlocks, so picks can change again. Picks on games that have already started stay as they are.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Bust & reopen",
+          style: "destructive",
+          onPress: () =>
+            reopenParlay.mutate(parlay.id, {
+              onError: (err: Error) => Alert.alert("Couldn't reopen it", err.message || "Please try again."),
+            }),
+        },
+      ],
+    );
+  }
 
   // Opens one game's deep link, falling back to the provider's website if
   // the app isn't installed or the link fails. Returns whether the deep
@@ -329,9 +428,9 @@ function ParlayCard({
     if (!walkthroughGames) return;
     const nextIndex = walkthroughIndex + 1;
     if (nextIndex >= walkthroughGames.length) {
-      markParlaySent.mutate(parlay.id);
       setWalkthroughGames(null);
       setWalkthroughProvider(null);
+      askIfPlaced();
       return;
     }
     setWalkthroughIndex(nextIndex);
@@ -356,10 +455,10 @@ function ParlayCard({
     if (preferredSportsbook === "other") {
       Alert.alert(
         "Manual Send Required",
-        "We don't have a direct link for a custom sportsbook yet — open your sportsbook app and place this parlay manually, then mark it sent.",
+        "We don't have a direct link for a custom sportsbook yet. Copy the parlay, enter it in your sportsbook app, then mark it placed here.",
         [
           { text: "Cancel", style: "cancel" },
-          { text: "Mark as Sent", onPress: () => markParlaySent.mutate(parlay.id) },
+          { text: "Copy the parlay", onPress: () => void Share.share({ message: slipText() }).catch(() => undefined) },
         ],
       );
       return;
@@ -371,8 +470,8 @@ function ParlayCard({
     if (games.length <= 1) {
       // Common case, unchanged: one deep link (or the bare app-open if no
       // leg resolves to a game), marking sent only on a real app-open.
-      const opened = await openGameDeepLink(provider, games[0] ?? null);
-      if (opened) markParlaySent.mutate(parlay.id);
+      // The member confirms it's placed themselves, once they're back.
+      await openGameDeepLink(provider, games[0] ?? null);
       return;
     }
 
@@ -541,17 +640,21 @@ function ParlayCard({
                 : `Showing ${shownLegs.length} of ${legs.length} leg${legs.length !== 1 ? "s" : ""}`}
             </Text>
           )}
-          {shownLegs.map((leg: ParlayLegWithGame) => (
-            <LegRow
-              key={leg.id}
-              leg={leg}
-              ownerName={legOwnerName(leg.user)}
-              week={parlay.week}
-              // Your own bet is a link to the dispute sheet. Nobody can
-              // dispute a bet on someone else's behalf.
-              disputable={leg.userId === effectiveUserId}
-            />
-          ))}
+          <LegsBySlate
+            legs={shownLegs}
+            renderLeg={(leg: ParlayLegWithGame) => (
+              <LegRow
+                key={leg.id}
+                leg={leg}
+                ownerName={legOwnerName(leg.user)}
+                week={parlay.week}
+                // Your own bet is a link to the dispute sheet. Nobody can
+                // dispute a bet on someone else's behalf.
+                disputable={leg.userId === effectiveUserId}
+                trailing={parlay.status === "draft" ? <SussMeter tally={suss?.[leg.id]} /> : undefined}
+              />
+            )}
+          />
           {voidMembers.map((m: any) => (
             <VoidLegRow key={m.userId} ownerName={memberDisplayName(m)} />
           ))}
@@ -579,20 +682,64 @@ function ParlayCard({
         </View>
       )}
 
-      {canSendToSportsbook && (
-        <View style={styles.moderationRow}>
-          <Pressable
-            style={({ pressed }) => [styles.sendButton, pressed && styles.moderationButtonPressed]}
-            onPress={handleSendToSportsbook}
-            disabled={markParlaySent.isPending}
-          >
-            {markParlaySent.isPending ? (
-              <ActivityIndicator size="small" color="#f1f5f9" />
-            ) : (
+      {canSendToSportsbook && !collapsed && (
+        <View style={styles.placementBlock} testID={`placement-${parlay.id}`}>
+          <View style={styles.moderationRow}>
+            <Pressable
+              style={({ pressed }) => [styles.copyButton, pressed && styles.moderationButtonPressed]}
+              onPress={() => void Share.share({ message: slipText() }).catch(() => undefined)}
+              accessibilityRole="button"
+              accessibilityLabel="Copy or share this parlay as text"
+              testID={`button-copy-parlay-${parlay.id}`}
+            >
+              <Ionicons name="copy-outline" size={16} color="#cbd5e1" />
+              <Text style={styles.copyButtonText}>Copy parlay</Text>
+            </Pressable>
+            <Pressable
+              style={({ pressed }) => [styles.sendButton, pressed && styles.moderationButtonPressed]}
+              onPress={handleSendToSportsbook}
+              accessibilityRole="button"
+              testID={`button-send-sportsbook-${parlay.id}`}
+            >
               <Ionicons name="send-outline" size={16} color="#f1f5f9" />
+              <Text style={styles.sendButtonText}>Open Sportsbook</Text>
+            </Pressable>
+          </View>
+          <View style={styles.moderationRow}>
+            {parlay.status === "placed" ? (
+              <View style={styles.placedNote}>
+                <Ionicons name="checkmark-done-circle" size={16} color="#22c55e" />
+                <Text style={styles.placedNoteText}>Placed</Text>
+              </View>
+            ) : (
+              <Pressable
+                style={({ pressed }) => [styles.approveButton, pressed && styles.moderationButtonPressed]}
+                onPress={markPlaced}
+                disabled={confirmPlaced.isPending}
+                accessibilityRole="button"
+                testID={`button-confirm-placed-${parlay.id}`}
+              >
+                {confirmPlaced.isPending ? (
+                  <ActivityIndicator size="small" color="#f1f5f9" />
+                ) : (
+                  <Ionicons name="checkmark" size={16} color="#f1f5f9" />
+                )}
+                <Text style={styles.approveButtonText}>I placed this bet</Text>
+              </Pressable>
             )}
-            <Text style={styles.sendButtonText}>Send to Sportsbook</Text>
-          </Pressable>
+            {isAdmin && (
+              <Pressable
+                style={({ pressed }) => [styles.rejectButton, pressed && styles.moderationButtonPressed]}
+                onPress={confirmReopen}
+                disabled={reopenParlay.isPending}
+                accessibilityRole="button"
+                testID={`button-reopen-parlay-${parlay.id}`}
+              >
+                <Ionicons name="refresh" size={16} color="#ef4444" />
+                <Text style={styles.rejectButtonText}>Bust & reopen</Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       )}
 
@@ -805,17 +952,11 @@ function MembersTable({
     }
   }
 
-  // Sends the grid as text, ranked the way it's sorted right now. The share
-  // sheet covers both Copy and Messages.
+  // Sends the standings as text, always ranked by win rate, however the
+  // grid happens to be sorted. The share sheet covers both Copy and Messages.
   function shareStandings() {
-    const sortCol = MEMBER_SORT_COLUMNS.find((c) => c.key === sortKey);
     void Share.share({
-      message: standingsText({
-        leagueName,
-        scopeLabel,
-        sortLabel: sortCol ? `${sortCol.label} (${sortDir === "asc" ? "low to high" : "high to low"})` : null,
-        rows: sortedRows.map((r) => ({ ...r, username: r.name })),
-      }),
+      message: standingsText({ leagueName, scopeLabel, rows: sortedRows.map((r) => ({ ...r, username: r.name })) }),
     }).catch(() => undefined);
   }
 
@@ -972,6 +1113,8 @@ export default function LeagueDetailScreen() {
   const [activeTab, setActiveTab] = useState<Tab>("parlays");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmails, setInviteEmails] = useState("");
+  // Expand all / Collapse all for the Parlays tab's cards.
+  const [bulk, setBulk] = useState({ n: 0, collapsed: true });
   const [memberFilter, setMemberFilter] = useState("all");
   const [betTypeFilter, setBetTypeFilter] = useState("all");
   const [resultFilter, setResultFilter] = useState("all");
@@ -1444,6 +1587,32 @@ export default function LeagueDetailScreen() {
                       </Text>
                       <Ionicons name={filtersOpen ? "chevron-up" : "chevron-down"} size={14} color="#64748b" />
                     </Pressable>
+                    {parlays.length > 1 && (
+                      <View style={styles.bulkControls}>
+                        <Pressable
+                          onPress={() => setBulk((b) => ({ n: b.n + 1, collapsed: false }))}
+                          hitSlop={8}
+                          style={({ pressed }) => [styles.bulkBtn, pressed && { opacity: 0.7 }]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Expand all parlays"
+                          testID="button-expand-all"
+                        >
+                          <Ionicons name="chevron-down" size={13} color="#94a3b8" />
+                          <Text style={styles.bulkBtnText}>Expand all</Text>
+                        </Pressable>
+                        <Pressable
+                          onPress={() => setBulk((b) => ({ n: b.n + 1, collapsed: true }))}
+                          hitSlop={8}
+                          style={({ pressed }) => [styles.bulkBtn, pressed && { opacity: 0.7 }]}
+                          accessibilityRole="button"
+                          accessibilityLabel="Collapse all parlays"
+                          testID="button-collapse-all"
+                        >
+                          <Ionicons name="chevron-up" size={13} color="#94a3b8" />
+                          <Text style={styles.bulkBtnText}>Collapse all</Text>
+                        </Pressable>
+                      </View>
+                    )}
                     {filtersActive && (
                       <Pressable
                         onPress={() => {
@@ -1497,6 +1666,8 @@ export default function LeagueDetailScreen() {
                     shameEmoji={league?.shameEmoji}
                     legFilter={legFilter}
                     members={members}
+                    leagueName={league?.name}
+                    bulk={bulk}
                   />
                 ))
               )}
@@ -1855,7 +2026,13 @@ const styles = StyleSheet.create({
     backgroundColor: "#2563eb",
     marginTop: 12,
   },
-  reportShareText: { fontSize: 15, fontWeight: "700", color: "#ffffff" },
+  reportShareText: { fontSize: 14, fontWeight: "700", color: "#ffffff" },
+  reportShareRow: { flexDirection: "row", gap: 8 },
+  reportShareBtnHalf: { flex: 1 },
+  reportShareBtnAlt: { backgroundColor: "#334155" },
+  // Its own background and padding, so the captured picture stands alone.
+  reportGraphic: { backgroundColor: "#1c2538", padding: 14, borderRadius: 12 },
+  reportGraphicTitle: { fontSize: 15, fontWeight: "700", color: "#f1f5f9", marginBottom: 8 },
   reportEmpty: { fontSize: 13, color: "#94a3b8", paddingVertical: 20 },
   legFilterNote: { fontSize: 11, color: "#93c5fd", paddingBottom: 6 },
   boostChip: {
@@ -2188,6 +2365,25 @@ const styles = StyleSheet.create({
   },
   sendButtonText: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
   moderationButtonPressed: { opacity: 0.7 },
+  placementBlock: {},
+  copyButton: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    minHeight: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#475569",
+  },
+  copyButtonText: { fontSize: 13, fontWeight: "700", color: "#cbd5e1" },
+  placedNote: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, minHeight: 44 },
+  placedNoteText: { fontSize: 13, fontWeight: "700", color: "#22c55e" },
+  bulkControls: { flexDirection: "row", alignItems: "center", gap: 12, marginLeft: "auto" },
+  bulkBtn: { flexDirection: "row", alignItems: "center", gap: 3, minHeight: 32 },
+  bulkBtnText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
 
   /* Member rows / sortable table */
   memberHeaderRow: {

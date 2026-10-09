@@ -540,7 +540,7 @@ export function AddMultiBetParlayDialog({
                                 playerName: name,
                                 playerPosition: player?.position ?? null,
                                 propType,
-                                pick: yesNoNow ? (row.pick === "no" ? "no" : "yes") : row.pick === "under" ? "under" : "over",
+                                pick: yesNoNow ? "yes" : row.pick === "under" ? "under" : "over",
                               });
                             }}
                             onLookupNew={weekId ? () => syncPlayers.mutate(Number(weekId)) : undefined}
@@ -565,7 +565,7 @@ export function AddMultiBetParlayDialog({
                             <Select value={row.pick} onValueChange={v => updateRow(row.key, { pick: v })}>
                               <SelectTrigger className="h-8 w-24 text-xs" data-testid={`select-multi-bet-direction-${i}`}><SelectValue /></SelectTrigger>
                               <SelectContent>
-                                {(yesNo ? ["yes", "no"] : ["over", "under"]).map(p => (
+                                {(yesNo ? ["yes"] : ["over", "under"]).map(p => (
                                   <SelectItem key={p} value={p}>{p.charAt(0).toUpperCase() + p.slice(1)}</SelectItem>
                                 ))}
                               </SelectContent>

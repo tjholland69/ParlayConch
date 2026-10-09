@@ -1,7 +1,7 @@
 /**
- * League standings as a file (web) or a text message (mobile). Both take the
- * rows already in the order the grid shows them, so an export always matches
- * whatever the member sorted by.
+ * League standings as a file (web) or a text message (mobile). The file takes
+ * the rows in the order the grid shows them; the text is always ranked by
+ * win rate.
  */
 
 export type StandingsExportRow = {
@@ -37,26 +37,20 @@ export function standingsCsv(rows: StandingsExportRow[]): string {
 }
 
 /**
- * Plain text for the group chat:
+ * Plain text for the group chat, always ranked by win rate (more wins breaks
+ * a tie), whatever order the rows arrive in:
  *
  *   🏆 The Boys · Current Year
- *   Sorted by Win %
- *   1. Marty: 12-4 (75%) · Pwr 1.42 · Part 100%
+ *   1. Marty: 12-4 (75%)
  */
 export function standingsText(input: {
   leagueName: string;
   scopeLabel: string;
-  /** The column the grid is sorted by, when it isn't the default order. */
-  sortLabel?: string | null;
   rows: StandingsExportRow[];
 }): string {
+  const ranked = [...input.rows].sort((a, b) => b.winRate - a.winRate || b.wins - a.wins || a.username.localeCompare(b.username));
   return [
     `🏆 ${input.leagueName} · ${input.scopeLabel}`,
-    ...(input.sortLabel ? [`Sorted by ${input.sortLabel}`] : []),
-    ...input.rows.map((r, i) =>
-      `${i + 1}. ${r.username}: ${r.wins}-${r.losses} (${Math.round(r.winRate)}%)` +
-      ` · Pwr ${(r.powerScore ?? 0).toFixed(2)}` +
-      ` · Part ${Math.round((r.participationRate ?? 0) * 100)}%`,
-    ),
+    ...ranked.map((r, i) => `${i + 1}. ${r.username}: ${r.wins}-${r.losses} (${Math.round(r.winRate)}%)`),
   ].join("\n");
 }

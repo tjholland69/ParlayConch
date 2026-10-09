@@ -33,11 +33,17 @@ describe("mobile/lib/pickHelpers", () => {
     expect(getLineForBet(baseGame, "over", "over")).toBe("O47.5 (-110)");
     expect(getLineForBet(baseGame, "under", "under")).toBe("U47.5 (-110)");
     expect(getLineForBet(baseGame, "player_prop", "yes")).toBeUndefined();
+    // Home underdog, with and without a stored "+": away is the favorite.
+    expect(getLineForBet({ ...baseGame, spread: "+3.5" }, "spread", "away")).toBe("-3.5 (-110)");
+    expect(getLineForBet({ ...baseGame, spread: "3.5" }, "spread", "away")).toBe("-3.5 (-110)");
+    expect(getLineForBet({ ...baseGame, spread: "3.5" }, "spread", "home")).toBe("+3.5 (-110)");
   });
 
   test("awaySpreadDisplay flips the home spread sign", () => {
     expect(awaySpreadDisplay("-7")).toBe("+7");
-    expect(awaySpreadDisplay("+3")).toBe("+3");
+    // An away favorite: the home side is +3, so the away side is -3.
+    expect(awaySpreadDisplay("+3")).toBe("-3");
+    expect(awaySpreadDisplay("3")).toBe("-3");
     expect(awaySpreadDisplay(null)).toBeNull();
   });
 

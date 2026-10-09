@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { BarChart3, Check, Copy, Download, FileText, Loader2, MessageSquareText } from "lucide-react";
+import { BarChart3, Check, Copy, Download, FileText, Loader2, MessageSquareText, Image as ImageIcon } from "lucide-react";
 import { PageLoader } from "@/components/PageLoader";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -96,6 +96,96 @@ function ReportTable({ dataset }: { dataset: Report["dataset"] }) {
   );
 }
 
+/** The report's graphic as a picture, sized for a phone screen in a group chat. */
+function drawReportImage(title: string, chart: Report["chart"]): HTMLCanvasElement {
+  const W = 1080;
+  const PAD = 64;
+  const ROW = 68;
+  const HEADER = 200;
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = HEADER + Math.max(1, chart.bars.length) * ROW + 110;
+  const ctx = canvas.getContext("2d")!;
+  const font = (weight: number, size: number) => `${weight} ${size}px -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`;
+  const fit = (text: string, max: number) => {
+    let t = text;
+    while (t.length > 1 && ctx.measureText(t).width > max) t = `${t.slice(0, -2)}…`;
+    return t;
+  };
+
+  ctx.fillStyle = "#141926";
+  ctx.fillRect(0, 0, W, canvas.height);
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#f1f5f9";
+  ctx.font = font(700, 46);
+  ctx.fillText(fit(title, W - PAD * 2), PAD, 84);
+  ctx.fillStyle = "#94a3b8";
+  ctx.font = font(600, 28);
+  ctx.fillText(chart.title.toUpperCase(), PAD, 148);
+
+  const labelW = 300;
+  const valueW = 120;
+  const trackX = PAD + labelW + 20;
+  const trackW = W - PAD - valueW - trackX;
+  chart.bars.forEach((bar, i) => {
+    const y = HEADER + i * ROW + ROW / 2;
+    ctx.fillStyle = "#e2e8f0";
+    ctx.font = font(600, 30);
+    ctx.textAlign = "left";
+    ctx.fillText(fit(bar.label, labelW), PAD, y);
+    ctx.fillStyle = "#2a3447";
+    ctx.beginPath();
+    ctx.roundRect(trackX, y - 13, trackW, 26, 6);
+    ctx.fill();
+    const share = Math.max(0, Math.min(1, bar.value / (chart.max || 1)));
+    if (share > 0) {
+      ctx.fillStyle = "#3b82f6";
+      ctx.beginPath();
+      ctx.roundRect(trackX, y - 13, Math.max(8, trackW * share), 26, 6);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#f1f5f9";
+    ctx.font = font(700, 30);
+    ctx.textAlign = "right";
+    ctx.fillText(bar.display, W - PAD, y);
+  });
+  if (chart.bars.length === 0) {
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = font(500, 30);
+    ctx.textAlign = "left";
+    ctx.fillText("Nothing to chart yet.", PAD, HEADER + ROW / 2);
+  }
+  ctx.textAlign = "center";
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.font = font(600, 26);
+  ctx.fillText("PARLAY CONCH", W / 2, canvas.height - 52);
+  return canvas;
+}
+
+/** Hands the picture to the share sheet where the browser has one (phones), else downloads it. */
+async function shareReportImage(title: string, chart: Report["chart"]): Promise<"shared" | "downloaded"> {
+  const canvas = drawReportImage(title, chart);
+  const filename = `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.png`;
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+  if (blob) {
+    const file = new File([blob], filename, { type: "image/png" });
+    if (navigator.canShare?.({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title });
+        return "shared";
+      } catch (err) {
+        // Closing the share sheet isn't a failure, and shouldn't download.
+        if ((err as Error)?.name === "AbortError") return "shared";
+      }
+    }
+  }
+  const a = document.createElement("a");
+  a.href = canvas.toDataURL("image/png");
+  a.download = filename;
+  a.click();
+  return "downloaded";
+}
+
 function ReportView({ leagueId, entry }: { leagueId: number; entry: ReportCatalogEntry }) {
   const { toast } = useToast();
   const [view, setView] = useState<"graphic" | "text">("graphic");
@@ -174,6 +264,19 @@ function ReportView({ leagueId, entry }: { leagueId: number; entry: ReportCatalo
         {/* Export actions sit at the bottom of the tile they export. */}
         {report && (
           <div className="flex flex-wrap justify-end gap-2 border-t border-white/5 pt-3">
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2"
+              onClick={async () => {
+                const how = await shareReportImage(report.dataset.title, report.chart);
+                if (how === "downloaded") toast({ title: "Image saved", description: "Drop it into the group chat." });
+              }}
+              data-testid="button-report-share-image"
+            >
+              <ImageIcon className="h-4 w-4" />
+              Share as image
+            </Button>
             <Button size="sm" variant="outline" className="gap-2" onClick={copyText} data-testid="button-report-copy-text">
               {copied ? <Check className="h-4 w-4 text-green-400" /> : <Copy className="h-4 w-4" />}
               Copy as text

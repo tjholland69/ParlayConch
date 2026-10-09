@@ -6,7 +6,9 @@ import type { Game, ParlayLegWithParlayContext } from "@shared/schema";
 import { legLookthroughLabel, withPlusSign } from "@shared/formatPick";
 import { DisputeLegSheet } from "@/components/DisputeLegSheet";
 import { resolveResultDetail } from "@shared/legJustification";
-import { getSlate } from "@shared/slate";
+import { groupLegsBySlate } from "@shared/slate";
+import { kickoffTimeLabel } from "@shared/parlayReminder";
+import { legContextLine } from "@shared/nflWeek";
 
 type UserLike = {
   firstName?: string | null;
@@ -52,23 +54,26 @@ function kickoffLabel(gameTime: Date | string): string {
 
 /**
  * One parlay leg, the same two lines everywhere a leg is listed:
- *   Bet Owner · the bet ("Lamar Jackson - Rush Yds O 25")        Result
- *   Week + Year · AWAY@HOME · Slate
+ *   Bet Owner · the bet ("49ers +6.5", "Lamar Jackson - Rush Yds O 25")   Result
+ *   Week 4 2026 - Patriots @ Bills - 1:05pm EDT
  * The right side holds the result and nothing else. Tapping the row opens
  * the game details underneath. On the member's own bet (`disputable`) the
- * bet text is a link that opens the dispute sheet.
+ * bet text is a link that opens the dispute sheet. `trailing` sits before
+ * the result (the Suss Meter, on an open parlay).
  */
 export function LegRow({
   leg,
   ownerName,
   week,
   disputable,
+  trailing,
 }: {
   leg: LegRowLeg;
   ownerName: string;
-  week?: { label: string; season: number } | null;
+  week?: { label: string; season: number; weekNumber?: number | null } | null;
   /** The viewer's own bet: tapping the bet text disputes it. */
   disputable?: boolean;
+  trailing?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [disputeOpen, setDisputeOpen] = useState(false);
@@ -76,11 +81,7 @@ export function LegRow({
   const label = legLookthroughLabel(leg, game);
   const odds = withPlusSign(leg.odds);
   const resultColor = RESULT_COLORS[leg.result ?? ""] ?? "#cbd5e1";
-  const secondLine = [
-    week ? `${week.label} ${week.season}` : null,
-    game ? `${game.awayTeam}@${game.homeTeam}` : null,
-    game?.gameTime ? getSlate(new Date(game.gameTime)) : null,
-  ].filter(Boolean).join("  ·  ");
+  const secondLine = legContextLine(week, game, game?.gameTime ? kickoffTimeLabel(game.gameTime) : null);
   const score =
     game?.awayScore != null && game?.homeScore != null
       ? `${game.awayTeam} ${game.awayScore} – ${game.homeTeam} ${game.homeScore}${game.isFinished ? " (Final)" : ""}`
@@ -116,6 +117,7 @@ export function LegRow({
               {label}
             </Text>
           )}
+          {trailing}
           <Text style={[styles.result, { color: resultColor }]} testID={`text-leg-result-${leg.id}`}>
             {RESULT_LABELS[leg.result ?? ""] ?? "Pending"}
           </Text>
@@ -140,6 +142,27 @@ export function LegRow({
       )}
       {disputable && <DisputeLegSheet legId={leg.id} visible={disputeOpen} onClose={() => setDisputeOpen(false)} />}
     </View>
+  );
+}
+
+/**
+ * A parlay's legs under a quiet label per slate ("SUNDAY EARLY SLATE"), the
+ * same understated divider Your Picks uses for years and months.
+ */
+export function LegsBySlate<L extends LegRowLeg>({ legs, renderLeg }: { legs: L[]; renderLeg: (leg: L) => ReactNode }) {
+  const groups = groupLegsBySlate(legs);
+  return (
+    <>
+      {groups.map((group) => (
+        <View key={group.key}>
+          <View style={styles.slateRow}>
+            <Text style={styles.slateLabel}>{group.label.toUpperCase()}</Text>
+            <View style={styles.slateLine} />
+          </View>
+          {group.legs.map(renderLeg)}
+        </View>
+      ))}
+    </>
   );
 }
 
@@ -233,6 +256,9 @@ const styles = StyleSheet.create({
   pickLink: { textDecorationLine: "underline" },
   result: { fontSize: 12, fontWeight: "700", flexShrink: 0, minWidth: 48, textAlign: "right" },
   voidRow: { opacity: 0.7 },
+  slateRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, marginBottom: 2 },
+  slateLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 0.8, color: "#64748b" },
+  slateLine: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: "#2a3447" },
   meta: { flex: 1, minWidth: 0, fontSize: 11, color: "#64748b", marginLeft: 13 },
   pressed: { opacity: 0.65 },
   details: { marginTop: 6, marginLeft: 13, paddingLeft: 10, borderLeftWidth: 2, borderColor: "#2a3447", gap: 2 },

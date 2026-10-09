@@ -58,6 +58,26 @@ export function withPlusSign(value: string | number | null | undefined): string 
   return Number.isFinite(n) && n > 0 && !s.startsWith("+") ? `+${s}` : s;
 }
 
+/**
+ * The away team's side of the home spread stored on a game: "-3.5" -> "3.5",
+ * "+3.5" -> "-3.5". Parses the number rather than editing the string, so a
+ * home underdog's "+3.5" can't come out as "+3.5" (or "++3.5") for the
+ * away favorite.
+ */
+export function awaySpread(homeSpread: string | null | undefined): string {
+  const n = parseFloat(homeSpread ?? "");
+  return Number.isNaN(n) ? "" : String(-n || 0);
+}
+
+/** Both sides of a game's spread as they read on a pick tile: "+3.5" / "-3.5". */
+export function spreadLabels(game: { spread?: string | null }): { away: string | null; home: string | null } {
+  const home = parseFloat(game.spread ?? "");
+  return {
+    away: withPlusSign(awaySpread(game.spread)),
+    home: Number.isNaN(home) ? null : withPlusSign(String(home)),
+  };
+}
+
 function withSegment(label: string, gameSegment?: string | null): string {
   if (!gameSegment) return label;
   const trimmed = gameSegment.trim();
@@ -165,42 +185,22 @@ export function legChipLabel(leg: ChipLeg, game?: ChipGame | null): string {
   return team;
 }
 
-/** Prop names as they're said in a group chat: "Rush", "Rec TD", "Anytime TD". */
-const PROP_SHORT: Record<string, string> = {
-  rush_yards: "Rush",
-  rush_tds: "Rush TD",
-  rush_attempts: "Rush Att",
-  rec_yards: "Rec",
-  rec_tds: "Rec TD",
-  receptions: "Recs",
-  all_purpose_yards: "Rush+Rec",
-  pass_yards: "Pass",
-  pass_tds: "Pass TD",
-  pass_attempts: "Pass Att",
-  pass_completions: "Comp",
-  interceptions: "INT",
-  anytime_td: "Anytime TD",
-  first_td: "First TD",
-  last_td: "Last TD",
-  kicking_pts: "Kick Pts",
-  fg_made: "FG",
-  sacks: "Sacks",
-  tackles: "Tackles",
-};
-
 /**
  * The shortest readable form of a pick, for text that gets pasted into a
- * group chat: "Lamar (Rush O25)", "Chiefs -4.5", "Cardinals ML (-346)",
- * "Bills/Chiefs O47.5". Same inputs as legChipLabel.
+ * group chat: "Lamar (Rush Yds O25)", "C.J. (Ints O1)", "Chiefs -4.5",
+ * "Cardinals ML (-346)", "Bills/Chiefs O47.5". Props use the same shorthand
+ * as the lookthrough rows (propAbbrev). Never nests parentheses, so a caller
+ * can put it after a name with a dash. Same inputs as legChipLabel.
  */
 export function legShortLabel(leg: ChipLeg, game?: ChipGame | null): string {
   const lineNumber = leg.line?.trim().split(/\s+/)[0] || null;
   if (leg.betType === "player_prop") {
     const first = leg.playerName?.trim().split(/\s+/)[0] || "Player";
-    const prop = (leg.propType && PROP_SHORT[leg.propType]) || "Prop";
-    if (leg.pick === "yes" || leg.pick === "no") return `${first} (${leg.pick === "no" ? "No " : ""}${prop})`;
+    const prop = propAbbrev(leg.propType);
+    if (leg.pick === "yes" || leg.pick === "no") return `${first} (${propPickLabel(leg)})`;
     const side = leg.pick === "over" ? "O" : leg.pick === "under" ? "U" : "";
-    return `${first} (${[prop, `${side}${lineNumber ?? ""}`].filter(Boolean).join(" ")})`;
+    const number = lineNumber?.replace(/^[ou]/i, "") ?? "";
+    return `${first} (${[prop, `${side}${number}`].filter(Boolean).join(" ")})`;
   }
   if (leg.betType === "over" || leg.betType === "under") {
     const total = lineNumber?.replace(/^[ou]/i, "") || game?.overUnder || "";
@@ -271,14 +271,38 @@ export function propPickLabel(leg: Pick<ChipLeg, "pick" | "line" | "propType">):
 }
 
 /**
- * A leg as one line on a lookthrough row. Props lead with the player:
- * "Lamar Jackson - Rush Yds O 25". Game bets name their market, so a spread
- * and a moneyline on the same team never read alike: "Chiefs (Spread -3.5)",
- * "Chiefs (Moneyline -180)", "Over 47.5 (Total)".
+ * A leg as one line on a lookthrough row, with no parentheses. Props lead
+ * with the player: "Lamar Jackson - Rush Yds O 25". Game bets are the side
+ * and its number: "49ers +6.5" (spread), "49ers ML" (moneyline, no price),
+ * "Over 47.5" (total).
  */
 export function legLookthroughLabel(leg: ChipLeg, game?: ChipGame | null): string {
   if (leg.betType === "player_prop") {
     return `${leg.playerName?.trim() || "Player"} - ${withSegment(propPickLabel(leg), leg.gameSegment)}`;
   }
-  return withSegment(legChipLabel(leg, game), leg.gameSegment);
+  const lineNumber = leg.line?.trim().split(/\s+/)[0] || null;
+  if (leg.betType === "over" || leg.betType === "under") {
+    const total = lineNumber?.replace(/^[ou]/i, "") || game?.overUnder;
+    const side = leg.betType === "over" ? "Over" : "Under";
+    return withSegment(total ? `${side} ${total}` : side, leg.gameSegment);
+  }
+  const isHome = leg.pick === "home";
+  const team = (isHome ? game?.homeTeam : game?.awayTeam) || (isHome ? "Home" : "Away");
+  if (leg.betType === "spread") {
+    const sides = spreadLabels(game ?? {});
+    const spread = withPlusSign(lineNumber) ?? (isHome ? sides.home : sides.away);
+    return withSegment(spread ? `${team} ${spread}` : team, leg.gameSegment);
+  }
+  if (leg.betType === "moneyline") return withSegment(`${team} ML`, leg.gameSegment);
+  return withSegment(team, leg.gameSegment);
+}
+
+/**
+ * The Pick column of a legs table, where the player or matchup already has a
+ * column of its own: "49ers +6.5", "49ers ML", "Over 47.5", and for a prop
+ * just the bet, "Rush Yds O 25".
+ */
+export function legPickColumnLabel(leg: ChipLeg, game?: ChipGame | null): string {
+  if (leg.betType === "player_prop") return withSegment(propPickLabel(leg), leg.gameSegment);
+  return legLookthroughLabel(leg, game);
 }

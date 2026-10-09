@@ -21,15 +21,12 @@ import { format, formatDistanceToNow, isPast } from "date-fns";
 import type { ActiveWeekStatus, ParlayWithLegs, Week } from "@shared/schema";
 import { sortParlayLegs } from "@shared/legOrder";
 import { CHIP_MIN_HEIGHT, shadows } from "@/lib/theme";
-import { getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
-import { LegRow, legOwnerName } from "@/components/LegLookthrough";
+import { getOpenParlayVisualStyle, getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
+import { LegRow, LegsBySlate, legOwnerName } from "@/components/LegLookthrough";
 import { estimateWeekDateRange } from "@shared/nflWeek";
-import { isParlayInProgress, legTally } from "@shared/parlayProgress";
+import { isParlayInProgress, isParlayLocked, legTally } from "@shared/parlayProgress";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
-
-// Approved and on its way (or already at the book) — these tiles glow.
-const ACTIVE_STATUSES = new Set(["approved", "sent", "placed"]);
 
 // A parlay counts as "Open" as long as it hasn't reached one of these final
 // outcomes — pending/approved/rejected/sent/placed still count as open.
@@ -245,32 +242,48 @@ function HistoryTile({ parlay, leagueName, status }: { parlay: ParlayWithLegs; l
   const legCount = legs.length;
   const isDraft = parlay.status === "draft";
   const tally = legTally(legs);
-  // Once a leg is decided the tile takes the same red-to-green win % color
-  // as the league's rollup cards, instead of a flat color per status.
-  const scale = !isDraft && tally.pct !== null ? getParlayVisualStyle(tally.pct) : null;
-  const scaleColor = scale ? (([r, g, b]) => `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`)(getWinPctColor(tally.pct!)) : null;
+  const hasMyLeg = legs.some((l) => l.userId === effectiveUserId);
+  // Colored exactly like the league's Parlays tab cards (ParlayCard in
+  // leagues/[id]/index.tsx): the red-to-green win % once a leg is decided,
+  // and until then the parlay's status: light blue while it waits, a green
+  // glow once it's active.
+  const pct = isDraft ? null : tally.pct;
+  const visual = getParlayVisualStyle(pct, 1);
+  const openVisual = !isDraft && pct === null ? getOpenParlayVisualStyle(parlay.status) : null;
+  const pctColor = pct !== null ? (([r, g, b]) => `rgb(${Math.round(r)}, ${Math.round(g)}, ${Math.round(b)})`)(getWinPctColor(pct)) : null;
+  const accent = pctColor ?? (openVisual?.glowColor ? "#22c55e" : parlay.status === "pending" ? "#38bdf8" : "#64748b");
   const openLeague = () => router.push({ pathname: "/leagues/[id]", params: { id: String(parlay.leagueId) } });
 
   return (
     <ParlayTile
       icon={meta.icon}
-      iconColor={scaleColor ?? meta.iconColor}
+      iconColor={isDraft ? meta.iconColor : accent}
       leagueName={leagueName}
-      statusLabel={isParlayInProgress(parlay) ? "In progress" : isDraft && status?.allSubmitted ? "Ready to Lock" : meta.label}
-      progress={isDraft ? membersInProgress(status) : undefined}
+      statusLabel={
+        isParlayInProgress(parlay)
+          ? "In progress"
+          : isDraft && status?.allSubmitted
+          ? "Ready to Lock"
+          : parlay.status === "placed"
+          ? "Placed"
+          : isParlayLocked(parlay)
+          ? "Locked"
+          : meta.label
+      }
+      progress={isDraft ? membersInProgress(status) : pct !== null ? pct / 100 : undefined}
       metaLabel={
         isDraft
-          ? `${membersInLabel(status, legCount)} · your pick is saved`
+          ? `${membersInLabel(status, legCount)} · ${hasMyLeg ? "your pick is saved" : "yours isn't in yet"}`
           : [
               parlay.week?.label ?? "Week",
               `${legCount} ${legCount === 1 ? "leg" : "legs"}`,
               tally.resolved > 0 || tally.pending < legCount ? tally.label : null,
             ].filter(Boolean).join(" · ")
       }
-      bg={scale ? "#1c2538" : meta.bg}
-      border={scale?.borderColor ?? meta.border}
-      tint={scale?.tintColor}
-      glow={parlay.status === "win" ? "pulse" : ACTIVE_STATUSES.has(parlay.status ?? "") ? "steady" : undefined}
+      bg={isDraft ? meta.bg : openVisual?.backgroundColor ?? "#1c2538"}
+      border={isDraft ? meta.border : openVisual?.borderColor ?? visual.borderColor}
+      tint={!isDraft && !openVisual ? visual.tintColor : undefined}
+      glow={openVisual?.glowColor ? "steady" : undefined}
       actionIcon={isDraft ? "create-outline" : expanded ? "chevron-up" : "chevron-down"}
       onPress={() =>
         isDraft
@@ -280,15 +293,18 @@ function HistoryTile({ parlay, leagueName, status }: { parlay: ParlayWithLegs; l
     >
       {expanded && !isDraft && (
         <View style={styles.tileLegs} testID={`legs-parlay-${parlay.id}`}>
-          {legs.map((leg) => (
-            <LegRow
-              key={leg.id}
-              leg={leg}
-              ownerName={legOwnerName(leg.user)}
-              week={parlay.week}
-              disputable={leg.userId === effectiveUserId}
-            />
-          ))}
+          <LegsBySlate
+            legs={legs}
+            renderLeg={(leg) => (
+              <LegRow
+                key={leg.id}
+                leg={leg}
+                ownerName={legOwnerName(leg.user)}
+                week={parlay.week}
+                disputable={leg.userId === effectiveUserId}
+              />
+            )}
+          />
           <Pressable
             onPress={openLeague}
             hitSlop={6}
@@ -593,9 +609,21 @@ export default function PicksScreen() {
     : []
   ).filter((l) => matchesLeague(l.id));
 
-  const openHistory = (parlayHistory ?? []).filter(
+  // A parlay the member started but has no pick in comes back from the
+  // server too. Its league already has a "needs your pick" tile above, so
+  // it isn't listed a second time.
+  const needsPickLeagueIds = new Set(leaguesNeedingPick.map((l) => l.id));
+  const unsettled = (parlayHistory ?? []).filter(
     (p) => !PAST_STATUSES.has(p.status ?? "") && matchesLeague(p.leagueId) && matchesWeek(p.weekId),
   );
+  const openHistory = unsettled.filter(
+    (p) =>
+      p.status === "draft" &&
+      !(p.weekId === activeWeek?.id && needsPickLeagueIds.has(p.leagueId) && !(p.legs ?? []).some((leg) => leg.userId === effectiveUserId)),
+  );
+  // Locked, placed or already underway: no longer taking picks, so these sit
+  // in their own section rather than reading as a second "open" parlay.
+  const lockedHistory = unsettled.filter((p) => p.status !== "draft");
   const pastHistory = (parlayHistory ?? []).filter(
     (p) =>
       PAST_STATUSES.has(p.status ?? "") &&
@@ -605,6 +633,7 @@ export default function PicksScreen() {
   );
 
   const hasOpen = leaguesNeedingPick.length > 0 || openHistory.length > 0;
+  const hasLocked = lockedHistory.length > 0;
   const hasPast = pastHistory.length > 0;
   const hasAnyPast = (parlayHistory ?? []).some((p) => PAST_STATUSES.has(p.status ?? ""));
 
@@ -634,6 +663,12 @@ export default function PicksScreen() {
         ],
       });
     }
+    if (hasLocked) {
+      result.push({
+        title: "LOCKED & IN PROGRESS",
+        data: lockedHistory.map((parlay) => ({ kind: "history" as const, parlay, key: `locked-${parlay.id}` })),
+      });
+    }
     if (hasPast) {
       // Newest first, with a quiet label wherever the year or month changes.
       const dated = pastHistory
@@ -659,7 +694,7 @@ export default function PicksScreen() {
       result.push({ title: "PAST PARLAYS", data: rows });
     }
     return result;
-  }, [hasOpen, hasPast, leaguesNeedingPick, openHistory, pastHistory, activeWeek]);
+  }, [hasOpen, hasLocked, hasPast, leaguesNeedingPick, openHistory, lockedHistory, pastHistory, activeWeek]);
 
   const listHeader = (
     <>
@@ -698,7 +733,7 @@ export default function PicksScreen() {
       stickySectionHeadersEnabled={false}
       ListHeaderComponent={listHeader}
       ListEmptyComponent={
-        !hasOpen && !hasPast && (leagueFilter !== "all" || resultFilter !== "all" || weekFilter !== "all") ? (
+        !hasOpen && !hasLocked && !hasPast && (leagueFilter !== "all" || resultFilter !== "all" || weekFilter !== "all") ? (
           <View style={styles.listEmpty}>
             <Ionicons name="filter-outline" size={28} color="#2563eb" />
             <Text style={styles.emptyTitle}>No parlays match</Text>
@@ -710,7 +745,7 @@ export default function PicksScreen() {
         <Text
           style={[
             styles.sectionLabel,
-            section.title === "PAST PARLAYS" && hasOpen && styles.sectionLabelSpaced,
+            section.title !== "OPEN PARLAYS" && (hasOpen || (section.title === "PAST PARLAYS" && hasLocked)) && styles.sectionLabelSpaced,
           ]}
         >
           {section.title}

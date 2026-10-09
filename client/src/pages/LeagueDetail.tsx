@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useLeagues, useUpdateLeagueSettings, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
-import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
+import { LegsCsvButton, LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,13 +13,19 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Pencil, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2, Award, Flame, Shield, User, Dices, TrendingUp, TrendingDown, Citrus } from "lucide-react";
+import { Trophy, Pencil, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Search, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2, Award, Flame, Shield, User, Dices, TrendingUp, TrendingDown, Citrus } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
 import { format, formatDistanceToNow } from "date-fns";
 import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
-import { BetSlipPanel } from "@/components/BetSlipPanel";
+import { ParlayPlacementBar } from "@/components/ParlayPlacementBar";
+import { SussMeter, SussVoteButton } from "@/components/SussMeter";
+import { useSendReminder, useSuss, useSussVote } from "@/hooks/use-parlay-extras";
+import { findIllogicalBets, illogicalBetWarning } from "@shared/illogicalBets";
+import { gameMatchesTeamQuery } from "@shared/nflTeams";
+import { SUSS_FULL_PROMPT, sussLevel } from "@shared/suss";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
 import { participationRateByParlay } from "@/lib/parlayVisuals";
 import { AddPropLegDialog } from "@/components/AddPropLegDialog";
@@ -40,7 +46,7 @@ import { getDisplayName, shortId } from "@/lib/displayName";
 import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
-import { hasGameStarted } from "@shared/parlayProgress";
+import { hasGameStarted, isParlayLocked } from "@shared/parlayProgress";
 import { getBuildingVerb } from "@/lib/parlaySlang";
 import { getLineForBet, spreadLabels } from "@/lib/gameOdds";
 import { canBuyPoints, impliedPointsMoved, lineForBet, MAX_POINTS_MOVE, POINTS_STEP } from "@shared/buyPoints";
@@ -492,6 +498,11 @@ export default function LeagueDetail() {
   const { data: myParlayHistory } = useMyParlayHistory(leagueId);
 
   const [propDialogGame, setPropDialogGame] = useState<Game | null>(null);
+  // The any-player prop entry above the games: no game chosen up front.
+  const [anyPlayerPropOpen, setAnyPlayerPropOpen] = useState(false);
+  // Narrows the game tiles to a team, by name or city.
+  const [teamQuery, setTeamQuery] = useState("");
+  const matchesTeamQuery = (game: Game) => gameMatchesTeamQuery(game, teamQuery);
   const [importInstructionsOpen, setImportInstructionsOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [showLockConfirm, setShowLockConfirm] = useState(false);
@@ -597,17 +608,47 @@ export default function LeagueDetail() {
     }
     if (takenByOther(game.id, betType)) return;
     const line = getLineForBet(game, betType, pick);
-    // Moving the pick to a different game is worth a second look.
-    if (myLeg && myLeg.gameId !== game.id) {
-      setPendingSwap({
-        from: legChipLabel(myLeg, (games ?? []).find(g => g.id === myLeg.gameId)),
-        to: legChipLabel({ betType, pick, line: line ?? null, propType: null }, game),
-        leg: { gameId: game.id, betType, pick, line },
-      });
+    const proceed = () => {
+      // Moving the pick to a different game is worth a second look.
+      if (myLeg && myLeg.gameId !== game.id) {
+        setPendingSwap({
+          from: legChipLabel(myLeg, (games ?? []).find(g => g.id === myLeg.gameId)),
+          to: legChipLabel({ betType, pick, line: line ?? null, propType: null }, game),
+          leg: { gameId: game.id, betType, pick, line },
+        });
+        return;
+      }
+      savePick({ gameId: game.id, betType, pick, line });
+    };
+    // An Illogical Bet (shared/illogicalBets.ts) is allowed, after a warning.
+    const illogical = findIllogicalBets({ gameId: game.id, betType, pick }, myParlay?.taken, game);
+    if (illogical.length > 0) {
+      setIllogicalBet({ ...illogicalBetWarning(illogical.map(f => ({ reason: f.reason, who: f.bet.takenBy.web }))), proceed });
       return;
     }
-    savePick({ gameId: game.id, betType, pick, line });
+    proceed();
   };
+
+  const [illogicalBet, setIllogicalBet] = useState<{ title: string; message: string; proceed: () => void } | null>(null);
+  const { toast } = useToast();
+
+  // The Suss Meter: anonymous down votes on the open parlay's picks.
+  const { data: suss } = useSuss(leagueId, activeWeekId ?? undefined, !!myParlay && myParlay.status === "draft");
+  const sussVote = useSussVote(leagueId, activeWeekId ?? undefined);
+
+  // Nudges whoever hasn't picked and copies the reminder for the group chat.
+  const sendReminder = useSendReminder(leagueId, activeWeekId ?? undefined);
+  const handleSendReminder = () =>
+    sendReminder.mutate(undefined, {
+      onSuccess: async ({ text, missingCount }) => {
+        const copied = await navigator.clipboard.writeText(text).then(() => true, () => false);
+        toast({
+          title: copied ? "Reminder copied" : "Reminder sent",
+          description: `${missingCount === 0 ? "Everyone has a pick in." : `${missingCount} member${missingCount === 1 ? "" : "s"} without a pick got a nudge in the app.`}${copied ? " Paste the text into the group chat." : ""}`,
+        });
+      },
+      onError: (err: Error) => toast({ title: "Couldn't send the reminder", description: err.message, variant: "destructive" }),
+    });
 
   // Open Parlays only shows the active week's slate by default. Later weeks
   // of the same season load one at a time, on request. The odds sync has
@@ -1026,6 +1067,19 @@ export default function LeagueDetail() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
+                {!lockStatus?.isLocked && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSendReminder}
+                    disabled={sendReminder.isPending}
+                    title="Nudge everyone without a pick, and copy a reminder for the group chat"
+                    data-testid="button-send-reminder"
+                  >
+                    <Mail className="w-4 h-4 mr-1" />
+                    Send reminder
+                  </Button>
+                )}
                 {lockStatus?.inProgress ? (
                   <Badge className="bg-sky-500/20 text-sky-300 border-sky-500/30" data-testid="badge-parlay-in-progress">
                     <Lock className="w-3 h-3 mr-1" />In Progress
@@ -1149,20 +1203,35 @@ export default function LeagueDetail() {
                       {[...myLegs, ...parlayLegs.filter(l => !myLegs.includes(l))].map((leg) => {
                         const game = allSlateGames.find(g => g.id === leg.gameId);
                         const mine = myLegs.includes(leg);
+                        const tally = leg.id > 0 ? suss?.[leg.id] : undefined;
+                        const sussFull = sussLevel(tally) === 3;
                         return (
                           <Badge
                             key={leg.id}
                             variant="outline"
-                            className={cn("text-sm", mine && "border-primary/60 bg-primary/10")}
+                            className={cn("text-sm gap-1", mine && "border-primary/60 bg-primary/10", sussFull && "border-red-500/70 animate-pulse")}
                             data-testid={mine ? `badge-my-leg-${leg.id}` : `badge-parlay-leg-${leg.id}`}
                           >
-                            <span className="mr-1 text-muted-foreground">{mine && !onBehalfOf ? "You" : getDisplayName(leg.user, "Member")}:</span>
+                            <span className="text-muted-foreground">{mine && !onBehalfOf ? "You" : getDisplayName(leg.user, "Member")}:</span>
                             {legChipLabel(leg, game)}
-                            {leg.approvalStatus === "pending" && <span className="ml-1 text-xs text-amber-300">· awaiting approval</span>}
+                            {leg.approvalStatus === "pending" && <span className="text-xs text-amber-300">· awaiting approval</span>}
+                            <SussMeter tally={tally} />
+                            {/* Nobody votes on their own pick. */}
+                            {leg.id > 0 && leg.userId !== user?.id && myParlay?.status === "draft" && (
+                              <SussVoteButton
+                                legId={leg.id}
+                                tally={tally}
+                                disabled={sussVote.isPending}
+                                onVote={(vote) => sussVote.mutate({ legId: leg.id, vote })}
+                              />
+                            )}
                           </Badge>
                         );
                       })}
                     </div>
+                  )}
+                  {myLeg && myLeg.id > 0 && sussLevel(suss?.[myLeg.id]) === 3 && (
+                    <p className="text-sm text-red-300" data-testid="text-suss-full">🌡️ {SUSS_FULL_PROMPT}</p>
                   )}
                   {myPointsMoved != null && (
                     <div className="flex w-fit items-center gap-3 rounded-xl border border-primary/60 bg-primary/5 px-3 py-2" data-testid="control-alternate-line">
@@ -1201,10 +1270,38 @@ export default function LeagueDetail() {
               {/* Games Grid — all of this week's games; started/finished ones
                   are greyed out. Next week's games only appear once the user
                   asks for them. */}
-              <p className="text-sm font-semibold" data-testid="text-current-week-label">
-                {activeWeek?.label} <span className="text-muted-foreground font-normal">· current week</span>
-              </p>
-              <SlateGroupedGames games={thisWeekGames} renderGame={renderGameCard} />
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm font-semibold" data-testid="text-current-week-label">
+                  {activeWeek?.label} <span className="text-muted-foreground font-normal">· current week</span>
+                </p>
+                {/* Find a team's game by name or city, or go straight to a
+                    prop on any player. */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="search"
+                      value={teamQuery}
+                      onChange={(e) => setTeamQuery(e.target.value)}
+                      placeholder="Search a team or city"
+                      aria-label="Search games by team name or city"
+                      className="h-9 w-56 pl-8"
+                      data-testid="input-team-search"
+                    />
+                  </div>
+                  <Button size="sm" variant="outline" onClick={() => setAnyPlayerPropOpen(true)} data-testid="button-any-player-prop">
+                    <UserPlus className="w-4 h-4 mr-1" />
+                    Player prop: any player
+                  </Button>
+                </div>
+              </div>
+              {teamQuery.trim() && thisWeekGames.filter(matchesTeamQuery).length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-6 bg-card/20 rounded-xl border border-dashed border-white/10" data-testid="text-no-team-match">
+                  No games match "{teamQuery.trim()}". Try the team's name or its city.
+                </p>
+              ) : (
+                <SlateGroupedGames games={thisWeekGames.filter(matchesTeamQuery)} renderGame={renderGameCard} />
+              )}
 
               {laterWeekSections.map(section => (
                 <div key={section.label} className="space-y-3" data-testid={`section-later-week-${section.label}`}>
@@ -1214,7 +1311,7 @@ export default function LeagueDetail() {
                       {section.isLoading ? "Loading…" : `${section.label} lines aren't posted yet.`}
                     </p>
                   ) : (
-                    <SlateGroupedGames games={section.games} renderGame={renderGameCard} />
+                    <SlateGroupedGames games={section.games.filter(matchesTeamQuery)} renderGame={renderGameCard} />
                   )}
                 </div>
               ))}
@@ -1235,15 +1332,21 @@ export default function LeagueDetail() {
                 </div>
               )}
 
-              {propDialogGame && activeWeekId && (
+              {(propDialogGame || anyPlayerPropOpen) && activeWeekId && (
                 <AddPropLegDialog
                   game={propDialogGame}
+                  anyPlayerGames={allSlateGames.filter(g => !hasGameStarted(g))}
                   leagueId={leagueId}
                   weekId={activeWeekId}
                   startNew={startingNew}
                   onBehalfOf={onBehalfOf}
-                  open={!!propDialogGame}
-                  onOpenChange={(open) => !open && setPropDialogGame(null)}
+                  taken={myParlay?.taken}
+                  open={!!propDialogGame || anyPlayerPropOpen}
+                  onOpenChange={(open) => {
+                    if (open) return;
+                    setPropDialogGame(null);
+                    setAnyPlayerPropOpen(false);
+                  }}
                 />
               )}
             </>
@@ -1262,7 +1365,7 @@ export default function LeagueDetail() {
                 </div>
               )}
               {(() => {
-                const openParlays = (leagueParlays ?? []).filter(p => p.status === 'pending' || p.status === 'approved');
+                const openParlays = (leagueParlays ?? []).filter(isParlayLocked);
                 if (openParlays.length === 0) {
                   return (
                     <div className="text-center py-12 bg-card/20 rounded-2xl border border-dashed border-white/10">
@@ -1314,6 +1417,7 @@ export default function LeagueDetail() {
                             shameEmoji={league.shameEmoji}
                           />
                         </CardErrorBoundary>
+                        <ParlayPlacementBar parlay={parlay} leagueName={league.name} canManage={!!league.isAdmin} />
                       </div>
                     ))}
                   </div>
@@ -1943,7 +2047,12 @@ export default function LeagueDetail() {
       <Dialog open={lookthroughRecord !== null} onOpenChange={(open) => !open && setLookthroughRecord(null)}>
         <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{lookthroughRecord?.title ?? lookthroughRecord?.label}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              {lookthroughRecord?.title ?? lookthroughRecord?.label}
+              {!isParticipationLookthrough && (
+                <LegsCsvButton legs={lookthroughLegs} filename={lookthroughRecord?.title ?? lookthroughRecord?.label ?? "legs"} />
+              )}
+            </DialogTitle>
           </DialogHeader>
           {isParticipationLookthrough ? (
             loadingMissedWeeks ? (
@@ -2124,6 +2233,27 @@ export default function LeagueDetail() {
       />
 
       {/* Lock confirmation dialog — shown when not all bets are in */}
+      <AlertDialog open={!!illogicalBet} onOpenChange={(open) => !open && setIllogicalBet(null)}>
+        <AlertDialogContent data-testid="dialog-illogical-bet">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{illogicalBet?.title}</AlertDialogTitle>
+            <AlertDialogDescription className="whitespace-pre-line">{illogicalBet?.message}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-illogical-cancel">Pick something else</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                illogicalBet?.proceed();
+                setIllogicalBet(null);
+              }}
+              data-testid="button-illogical-add"
+            >
+              Add it anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={!!pendingSwap} onOpenChange={(open) => !open && setPendingSwap(null)}>
         <AlertDialogContent data-testid="dialog-swap-pick">
           <AlertDialogHeader>

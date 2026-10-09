@@ -51,7 +51,7 @@ describe("shared/shameReport", () => {
     expect(lines[0]).toBe("🔔 Week 5 Shame Report 🔔");
     expect(lines[1]).toBe("Parlay Loser: Zed");
     expect(lines).toContain("• Zed: Chiefs -3.5");
-    expect(lines).toContain("• Bo: Josh (Rush O74.5)");
+    expect(lines).toContain("• Bo: Josh (Rush Yds O74.5)");
     expect(lines).toContain("• Cal: Bills/Chiefs O47.5");
     expect(lines).toContain("• Georgie: Bills ML (-346)");
     expect(lines[lines.length - 1]).toBe("…and 2 more pending in the balance");

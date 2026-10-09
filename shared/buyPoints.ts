@@ -11,6 +11,7 @@
  * (computing the live preview as the member steps the line) so both sides
  * agree on the exact same numbers.
  */
+import { spreadLabels } from "./formatPick";
 
 /** Half-point steps, up to 6 points either way — the common single-leg
  * buy-points/teaser cap most books apply. */
@@ -113,14 +114,7 @@ type LineGame = {
  * odds), negative sells them. Moneyline has no line to move and ignores it. */
 export function lineForBet(game: LineGame, betType: string, pick: string, pointsMoved = 0): string | undefined {
   if (betType === "spread") {
-    const rawLine =
-      pick === "home"
-        ? game.spread
-        : game.spread
-          ? game.spread.startsWith("-")
-            ? `+${game.spread.slice(1)}`
-            : `-${game.spread.slice(1)}`
-          : null;
+    const rawLine = spreadLabels(game)[pick === "home" ? "home" : "away"];
     if (!rawLine) return undefined;
     const baseOdds = parseFloat(game.spreadOdds || "-110");
     if (pointsMoved === 0) return `${rawLine} (${game.spreadOdds || "-110"})`;

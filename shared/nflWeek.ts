@@ -22,3 +22,28 @@ export function estimateWeekDateRange(season: number, weekNumber: number): { sta
 
   return { start, end };
 }
+
+/** "Week 4 2026": the week and its season, without the year a week's label may already carry. */
+export function weekYearLabel(week: { label: string; season: number; weekNumber?: number | null }): string {
+  // The week's own name, so a playoff round stays "Wild Card"; the week
+  // number only stands in when the label is nothing but a year.
+  const stripped = week.label.replace(/\b(19|20)\d{2}\b/g, "").replace(/\s+/g, " ").trim();
+  const name = stripped || (week.weekNumber != null ? `Week ${week.weekNumber}` : "Week");
+  return `${name} ${week.season}`;
+}
+
+/**
+ * The second line of a leg row: "Week 4 2026 - Patriots @ Bills - 1:05pm EDT".
+ * `kickoff` is the time already formatted (kickoffTimeLabel).
+ */
+export function legContextLine(
+  week: { label: string; season: number; weekNumber?: number | null } | null | undefined,
+  game: { awayTeam?: string | null; homeTeam?: string | null } | null | undefined,
+  kickoff: string | null,
+): string {
+  return [
+    week ? weekYearLabel(week) : null,
+    game?.awayTeam && game?.homeTeam ? `${game.awayTeam} @ ${game.homeTeam}` : null,
+    kickoff,
+  ].filter(Boolean).join(" - ");
+}

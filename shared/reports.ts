@@ -9,7 +9,7 @@
 import type { Dataset, DatasetValue } from "./dataExport";
 import { standingsText } from "./standingsExport";
 
-export const REPORT_IDS = ["standings_season", "standings_all_time", "loser_report", "allocation"] as const;
+export const REPORT_IDS = ["standings_season", "standings_all_time", "loser_report", "allocation", "disputes", "suss"] as const;
 export type ReportId = (typeof REPORT_IDS)[number];
 
 export function isReportId(value: unknown): value is ReportId {
@@ -21,10 +21,12 @@ export type ReportCatalogEntry = { id: ReportId; title: string; description: str
 /** The reports on offer. `loserLabel` is the league's word ("Asshole", "Jerry", …). */
 export function reportCatalog(loserLabel: string): ReportCatalogEntry[] {
   return [
-    { id: "standings_season", title: "League Standings · Current Year", description: "Every member's record, win rate and power score this season." },
+    { id: "standings_season", title: "League Standings · Current Year", description: "Every member's record and win rate this season." },
     { id: "standings_all_time", title: "League Standings · All Time", description: "The same standings across every season on record." },
     { id: "loser_report", title: `${loserLabel} Report`, description: `Who was the ${loserLabel} each week this season, and the bet that did it.` },
     { id: "allocation", title: "Allocation Report", description: "How the league's bets break out by bet type, and how each type has done." },
+    { id: "disputes", title: "Disputes Report", description: "Every dispute raised: the bet, the week it touched, and how it was ruled." },
+    { id: "suss", title: "The Suss Report", description: "How suss the league finds each pick in the open parlay." },
   ];
 }
 
@@ -51,9 +53,9 @@ export type StandingsInput = {
   losses: number;
   pushes: number;
   winRate: number;
-  powerScore: number;
-  participationRate: number;
-  bar: number;
+  powerScore?: number;
+  participationRate?: number;
+  bar?: number;
 };
 
 /** Best win rate first; more wins breaks a tie. */
@@ -86,9 +88,6 @@ export function buildStandingsReport(input: {
         { key: "losses", label: "Losses", type: "number", description: "Bets lost." },
         { key: "pushes", label: "Pushes", type: "number", description: "Bets that pushed (tied the line). Not counted in win rate." },
         { key: "win_rate_pct", label: "Win %", type: "number", description: "Wins as a percentage of wins plus losses." },
-        { key: "participation_pct", label: "Participation %", type: "number", description: "Share of eligible weeks the member had a bet in." },
-        { key: "power_score", label: "Power Score", type: "number", description: "Average of each decided bet's win value weighted by its odds: longer odds won count for more." },
-        { key: "bar", label: "BAR", type: "number", description: "Bets Above Replacement: power score times participation, minus the league average of the same." },
       ],
       rows: ranked.map((r, i) => ({
         rank: i + 1,
@@ -97,9 +96,6 @@ export function buildStandingsReport(input: {
         losses: r.losses,
         pushes: r.pushes ?? 0,
         win_rate_pct: Number(r.winRate.toFixed(1)),
-        participation_pct: Math.round((r.participationRate ?? 0) * 100),
-        power_score: Number((r.powerScore ?? 0).toFixed(2)),
-        bar: Number((r.bar ?? 0).toFixed(2)),
       })),
     },
     chart: {
@@ -175,7 +171,7 @@ export function buildLoserReport(input: {
     text: [
       `${emoji} ${title} ${emoji}`,
       ...weeks.map((w) =>
-        w.loserName ? `Wk ${w.weekNumber}: ${w.loserName}${w.pick ? ` (${w.pick})` : ""}` : `Wk ${w.weekNumber}: nobody (${outcomeNote(w.parlayStatus)})`),
+        w.loserName ? `Wk ${w.weekNumber}: ${w.loserName}${w.pick ? ` - ${w.pick}` : ""}` : `Wk ${w.weekNumber}: nobody (${outcomeNote(w.parlayStatus)})`),
       ...(ranked.length > 0 ? ["", `Tally: ${ranked.map(([name, n]) => `${name} ${n}`).join(", ")}`] : []),
     ].join("\n"),
   };
@@ -267,5 +263,151 @@ export function buildAllocationReport(input: {
         `${r.label}: ${r.bets} (${Math.round(r.sharePct)}%) · ${r.wins}-${r.losses}` +
         (r.winRatePct == null ? "" : ` (${Math.round(r.winRatePct)}%)`)),
     ].join("\n"),
+  };
+}
+
+export type DisputeInput = {
+  id: number;
+  raisedAt: Date | string;
+  raisedBy: string;
+  /** Whose bet it was. */
+  betOwner: string;
+  /** The bet in its short text form. */
+  bet: string;
+  season: number | null;
+  weekNumber: number | null;
+  weekLabel: string | null;
+  /** 'result_wrong' | 'entered_incorrectly' */
+  reasonType: string;
+  justification: string;
+  /** 'open' | 'resolved' | 'dismissed' */
+  status: string;
+  resolvedBy: string | null;
+  resolvedAt: Date | string | null;
+  notes: string | null;
+};
+
+const DISPUTE_REASONS: Record<string, string> = {
+  result_wrong: "Result is wrong",
+  entered_incorrectly: "Bet entered incorrectly",
+};
+/** How a dispute was ruled, in the words the report uses. */
+export function disputeRuling(status: string): string {
+  return status === "resolved" ? "Upheld" : status === "dismissed" ? "Dismissed" : "Open";
+}
+
+export function buildDisputesReport(input: { leagueName: string; disputes: DisputeInput[]; now?: Date }): Report {
+  const disputes = [...input.disputes].sort((a, b) => new Date(b.raisedAt).getTime() - new Date(a.raisedAt).getTime());
+  const count = (ruling: string) => disputes.filter((d) => disputeRuling(d.status) === ruling).length;
+  const rulings = ["Upheld", "Dismissed", "Open"].map((r) => ({ ruling: r, n: count(r) }));
+  const title = `${input.leagueName} · Disputes Report`;
+  const iso = (t: Date | string | null) => (t ? new Date(t).toISOString() : null);
+  const week = (d: DisputeInput) => (d.weekNumber != null ? `Wk ${d.weekNumber}${d.season ? ` ${d.season}` : ""}` : d.weekLabel ?? "Week unknown");
+
+  return {
+    id: "disputes",
+    dataset: {
+      name: "disputes",
+      title,
+      description: "One row per dispute raised in the league, newest first. A member disputes one of their own bets; the ruling is Upheld (the bet was corrected), Dismissed (no change) or Open (not ruled on yet).",
+      generatedAt: (input.now ?? new Date()).toISOString(),
+      scope: { league: input.leagueName, total_disputes: disputes.length },
+      columns: [
+        { key: "dispute_id", label: "Dispute ID", type: "number", description: "The dispute's id." },
+        { key: "raised_at", label: "Raised At", type: "datetime", description: "When the dispute was filed." },
+        { key: "raised_by", label: "Raised By", type: "string", description: "The member who filed it." },
+        { key: "season", label: "Season", type: "number", description: "NFL season of the game week the bet was in." },
+        { key: "week", label: "Week", type: "number", description: "NFL week number the bet was in." },
+        { key: "bet_owner", label: "Bet Owner", type: "string", description: "The member whose bet was disputed." },
+        { key: "bet", label: "Bet", type: "string", description: "The disputed bet." },
+        { key: "reason", label: "Reason", type: "string", description: "What the dispute was about: the result is wrong, or the bet was entered incorrectly." },
+        { key: "details", label: "Details", type: "string", description: "The member's own explanation." },
+        { key: "ruling", label: "Ruling", type: "string", description: "Upheld, Dismissed or Open." },
+        { key: "ruled_by", label: "Ruled By", type: "string", description: "Who made the ruling." },
+        { key: "ruled_at", label: "Ruled At", type: "datetime", description: "When the ruling was made." },
+        { key: "ruling_notes", label: "Ruling Notes", type: "string", description: "The note left with the ruling." },
+      ],
+      rows: disputes.map((d): Record<string, DatasetValue> => ({
+        dispute_id: d.id,
+        raised_at: iso(d.raisedAt),
+        raised_by: d.raisedBy,
+        season: d.season,
+        week: d.weekNumber,
+        bet_owner: d.betOwner,
+        bet: d.bet,
+        reason: DISPUTE_REASONS[d.reasonType] ?? d.reasonType,
+        details: d.justification,
+        ruling: disputeRuling(d.status),
+        ruled_by: d.resolvedBy,
+        ruled_at: iso(d.resolvedAt),
+        ruling_notes: d.notes,
+      })),
+    },
+    chart: {
+      title: "Disputes by ruling",
+      max: Math.max(1, ...rulings.map((r) => r.n)),
+      bars: rulings.map((r) => ({ label: r.ruling, value: r.n, display: String(r.n) })),
+    },
+    text: [
+      `⚖️ ${title}`,
+      disputes.length === 0
+        ? "No disputes on record."
+        : `${disputes.length} raised: ${rulings.map((r) => `${r.n} ${r.ruling.toLowerCase()}`).join(", ")}`,
+      ...disputes.map((d) =>
+        `${week(d)}: ${d.betOwner} - ${d.bet} · ${DISPUTE_REASONS[d.reasonType] ?? d.reasonType} · ${disputeRuling(d.status)}` +
+        (d.notes?.trim() ? ` - ${d.notes.trim()}` : "")),
+    ].join("\n"),
+  };
+}
+
+export type SussInput = {
+  parlayId: number;
+  weekLabel: string;
+  legs: { owner: string; bet: string; votes: number; voters: number }[];
+};
+
+/** Open parlays only: each pick and the share of the league that finds it suss. */
+export function buildSussReport(input: { leagueName: string; parlays: SussInput[]; now?: Date }): Report {
+  const rows = input.parlays.flatMap((p) =>
+    p.legs.map((l) => ({ ...l, parlayId: p.parlayId, weekLabel: p.weekLabel, pct: l.voters > 0 ? Math.round((l.votes / l.voters) * 100) : 0 })),
+  ).sort((a, b) => b.pct - a.pct || a.owner.localeCompare(b.owner));
+  const title = `${input.leagueName} · The Suss Report`;
+  return {
+    id: "suss",
+    dataset: {
+      name: "suss_report",
+      title,
+      description: "One row per pick in an open parlay, most suss first. Suss % is the share of the other league members who down-voted the pick. Votes are anonymous: only the count is kept in this report.",
+      generatedAt: (input.now ?? new Date()).toISOString(),
+      scope: { league: input.leagueName, open_parlays: input.parlays.length },
+      columns: [
+        { key: "week", label: "Week", type: "string", description: "The week the open parlay is for." },
+        { key: "parlay_id", label: "Parlay ID", type: "number", description: "The open parlay the pick is in." },
+        { key: "member", label: "Member", type: "string", description: "Whose pick it is." },
+        { key: "bet", label: "Bet", type: "string", description: "The pick." },
+        { key: "down_votes", label: "Down Votes", type: "number", description: "How many members down-voted it." },
+        { key: "possible_votes", label: "Possible Votes", type: "number", description: "League members other than the pick's owner, who can't vote on their own pick." },
+        { key: "suss_pct", label: "Suss %", type: "number", description: "Down votes as a percentage of possible votes." },
+      ],
+      rows: rows.map((r) => ({
+        week: r.weekLabel,
+        parlay_id: r.parlayId,
+        member: r.owner,
+        bet: r.bet,
+        down_votes: r.votes,
+        possible_votes: r.voters,
+        suss_pct: r.pct,
+      })),
+    },
+    chart: {
+      title: "Suss %",
+      max: 100,
+      bars: rows.map((r) => ({ label: `${r.owner} - ${r.bet}`, value: r.pct, display: `${r.pct}%` })),
+    },
+    text: [
+      `🌡️ ${title}`,
+      rows.length === 0 ? "No picks in an open parlay right now." : null,
+      ...rows.map((r) => `${r.owner} - ${r.bet}: ${r.pct}% suss`),
+    ].filter((l): l is string => l != null).join("\n"),
   };
 }

@@ -51,3 +51,35 @@ export function groupGamesBySlate<T extends { gameTime?: Date | string | null }>
   }
   return [...groups.values()];
 }
+
+/**
+ * A parlay's legs split by the slate their game kicks off in, earliest slate
+ * first. Legs keep the order they arrive in inside each group. Legs with no
+ * kickoff time go last, under "Other".
+ */
+export function groupLegsBySlate<L extends { game?: { gameTime?: Date | string | null } | null }>(legs: L[]): { key: string; label: string; legs: L[] }[] {
+  const groups = new Map<string, { key: string; label: string; legs: L[]; first: number }>();
+  for (const leg of legs) {
+    const gameTime = leg.game?.gameTime;
+    let key = "other";
+    let label = "Other";
+    let first = Infinity;
+    if (gameTime) {
+      const kickoff = new Date(gameTime);
+      const day = kickoff.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+      const weekday = kickoff.toLocaleDateString("en-US", { timeZone: "America/New_York", weekday: "long" });
+      const slate = getSlate(kickoff);
+      key = `${day}|${slate}`;
+      label = `${weekday} ${slate}`;
+      first = kickoff.getTime();
+    }
+    const group = groups.get(key);
+    if (group) {
+      group.legs.push(leg);
+      group.first = Math.min(group.first, first);
+    } else {
+      groups.set(key, { key, label, legs: [leg], first });
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.first - b.first).map(({ first: _first, ...group }) => group);
+}

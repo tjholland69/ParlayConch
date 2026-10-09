@@ -5,7 +5,9 @@ import {
   Pressable,
   ActivityIndicator,
   Alert,
+  Share,
   StyleSheet,
+  TextInput,
 } from "react-native";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
@@ -37,28 +39,17 @@ import {
   getLineForBet,
   shortLegLabel,
   takenMarketsByGame,
-  correlatedMarketWarning,
   type SelectedLeg,
   isGamePast,
 } from "@/lib/pickHelpers";
 import type { Game, GameWithBet, MemberWeekParlay } from "@shared/schema";
 import { pickStanding } from "@shared/weekParlays";
 import { BoostSheet } from "@/components/BoostSheet";
-
-/** Moneyline + Spread on the same game are highly correlated (the spread
- * pick's side usually implies the moneyline outcome too) — confirm before
- * adding one when the other is already someone else's pick on that game. */
-function confirmCorrelatedBet(conflictWithName: string, newBetType: string, onConfirm: () => void) {
-  const otherLabel = newBetType === "moneyline" ? "Spread" : "Moneyline";
-  Alert.alert(
-    "Correlated bet",
-    `${conflictWithName} already has the ${otherLabel} on this game. Taking both Moneyline and Spread on the same game is often a redundant bet — add it anyway?`,
-    [
-      { text: "Cancel", style: "cancel" },
-      { text: "Add anyway", onPress: onConfirm },
-    ],
-  );
-}
+import { SussMeter, SussVoteButton } from "@/components/SussMeter";
+import { useSendReminder, useSuss, useSussVote } from "@/hooks/use-parlay-extras";
+import { findIllogicalBets, illogicalBetWarning, type IllogicalBet } from "@shared/illogicalBets";
+import { gameMatchesTeamQuery } from "@shared/nflTeams";
+import { SUSS_FULL_PROMPT, sussLevel } from "@shared/suss";
 
 type ParlayLegRow = MemberWeekParlay["legs"][number];
 
@@ -114,6 +105,14 @@ export default function BuildPickScreen() {
   const submitDraftParlay = useSubmitDraftParlay(leagueId, weekId);
   const cancelParlay = useCancelParlay(leagueId, weekId);
   const [propGame, setPropGame] = useState<Game | null>(null);
+  // The any-player prop entry at the top: no game chosen up front.
+  const [anyPlayerPropOpen, setAnyPlayerPropOpen] = useState(false);
+  // Narrows the game tiles to a team, by name or city.
+  const [teamQuery, setTeamQuery] = useState("");
+  // The Suss Meter: anonymous down votes on the open parlay's picks.
+  const { data: suss } = useSuss(readOnly ? undefined : leagueId, weekId, !readOnly && weekId > 0);
+  const sussVote = useSussVote(leagueId);
+  const sendReminder = useSendReminder(leagueId, weekId);
   const [boostPromptOpen, setBoostPromptOpen] = useState(false);
   const [slipExpanded, setSlipExpanded] = useState(false);
   // In a league that runs more than one parlay a week: the member chose to
@@ -228,15 +227,34 @@ export default function BuildPickScreen() {
     );
   }
 
+  /** Saves `leg`, first warning when it's an Illogical Bet with a pick
+   * already in the parlay (shared/illogicalBets.ts). It's allowed either way. */
+  function chooseWithIllogicalCheck(leg: SelectedLeg, bet: IllogicalBet) {
+    const found = findIllogicalBets(bet, parlay?.taken, gamesById.get(leg.gameId));
+    if (found.length === 0) {
+      choosePick(leg);
+      return;
+    }
+    const warning = illogicalBetWarning(found.map((f) => ({ reason: f.reason, who: f.bet.takenBy.mobile })));
+    Alert.alert(warning.title, warning.message, [
+      { text: "Pick something else", style: "cancel" },
+      { text: "Add it anyway", onPress: () => choosePick(leg) },
+    ]);
+  }
+
   function onSelectMarket(game: Game, betType: string, pick: string) {
     if (!canPick) return;
     const leg: SelectedLeg = { gameId: game.id, betType, pick, line: getLineForBet(game, betType, pick) };
-    const conflictWith = correlatedMarketWarning(parlay?.taken, game.id, betType);
-    if (conflictWith) {
-      confirmCorrelatedBet(conflictWith, betType, () => choosePick(leg));
-      return;
-    }
-    choosePick(leg);
+    chooseWithIllogicalCheck(leg, { gameId: game.id, betType, pick });
+  }
+
+  // Nudges whoever hasn't picked, then opens the share sheet with the
+  // reminder text for the group chat.
+  function sendReminderBlast() {
+    sendReminder.mutate(undefined, {
+      onSuccess: ({ text }) => void Share.share({ message: text }).catch(() => undefined),
+      onError: (err: Error) => Alert.alert("Couldn't send the reminder", err.message || "Please try again."),
+    });
   }
 
   // Alternate line: re-prices the pick at a new points-moved value without
@@ -256,6 +274,10 @@ export default function BuildPickScreen() {
       }),
     [games, myPick, parlay?.legs],
   );
+  // The team search narrows the tiles; with nothing typed it's every game.
+  const shownGames = useMemo(() => visibleGames.filter((g) => gameMatchesTeamQuery(g, teamQuery)), [visibleGames, teamQuery]);
+  // Games a prop can still go on, for the any-player entry.
+  const openGames = useMemo(() => (games ?? []).filter((g) => !isGamePast(g)), [games]);
 
   // Who can submit: whoever started the parlay, the Parlay Maestro and
   // lieutenants. The server has the final say (lieutenants need the
@@ -337,11 +359,14 @@ export default function BuildPickScreen() {
           userId: m.userId as string,
           name: m.userId === effectiveUserId ? "You" : legOwnerName(m.user, "Member"),
           leg,
+          // The saved leg's id, for its Suss Meter. Not while a new pick is still saving.
+          legId: saved && !(isPicker && pending) ? saved.id : null,
+          isOwn: m.userId === effectiveUserId,
           awaitingApproval: saved?.approvalStatus === "pending",
         };
       })
       .sort((a, b) => Number(!!a.leg) - Number(!!b.leg) || a.name.localeCompare(b.name));
-  }, [members, parlay?.legs, pickerId, myPick, effectiveUserId]);
+  }, [members, parlay?.legs, pickerId, myPick, effectiveUserId, pending]);
 
   // Picks made on a member's behalf that the member hasn't answered yet.
   const pendingApprovals = (parlay?.legs ?? []).filter((l) => l.approvalStatus === "pending");
@@ -422,11 +447,54 @@ export default function BuildPickScreen() {
       )}
 
       <FlatList
-        data={visibleGames}
+        data={shownGames}
         keyExtractor={(g) => String(g.id)}
         contentContainerStyle={styles.listContent}
+        keyboardShouldPersistTaps="handled"
         ListHeaderComponent={readOnly ? null : (
           <View>
+            {/* Find a team's game by name or city, or go straight to a
+                prop on any player. */}
+            <View style={styles.searchRow}>
+              <Ionicons name="search" size={16} color="#64748b" />
+              <TextInput
+                style={styles.searchInput}
+                value={teamQuery}
+                onChangeText={setTeamQuery}
+                placeholder="Search a team or city"
+                placeholderTextColor="#64748b"
+                autoCapitalize="words"
+                autoCorrect={false}
+                returnKeyType="search"
+                clearButtonMode="while-editing"
+                accessibilityLabel="Search games by team name or city"
+                testID="input-team-search"
+              />
+            </View>
+            {canPick && (
+              <Pressable
+                onPress={() => setAnyPlayerPropOpen(true)}
+                style={({ pressed }) => [styles.onBehalfBtn, pressed && { opacity: 0.7 }]}
+                accessibilityRole="button"
+                testID="button-any-player-prop"
+              >
+                <Ionicons name="person-add-outline" size={16} color="#93c5fd" />
+                <Text style={styles.onBehalfBtnText}>Player prop: search any player</Text>
+              </Pressable>
+            )}
+            {canPick && !!parlay && (
+              <Pressable
+                onPress={sendReminderBlast}
+                disabled={sendReminder.isPending}
+                style={({ pressed }) => [styles.onBehalfBtn, pressed && { opacity: 0.7 }]}
+                accessibilityRole="button"
+                accessibilityLabel="Send a reminder to everyone who hasn't picked"
+                testID="button-send-reminder"
+              >
+                {sendReminder.isPending ? <ActivityIndicator size="small" color="#93c5fd" /> : <Ionicons name="megaphone-outline" size={16} color="#93c5fd" />}
+                <Text style={styles.onBehalfBtnText}>Send reminder</Text>
+              </Pressable>
+            )}
             {/* On Behalf Of mode: only for members who can pick for someone. */}
             {onBehalfTarget ? (
               <View style={styles.onBehalfBanner} testID="banner-on-behalf-mode">
@@ -503,24 +571,47 @@ export default function BuildPickScreen() {
                 <Text style={styles.summaryTitle}>
                   Picks so far · {pickSummary.filter((r) => r.leg).length} of {pickSummary.length} in
                 </Text>
-                {pickSummary.map((row) => (
-                  <View key={row.userId} style={[styles.summaryRow, !row.leg && styles.summaryRowOpen]}>
-                    <Text style={[styles.summaryName, !row.leg && styles.summaryNameOpen]} numberOfLines={1}>{row.name}</Text>
-                    <Text style={[styles.summaryPick, !row.leg && styles.summaryPickOpen]} numberOfLines={1}>
-                      {row.leg
-                        ? `${shortLegLabel(row.leg, gamesById.get(row.leg.gameId))}${row.awaitingApproval ? " · awaiting approval" : ""}`
-                        : "Pick is open"}
-                    </Text>
-                  </View>
-                ))}
+                {pickSummary.map((row) => {
+                  const tally = row.legId != null ? suss?.[row.legId] : undefined;
+                  return (
+                    <View key={row.userId} style={[styles.summaryRow, !row.leg && styles.summaryRowOpen]}>
+                      <Text style={[styles.summaryName, !row.leg && styles.summaryNameOpen]} numberOfLines={1}>{row.name}</Text>
+                      <Text style={[styles.summaryPick, !row.leg && styles.summaryPickOpen]} numberOfLines={1}>
+                        {row.leg
+                          ? `${shortLegLabel(row.leg, gamesById.get(row.leg.gameId))}${row.awaitingApproval ? " · awaiting approval" : ""}`
+                          : "Pick is open"}
+                      </Text>
+                      <SussMeter tally={tally} />
+                      {/* Anonymous down vote. Nobody votes on their own pick. */}
+                      {row.legId != null && !row.isOwn && standing.open && (
+                        <SussVoteButton
+                          legId={row.legId}
+                          tally={tally}
+                          disabled={sussVote.isPending}
+                          onVote={(vote) =>
+                            sussVote.mutate(
+                              { legId: row.legId!, vote },
+                              { onError: (err: Error) => Alert.alert("Couldn't save your vote", err.message || "Please try again.") },
+                            )
+                          }
+                        />
+                      )}
+                    </View>
+                  );
+                })}
+                {savedLeg && sussLevel(suss?.[savedLeg.id]) === 3 && (
+                  <Text style={styles.sussPrompt} testID="text-suss-full">🌡️ {SUSS_FULL_PROMPT}</Text>
+                )}
               </View>
             )}
           </View>
         )}
         ListEmptyComponent={
           <View style={styles.emptyBlock}>
-            <Text style={styles.emptyTitle}>No games this week</Text>
-            <Text style={styles.emptySubtitle}>Games will show up once the slate is posted.</Text>
+            <Text style={styles.emptyTitle}>{teamQuery.trim() ? `No games match "${teamQuery.trim()}"` : "No games this week"}</Text>
+            <Text style={styles.emptySubtitle}>
+              {teamQuery.trim() ? "Try the team's name or its city." : "Games will show up once the slate is posted."}
+            </Text>
           </View>
         }
         renderItem={({ item }: { item: GameWithBet }) => {
@@ -650,8 +741,12 @@ export default function BuildPickScreen() {
 
       <AddPlayerPropModal
         game={propGame}
-        onClose={() => setPropGame(null)}
-        onAdd={(leg) => choosePick(leg)}
+        anyPlayerGames={anyPlayerPropOpen ? openGames : null}
+        onClose={() => {
+          setPropGame(null);
+          setAnyPlayerPropOpen(false);
+        }}
+        onAdd={({ playerTeam, ...leg }) => chooseWithIllogicalCheck(leg, { ...leg, playerTeam })}
       />
 
       <BoostSheet
@@ -669,6 +764,20 @@ export default function BuildPickScreen() {
 
 const styles = StyleSheet.create({
   startedWarning: { fontSize: 12, color: "#fbbf24", fontWeight: "600", marginBottom: 8 },
+  searchRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2a3447",
+    backgroundColor: "#1c2538",
+    marginBottom: 10,
+  },
+  searchInput: { flex: 1, fontSize: 15, color: "#f1f5f9", paddingVertical: 10 },
+  sussPrompt: { fontSize: 12, fontWeight: "600", color: "#fca5a5", marginTop: 8 },
   container: { flex: 1, backgroundColor: "#141926" },
   centered: {
     flex: 1,

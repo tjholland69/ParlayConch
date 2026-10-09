@@ -115,9 +115,11 @@ export function buildMcpServer(userId: string): McpServer {
       title: "Get a league report",
       description: [
         "One report for a league, as rows plus a description of every column.",
-        "standings_season / standings_all_time: each member's record, win rate, participation, power score and BAR.",
+        "standings_season / standings_all_time: each member's record and win rate.",
         "loser_report: for each parlay this season, who busted it and with which bet.",
         "allocation: how the league's bets split across bet types, and each type's record.",
+        "disputes: every dispute raised, the bet and game week it touched, and the ruling.",
+        "suss: each pick in the open parlay and the share of the league that down-voted it (votes are anonymous).",
       ].join(" "),
       inputSchema: {
         league_id: z.number().int().describe("From list_leagues."),

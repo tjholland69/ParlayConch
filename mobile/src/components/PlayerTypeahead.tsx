@@ -17,12 +17,20 @@ export function PlayerTypeahead({
   gameId,
   value,
   onChange,
+  onFocusChange,
 }: {
-  gameId: number;
+  /** Leave out to search every team instead of one game's two. */
+  gameId?: number;
   value: string;
   onChange: (name: string, player: Player | null) => void;
+  /** Lets the sheet around it make room for the results while searching. */
+  onFocusChange?: (focused: boolean) => void;
 }) {
-  const [focused, setFocused] = useState(false);
+  const [focused, setFocusedState] = useState(false);
+  const setFocused = (next: boolean) => {
+    setFocusedState(next);
+    onFocusChange?.(next);
+  };
   const accent = useAccentColor();
   const { data: results = [], isLoading } = useGamePlayerSearch(gameId, value, focused);
 
@@ -34,7 +42,7 @@ export function PlayerTypeahead({
         onChangeText={(text) => onChange(text, null)}
         onFocus={() => setFocused(true)}
         onBlur={() => setTimeout(() => setFocused(false), 150)}
-        placeholder="Search players in this game"
+        placeholder={gameId ? "Search players in this game" : "Search any player"}
         placeholderTextColor="#64748b"
         autoCapitalize="words"
         autoCorrect={false}
@@ -46,7 +54,9 @@ export function PlayerTypeahead({
             <ActivityIndicator size="small" color={accent} style={styles.loading} />
           ) : results.length === 0 ? (
             <Text style={styles.empty}>
-              {value.trim() ? `No one on either team matches "${value.trim()}" — it'll be used as typed.` : "No players found for this game."}
+              {!gameId
+                ? value.trim().length >= 2 ? `No player matches "${value.trim()}".` : "Type a player's name."
+                : value.trim() ? `No one on either team matches "${value.trim()}" — it'll be used as typed.` : "No players found for this game."}
             </Text>
           ) : (
             results.map((p) => (
@@ -90,7 +100,8 @@ const styles = StyleSheet.create({
     backgroundColor: "#1c2538",
     borderWidth: 1,
     borderColor: "#2a3447",
-    maxHeight: 220,
+    // Short enough that the whole list stays above the keyboard.
+    maxHeight: 200,
   },
   loading: { paddingVertical: 12 },
   empty: { fontSize: 13, color: "#64748b", padding: 12, fontStyle: "italic" },

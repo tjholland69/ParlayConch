@@ -24,9 +24,18 @@ export type MultiBetValidation = {
   valid: boolean;
 };
 
-/** Scoring props are a yes/no call with no number; every other prop is an
+/** Scoring props ("will he score") have no number; every other prop is an
  * over/under on a line. */
 export const YES_NO_PROP_TYPES = new Set(["anytime_td", "first_td", "last_td"]);
+
+/**
+ * The sides a prop can be bet. A touchdown-scorer prop is only ever "yes":
+ * nobody bets that a player won't score. Everything else is over/under.
+ * (Old "no" picks still read and grade; they just can't be entered.)
+ */
+export function propPickOptions(propType: string | null | undefined): readonly string[] {
+  return propType && YES_NO_PROP_TYPES.has(propType) ? ["yes"] : ["over", "under"];
+}
 
 const GAME_BET_TYPES = new Set(["spread", "moneyline", "over", "under"]);
 const AMERICAN_ODDS = /^[+-]?\d{3,}$/;
@@ -63,7 +72,8 @@ function validateRow(leg: MultiBetLegInput): string[] {
     if (!leg.propType) {
       errors.push("Choose the stat for this prop");
     } else if (YES_NO_PROP_TYPES.has(leg.propType)) {
-      if (leg.pick !== "yes" && leg.pick !== "no") errors.push("Pick Yes or No");
+      if (leg.pick === "no") errors.push("A touchdown prop can only be bet Yes");
+      else if (leg.pick !== "yes") errors.push("Pick Yes");
     } else {
       if (leg.pick !== "over" && leg.pick !== "under") errors.push("Pick Over or Under");
       if (!isNumeric(leg.line)) errors.push("Enter the prop line (e.g. 74.5)");

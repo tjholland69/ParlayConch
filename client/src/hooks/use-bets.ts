@@ -99,14 +99,17 @@ export function usePlayerSearch(query: string) {
 
 /** usePlayerSearch limited to the two teams playing `gameId` — the
  * player-prop picker, where only someone in that game can be picked. */
-export function useGamePlayerSearch(gameId: number, query: string) {
+export function useGamePlayerSearch(gameId: number | undefined, query: string) {
   return useQuery<Player[]>({
-    queryKey: ["/api/players", query, { gameId }],
+    queryKey: ["/api/players", query, { gameId: gameId ?? null }],
+    // No game: the search covers every team (the any-player prop entry),
+    // and waits for something to be typed.
     queryFn: async () => {
-      const res = await fetch(`/api/players?q=${encodeURIComponent(query)}&gameId=${gameId}`, { credentials: "include" });
+      const res = await fetch(`/api/players?q=${encodeURIComponent(query)}${gameId ? `&gameId=${gameId}` : ""}`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch players");
       return res.json();
     },
+    enabled: !!gameId || query.trim().length >= 2,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
   });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { YES_NO_PROP_TYPES } from "./multiBetValidation";
 import { HERO_LABELS, LOSER_LABELS } from "./leagueLabels";
 
 /** A sportsbook promo boost on a parlay's odds, in percent (25 = 25%).
@@ -39,7 +40,11 @@ export const draftParlayLegInputSchema = z.object({
   startNew: z.boolean().optional(),
   // "On Behalf Of": the member this pick is for, when it isn't the caller.
   onBehalfOfUserId: z.string().min(1).optional(),
-});
+}).refine(
+  // A touchdown-scorer prop is only ever bet "yes" (see propPickOptions).
+  (leg) => !(leg.betType === "player_prop" && leg.pick === "no" && !!leg.propType && YES_NO_PROP_TYPES.has(leg.propType)),
+  { message: "A touchdown prop can only be bet Yes.", path: ["pick"] },
+);
 
 export type DraftParlayLegInput = z.infer<typeof draftParlayLegInputSchema>;
 

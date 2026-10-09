@@ -8,7 +8,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Check, ChevronDown, Loader2, Minus, Plus, Search } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { PLAYER_PROP_TYPES, type Game, type Player } from "@shared/schema";
+import { PLAYER_PROP_TYPES, type Game, type Player, type TakenPick } from "@shared/schema";
+import { propPickOptions } from "@shared/multiBetValidation";
+import { findIllogicalBets, illogicalBetWarning } from "@shared/illogicalBets";
+import { NFLVERSE_ABBREV_TO_SHORT } from "@shared/nflTeams";
 import { useAddDraftLeg, useGamePlayerSearch } from "@/hooks/use-bets";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { primaryPropType, propTypesForPosition } from "@/lib/propPosition";
@@ -29,7 +32,8 @@ function GamePlayerPicker({
   value,
   onSelect,
 }: {
-  gameId: number;
+  /** Leave out to search every team instead of one game's two. */
+  gameId?: number;
   value: string;
   onSelect: (name: string, player: Player | null) => void;
 }) {
@@ -50,7 +54,7 @@ function GamePlayerPicker({
         >
           <span className="flex min-w-0 items-center gap-2">
             <Search className="w-3.5 h-3.5 opacity-50 shrink-0" />
-            <span className={cn("truncate", !value && "text-muted-foreground")}>{value || "Search players in this game"}</span>
+            <span className={cn("truncate", !value && "text-muted-foreground")}>{value || (gameId ? "Search players in this game" : "Search any player")}</span>
           </span>
           <ChevronDown className="w-4 h-4 opacity-50 shrink-0" />
         </Button>
@@ -65,7 +69,7 @@ function GamePlayerPicker({
               </div>
             ) : (
               <>
-                <CommandEmpty>No players on either team match.</CommandEmpty>
+                <CommandEmpty>{gameId ? "No players on either team match." : typed.length >= 2 ? "No player matches." : "Type a player's name."}</CommandEmpty>
                 <CommandGroup>
                   {(players ?? []).map(p => {
                     const name = p.displayName || p.name;
@@ -81,7 +85,7 @@ function GamePlayerPicker({
                       </CommandItem>
                     );
                   })}
-                  {typed && !exactMatch && (
+                  {gameId && typed && !exactMatch && (
                     <CommandItem value="__typed__" onSelect={() => { onSelect(typed, null); setOpen(false); }}>
                       <Plus className="w-4 h-4" />
                       <span className="truncate">Use "{typed}"</span>
@@ -105,15 +109,23 @@ function GamePlayerPicker({
  * tile) so the user isn't re-selecting the game.
  */
 export function AddPropLegDialog({
-  game,
+  game: gameProp,
+  anyPlayerGames,
   leagueId,
   weekId,
   open,
   onOpenChange,
   startNew,
   onBehalfOf,
+  taken,
 }: {
-  game: Game;
+  /** The game the prop is on, or null for the any-player entry. */
+  game: Game | null;
+  /** With no `game`: the games still open for picks. The search covers
+   * every team, and the game is whichever one the chosen player is in. */
+  anyPlayerGames?: Game[];
+  /** The picks other members already have in the parlay, to spot an Illogical Bet. */
+  taken?: TakenPick[];
   leagueId: number;
   weekId: number;
   /** The pick starts another parlay rather than joining the open one. */
@@ -127,16 +139,19 @@ export function AddPropLegDialog({
   // Drives which prop types are offered: a receiver can't be given a sack
   // or interception prop. Null (a typed-in name) offers everything.
   const [playerPosition, setPlayerPosition] = useState<string | null>(null);
+  const [playerTeam, setPlayerTeam] = useState<string | null>(null);
   const [propType, setPropType] = useState<string>(PLAYER_PROP_TYPES[0].value);
   const [pick, setPick] = useState<string>("over");
   const [line, setLine] = useState<number>(lineRangeFor(PLAYER_PROP_TYPES[0].value).start);
   const addDraftLeg = useAddDraftLeg();
   const effectiveUserId = useEffectiveUserId();
 
+  const game = gameProp ?? (playerTeam ? anyPlayerGames?.find((g) => g.homeTeam === playerTeam || g.awayTeam === playerTeam) ?? null : null);
   const isYesNo = YES_NO_PROPS.has(propType);
   const range = lineRangeFor(propType);
-  const pickOptions = isYesNo ? (["yes", "no"] as const) : (["over", "under"] as const);
-  const canSave = playerName.trim().length > 0;
+  // A touchdown prop is only ever bet Yes (shared/multiBetValidation.ts).
+  const pickOptions = propPickOptions(propType);
+  const canSave = !!game && playerName.trim().length > 0;
   const propOptions = playerPosition ? propTypesForPosition(playerPosition).primary : PLAYER_PROP_TYPES;
 
   const changePropType = (next: string) => {
@@ -148,6 +163,7 @@ export function AddPropLegDialog({
   const selectPlayer = (name: string, player: Player | null) => {
     setPlayerName(name);
     setPlayerPosition(player?.position ?? null);
+    setPlayerTeam(player?.team ? NFLVERSE_ABBREV_TO_SHORT[player.team] ?? player.team : null);
     // Start on the stat this position is usually bet on; this also moves
     // off a prop type the new player's position can't have.
     if (player?.position) changePropType(primaryPropType(player.position));
@@ -156,6 +172,17 @@ export function AddPropLegDialog({
     setLine((l) => Math.min(range.max, Math.max(MIN_LINE, l + delta)));
 
   const handleSave = () => {
+    if (!game) return;
+    // An Illogical Bet (shared/illogicalBets.ts) is allowed, after a warning.
+    const illogical = findIllogicalBets(
+      { gameId: game.id, betType: "player_prop", pick, playerName: playerName.trim(), propType, playerTeam },
+      taken,
+      game,
+    );
+    if (illogical.length > 0) {
+      const warning = illogicalBetWarning(illogical.map((f) => ({ reason: f.reason, who: f.bet.takenBy.web })));
+      if (!window.confirm(`${warning.title}\n\n${warning.message}`)) return;
+    }
     addDraftLeg.mutate(
       {
         leagueId,
@@ -176,6 +203,7 @@ export function AddPropLegDialog({
         onSuccess: () => {
           setPlayerName("");
           setPlayerPosition(null);
+          setPlayerTeam(null);
           setLine(range.start);
           onOpenChange(false);
         },
@@ -188,13 +216,19 @@ export function AddPropLegDialog({
       <DialogContent className="sm:max-w-sm">
         <DialogHeader>
           <DialogTitle>Add Player Prop</DialogTitle>
-          <p className="text-sm text-muted-foreground">{game.awayTeam} @ {game.homeTeam}</p>
+          <p className="text-sm text-muted-foreground" data-testid="text-prop-game">
+            {game
+              ? `${game.awayTeam} @ ${game.homeTeam}`
+              : playerTeam
+                ? `The ${playerTeam} don't have a game open for picks this week.`
+                : "Search any player with a game this week."}
+          </p>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Player</Label>
-            <GamePlayerPicker gameId={game.id} value={playerName} onSelect={selectPlayer} />
+            <GamePlayerPicker gameId={gameProp?.id} value={playerName} onSelect={selectPlayer} />
           </div>
 
           <div className="space-y-1">

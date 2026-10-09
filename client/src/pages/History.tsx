@@ -31,7 +31,7 @@ import { PageLoader } from "@/components/PageLoader";
 import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
 import { flattenParlayLegs } from "@/lib/flattenParlayLegs";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
-import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
+import { LegsCsvButton, LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { CardErrorBoundary } from "@/components/CardErrorBoundary";
 import { ExpandCollapseControls, nextBulkSignal } from "@/components/ExpandCollapseControls";
 import { getSlate } from "@shared/slate";
@@ -299,6 +299,9 @@ export default function History() {
   const [selectedBetTypes, setSelectedBetTypes] = useState<string[]>([]);
   const [historyDateRangeMode, setHistoryDateRangeMode] = useState<DateRangeMode>("all");
   const [historyDateRange, setHistoryDateRange] = useState<HistoryDateRange>({});
+  // Expand All / Collapse All inside the tile drill-down popout.
+  const [tileCollapseSignal, setTileCollapseSignal] = useState(0);
+  const [tileExpandSignal, setTileExpandSignal] = useState(0);
 
   const handleCopySlip = async (parlay: Parameters<typeof buildSlipText>[0]) => {
     try {
@@ -984,8 +987,18 @@ export default function History() {
       <Dialog open={activeTile !== null} onOpenChange={open => !open && setActiveTile(null)}>
         <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{activeTileInfo?.title}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              {activeTileInfo?.title}
+              {activeTileInfo?.kind === "legs" && <LegsCsvButton legs={activeTileInfo.items} filename={activeTileInfo.title} />}
+            </DialogTitle>
           </DialogHeader>
+          {activeTileInfo?.kind === "parlays" && activeTileInfo.items.length > 1 && (
+            <ExpandCollapseControls
+              className="flex items-center justify-end gap-2"
+              onCollapseAll={() => setTileCollapseSignal(nextBulkSignal())}
+              onExpandAll={() => setTileExpandSignal(nextBulkSignal())}
+            />
+          )}
           {activeTileInfo?.kind === "parlays" ? (
             activeTileInfo.items.length === 0 ? (
               <p className="text-sm text-muted-foreground italic py-2">No parlays match this stat.</p>
@@ -998,6 +1011,8 @@ export default function History() {
                     onCopySlip={handleCopySlip}
                     copiedId={copiedId}
                     defaultExpanded
+                    collapseSignal={tileCollapseSignal}
+                    expandSignal={tileExpandSignal}
                     {...cardStyleProps(p)}
                   />
                 ))}
