@@ -1,20 +1,7 @@
 import type { Game } from "@shared/schema";
-import { withPlusSign } from "./formatPick";
+import { awaySpread, spreadLabels } from "@shared/formatPick";
 
-/**
- * The away team's side of the home spread stored on a game: "-3.5" -> "3.5",
- * "+3.5" -> "-3.5". Parses the number rather than editing the string, which
- * used to turn a home underdog's "+3.5" into "++3.5".
- */
-export function awaySpread(homeSpread: string | null | undefined): string {
-  const n = parseFloat(homeSpread ?? "");
-  return Number.isNaN(n) ? "" : String(-n || 0);
-}
-
-/** Both sides of a game's spread as they read on a pick tile: "+3.5" / "-3.5". */
-export function spreadLabels(game: Pick<Game, "spread">): { away: string | null; home: string | null } {
-  return { away: withPlusSign(awaySpread(game.spread)), home: withPlusSign(game.spread) };
-}
+export { awaySpread, spreadLabels };
 
 /** Formats a game's own spread/moneyline/total odds into the combined
  * "line (odds)" string stored on a leg — same convention the live weekly

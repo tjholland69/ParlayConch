@@ -317,6 +317,8 @@ WHERE email = 'admin@example.com';
 
 There is no public API for granting this role.
 
+A super user can set a new password on any account from the Admin page (`POST /api/admin/users/reset-password`). It checks the signed-in user, never an act-for identity, writes an `admin.reset_password` audit event, and emails nothing: the new password is passed on by hand.
+
 ## Parlay lifecycle
 
 1. A member selects a league and NFL week.
@@ -334,13 +336,25 @@ Submitting again for the same user, league, and week replaces the existing parla
 
 **Locking.** Whoever started the week's parlay, the Parlay Maestro, or a lieutenant with the lock permission can lock the week. Locking moves an open parlay to `pending`. Unlocking (the Maestro, or a lieutenant with the unlock permission) reopens a `pending` parlay as a draft so picks can change; one already approved or sent to a sportsbook stays put. Any other member can request an unlock while no game has started and the parlay hasn't gone to a sportsbook.
 
+**Placed.** Only a locked parlay can be copied out to a sportsbook, and any member can do it. The app doesn't count how many members placed it: one member confirming (`POST /api/parlays/:id/confirm-placed`) moves it to `placed`, even before kickoff. A locked parlay whose first game has kicked off is taken as placed on the next results tick. If that's wrong, the Maestro can "Bust & reopen" it (`POST /api/parlays/:id/reopen`): it goes back to a draft and the week unlocks, but a pick on a game that has started can't be changed, removed or re-bet. Web links out to DraftKings, FanDuel, BetMGM and Caesars; mobile deep-links to FanDuel and DraftKings (`shared/sportsbook-providers.ts`). None of them accept a ready-made slip, so the bets are entered by hand from the copied text.
+
 **On Behalf Of.** The Maestro can make a pick for any member. A lieutenant can too when the league turns on the "Pick On Behalf Of Anyone" permission. Anyone else needs the member's own permission, which the member gives on the league's Members tab (`pick_delegations`). The pick belongs to the member (`parlay_legs.user_id`), records who made it (`placed_by_user_id`), and waits on the member's approval (`approval_status`). A parlay with a pick still waiting can't be submitted or locked, unless the Maestro does it, which is recorded as the Maestro's approval. Every step writes an audit event (`pick.on_behalf.*`).
 
 ## Notifications
 
-`shared/notifications.ts` is the catalog of alerts (new parlay open, locked, unlocked, busted, end-of-slate update, a pick made for you, unlock requested). `server/services/notify.ts` sends them: every alert goes to the in-app inbox, and to email for members who switch it on (needs `RESEND_API_KEY`). Members choose their alerts in Settings. Text and push have a switch but no provider yet; `CHANNEL_SENDERS` in `notify.ts` is where one plugs in.
+`shared/notifications.ts` is the catalog of alerts (new parlay open, pick reminder, locked, unlocked, busted, end-of-slate update, a pick made for you, unlock requested). `server/services/notify.ts` sends them: every alert goes to the in-app inbox, and to email for members who switch it on (needs `RESEND_API_KEY`). Members choose their alerts in Settings. Text and push have a switch but no provider yet; `CHANNEL_SENDERS` in `notify.ts` is where one plugs in.
+
+**Reminders.** "Send reminder" on an open parlay (`POST /api/leagues/:id/weeks/:weekId/reminder`) nudges every member without a pick, at most once an hour each, and returns a text for the group chat: the picks in with their owners, who is still out, and a countdown to the week's first non-Thursday kickoff (`shared/parlayReminder.ts`).
+
+## The Suss Meter and Illogical Bets
+
+**The Suss Meter.** A member can down-vote another member's pick in an open parlay (`leg_suss_votes`, one vote per member per pick, never their own). Votes are anonymous: the API returns counts and whether the caller voted, never who did, and voting isn't audit logged for the same reason. A pick shows a three-part meter once more than half the other members have down-voted it, two parts past 75%, and a full, pulsing meter when everyone but its owner has (`shared/suss.ts`). Changing a pick clears its votes.
+
+**Illogical Bets.** `shared/illogicalBets.ts` spots a new pick that works against one already in the parlay: a moneyline with a spread on the same game, a player's under with the over on his game's total (or his over with the under), and a player's under with a bet on his own team (or his over with a bet against it). The pick is still allowed, after a warning. The team rule needs the player's team from the `players` table and is skipped without it.
 
 ## Reports and exports
+
+Reports: league standings (current year and all time), the loser report, allocation by bet type, disputes (every dispute, the week it touched and its ruling), and The Suss Report (open parlays only). Dismissed disputes are kept on record from this version on; earlier ones were deleted when dismissed.
 
 `GET /api/leagues/:id/reports/:reportId` returns a report (`shared/reports.ts`) for the app to draw. Add `?format=csv|json|xml|md` for a file. Bet history exports the same way from `/api/parlay-legs/export.{csv,json,xml,md}`. JSON, XML and Markdown carry a description of every column, so a file can be read without the app (see `shared/dataExport.ts`).
 
@@ -377,7 +391,7 @@ Player-prop legs use:
 - A nullable `game_id`
 - `player_name`
 - `prop_type`
-- Picks such as `over`, `under`, `yes`, or `no`
+- Picks of `over` or `under`. Touchdown-scorer props (anytime, first, last) are `yes` only: a `no` can't be entered, though older `no` picks still read and grade
 
 Supported prop categories include passing, rushing, receiving, touchdowns, interceptions, sacks, tackles, and kicking statistics.
 

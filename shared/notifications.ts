@@ -11,6 +11,7 @@ import type { UserNotificationPreferences } from "./schema";
 
 export type NotificationEventKey =
   | "parlay_open"
+  | "parlay_reminder"
   | "parlay_locked"
   | "parlay_unlocked"
   | "parlay_busted"
@@ -33,6 +34,12 @@ export const NOTIFICATION_EVENTS: NotificationEventMeta[] = [
     key: "parlay_open",
     label: "New parlay is open",
     description: "Someone started the week's parlay and it's ready for your pick.",
+    defaultOn: true,
+  },
+  {
+    key: "parlay_reminder",
+    label: "Pick reminder",
+    description: "Someone in the league nudged everyone who hasn't picked yet.",
     defaultOn: true,
   },
   {

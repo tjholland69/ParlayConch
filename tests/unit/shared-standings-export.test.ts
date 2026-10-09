@@ -14,17 +14,16 @@ describe("shared/standingsExport", () => {
     expect(lines[2]).toBe('2,"Big ""G"", Jr",3,9,0,25.0,50,0.40,0.00');
   });
 
-  test("text is a ranked list headed by league, scope and sort", () => {
-    const text = standingsText({ leagueName: "The Boys", scopeLabel: "All Time", sortLabel: "Win %", rows });
+  test("text is ranked by win rate, whatever order the rows arrive in, with no power or participation", () => {
+    const text = standingsText({ leagueName: "The Boys", scopeLabel: "All Time", rows: [...rows].reverse() });
     expect(text.split("\n")).toEqual([
       "🏆 The Boys · All Time",
-      "Sorted by Win %",
-      "1. Marty: 12-4 (75%) · Pwr 1.42 · Part 100%",
-      '2. Big "G", Jr: 3-9 (25%) · Pwr 0.40 · Part 50%',
+      "1. Marty: 12-4 (75%)",
+      '2. Big "G", Jr: 3-9 (25%)',
     ]);
   });
 
-  test("text leaves the sort line out for the default order", () => {
+  test("text with no rows is just the heading", () => {
     expect(standingsText({ leagueName: "L", scopeLabel: "Current Year", rows: [] })).toBe("🏆 L · Current Year");
   });
 });

@@ -281,14 +281,29 @@ export const parlayLegDisputes = pgTable("parlay_leg_disputes", {
   resolvedByUserId: varchar("resolved_by_user_id").references(() => users.id, { onDelete: "set null" }),
   resolvedAt: timestamp("resolved_at"),
   resolutionNotes: text("resolution_notes"),
-  // Set when a resolved (upheld) dispute is archived for the record. Dismissed
-  // disputes have nothing worth keeping and are hard-deleted instead — see
-  // storage.resolveDispute.
+  // Set when a dispute is ruled on, upheld or dismissed. Both stay on record
+  // for the Disputes Report (see storage.resolveDispute).
   archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   index("parlay_leg_disputes_leg_id_idx").on(table.parlayLegId),
   index("parlay_leg_disputes_status_idx").on(table.status),
+]);
+
+// "The Suss Meter": a member's anonymous down vote on someone else's pick in
+// an open parlay. One per member per leg. Who voted is never sent to a
+// client; only the count is (see storage.getSussForParlays).
+export const legSussVotes = pgTable("leg_suss_votes", {
+  id: serial("id").primaryKey(),
+  parlayLegId: integer("parlay_leg_id")
+    .notNull()
+    .references(() => parlayLegs.id, { onDelete: "cascade" }),
+  voterUserId: varchar("voter_user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("leg_suss_votes_leg_voter_uidx").on(table.parlayLegId, table.voterUserId),
 ]);
 
 export type ParlayLegDispute = typeof parlayLegDisputes.$inferSelect;

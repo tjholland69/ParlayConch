@@ -46,7 +46,7 @@ export async function announceBustedParlays(parlayIds: number[]): Promise<void> 
       await notifyLeague(league.id, {
         event: "parlay_busted",
         title: `${league.name}: the ${week.label} parlay is busted`,
-        message: `${loserLabelText(league.loserLabel)}: ${name} (${legShortLabel(busted.leg, busted.game)}).`,
+        message: `${loserLabelText(league.loserLabel)}: ${name} - ${legShortLabel(busted.leg, busted.game)}.`,
         path: `/leagues/${league.id}`,
         dedupeKey: `parlay_busted:${parlay.id}`,
       });

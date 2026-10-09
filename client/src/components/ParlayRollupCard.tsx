@@ -11,7 +11,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetFooter } from "@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Trash2, Pencil, Plus, Loader2, Calendar, CheckSquare, Square, CloudDownload, CheckCircle2, AlertTriangle, XCircle, ChevronRight, ChevronDown, ChevronUp, Scissors, Info, Copy, Check, Clock, Megaphone, RefreshCw, LockKeyhole, UserCheck } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
+import { withPlusSign } from "@/lib/formatPick";
 import { PLAYER_PROP_TYPES, type ParlayLeg, type ParlayWithLegs, type LeagueMemberWithUser } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -29,12 +29,15 @@ import { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 import { legLabel } from "@/lib/legLabel";
 import { resultColor, statusColor } from "@/lib/parlayStatusStyles";
 import { ParlayLegResultBadge } from "@/components/ParlayLegResultBadge";
-import { getSlate } from "@shared/slate";
+import { getSlate, groupLegsBySlate } from "@shared/slate";
+import { legLookthroughLabel, legPickColumnLabel } from "@shared/formatPick";
+import { kickoffTimeLabel } from "@shared/parlayReminder";
+import { legContextLine } from "@shared/nflWeek";
 import { boostLabel } from "@shared/parlayBoost";
 import { BoostDialog } from "@/components/BoostDialog";
 import { ShameReportDialog } from "@/components/ShameReportDialog";
 import { canShameSeason } from "@shared/shameReport";
-import { isParlayInProgress, legTally } from "@shared/parlayProgress";
+import { isParlayInProgress, isParlayLocked, legTally } from "@shared/parlayProgress";
 
 export { BET_TYPES, RESULTS } from "@/lib/bettingConstants";
 
@@ -249,6 +252,16 @@ export type ParlayCardProps = {
   canManage?: boolean;
 };
 
+/** The understated label over each slate's legs: "SUNDAY EARLY SLATE". */
+function SlateDivider({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 px-3 pt-2.5 pb-1">
+      <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/70">{label}</span>
+      <span className="h-px flex-1 bg-white/5" />
+    </div>
+  );
+}
+
 function logStatus(log: EnrichLog) {
   if (log.errors.length > 0) return "error";
   if (log.warnings.length > 0) return "warn";
@@ -421,6 +434,14 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   // After that they follow the week: settled legs by when they were decided,
   // legs still to play by kickoff (shared/legOrder.ts).
   const sortedLegs = sortParlayLegs(parlay);
+  // The legs under a quiet label per slate, earliest slate first. Inside a
+  // slate they keep the order above.
+  const slateGroups = groupLegsBySlate(sortedLegs);
+  const orderedLegs = slateGroups.flatMap(g => g.legs);
+  const slateStartingAt = new Map(slateGroups.map(g => [g.legs[0].id, g.label]));
+  // Plain viewing (no editing or selecting): a phone-width screen gets two
+  // lines per leg instead of a table it has to scroll sideways.
+  const compactOnPhone = readOnly && !selectMode && !splitMode && !legSelectMode;
 
   return (
     <>
@@ -616,10 +637,10 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
               </button>
             )}
 
-            {readOnly && onCopySlip && parlay.status !== "void" && (
+            {readOnly && onCopySlip && isParlayLocked(parlay) && (
               <button
                 onClick={e => { e.stopPropagation(); onCopySlip(parlay); }}
-                title="Copy bet slip"
+                title="Copy bet slip (locked parlays only)"
                 className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/10 transition-colors shrink-0"
               >
                 {copiedId === parlay.id
@@ -769,7 +790,34 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
           {parlay.legs.length === 0 ? (
             <p className="text-sm text-muted-foreground italic py-2">No legs yet.</p>
           ) : (
-            <div className="rounded-lg border border-white/5 overflow-x-auto">
+            <>
+            {compactOnPhone && (
+              <div className="sm:hidden rounded-lg border border-white/5" data-testid={`legs-compact-${parlay.id}`}>
+                {slateGroups.map(group => (
+                  <div key={group.key}>
+                    <SlateDivider label={group.label} />
+                    {group.legs.map(leg => (
+                      <div key={leg.id} className="border-t border-white/5 px-3 py-2" data-testid={`row-leg-compact-${leg.id}`}>
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="max-w-[28%] shrink-0 truncate text-xs font-bold text-muted-foreground">
+                            {leg.user ? getDisplayName(leg.user, "Member") : "Unknown"}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate font-medium">{legLookthroughLabel(leg, leg.game)}</span>
+                          <span className="shrink-0 text-xs font-semibold">
+                            <ParlayLegResultBadge leg={leg} game={leg.game} />
+                          </span>
+                          {leg.userId === effectiveUserId && <DisputeLegDialog legId={leg.id} />}
+                        </div>
+                        <p className="truncate text-[11px] text-muted-foreground">
+                          {legContextLine(parlay.week, leg.game, leg.game?.gameTime ? kickoffTimeLabel(leg.game.gameTime) : null) || "—"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className={cn("rounded-lg border border-white/5 overflow-x-auto", compactOnPhone && "hidden sm:block")}>
               <table className="w-full min-w-[920px] text-sm">
                 <thead>
                   <tr className="bg-muted/30 text-muted-foreground text-xs">
@@ -781,8 +829,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                     <th className="text-left px-3 py-2 font-medium">Line</th>
                     <th className="text-left px-3 py-2 font-medium">Odds</th>
                     <th className="text-left px-3 py-2 font-medium">Date</th>
-                    <th className="text-left px-3 py-2 font-medium">Kickoff (ET)</th>
-                    <th className="text-left px-3 py-2 font-medium">Slate</th>
+                    <th className="text-left px-3 py-2 font-medium">Kickoff</th>
                     <th className="text-left px-3 py-2 font-medium">Result</th>
                     <th className="px-2 py-2 w-8" />
                     <th className="px-2 py-2 w-8" />
@@ -790,7 +837,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedLegs.map((leg, i) => {
+                  {orderedLegs.map((leg, i) => {
                     const liveLog = enrichResults[leg.id];
                     const storedLog: EnrichLog | null = (() => {
                       try { return leg.enrichmentLog ? JSON.parse(leg.enrichmentLog) : null; } catch { return null; }
@@ -806,6 +853,11 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
 
                     return (
                       <React.Fragment key={leg.id}>
+                        {slateStartingAt.has(leg.id) && (
+                          <tr>
+                            <td colSpan={20} className="p-0"><SlateDivider label={slateStartingAt.get(leg.id)!} /></td>
+                          </tr>
+                        )}
                         <tr
                           className={cn(
                             "border-t border-white/5",
@@ -893,7 +945,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                               {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
                             </Badge>
                           </td>
-                          <td className="px-3 py-2 text-muted-foreground">{formatPickLabel(leg)}</td>
+                          <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{legPickColumnLabel(leg, leg.game)}</td>
                           <td className="px-3 py-2 text-muted-foreground">{leg.line || "—"}</td>
                           <td className="px-3 py-2 text-muted-foreground">
                             {withPlusSign(leg.odds) ?? "—"}
@@ -906,11 +958,8 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                           </td>
                           <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
                             {leg.game?.gameTime
-                              ? new Date(leg.game.gameTime).toLocaleTimeString(undefined, { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })
+                              ? kickoffTimeLabel(leg.game.gameTime)
                               : "—"}
-                          </td>
-                          <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
-                            {leg.game?.gameTime ? getSlate(new Date(leg.game.gameTime)) : "—"}
                           </td>
                           <td className="px-3 py-2 font-medium">
                             <ParlayLegResultBadge leg={leg} game={leg.game} />
@@ -1020,6 +1069,7 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                 </tbody>
               </table>
             </div>
+            </>
           )}
 
           {!readOnly && !selectMode && !splitMode && !legSelectMode && (

@@ -5,7 +5,7 @@ import { useDashboardSummary, useDashboardPatterns } from "@/hooks/use-dashboard
 import { useMyParlayLegsByIds } from "@/hooks/use-bets";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { LegsWithParlayTable } from "@/components/LegsWithParlayTable";
+import { LegsCsvButton, LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { cn } from "@/lib/utils";
 
 function StatCard({
@@ -68,7 +68,10 @@ function LegsLookthroughDialog({ lookthrough, onClose }: { lookthrough: Lookthro
     <Dialog open={lookthrough !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{lookthrough?.title}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            {lookthrough?.title}
+            <LegsCsvButton legs={legs} filename={lookthrough?.title ?? "legs"} />
+          </DialogTitle>
         </DialogHeader>
         {isLoading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>

@@ -11,12 +11,16 @@ import {
   ListChecks,
   Clock,
   ChevronRight,
+  KeyRound,
 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useAdminResetPassword } from "@/hooks/use-parlay-extras";
 import { EmptyState } from "@/components/SlidingCard";
 import type { LucideIcon } from "lucide-react";
 
@@ -74,8 +78,76 @@ export default function AdminHome() {
         />
       </div>
 
+      <ResetPasswordCard />
+
       <MaintenanceActionsCard />
     </div>
+  );
+}
+
+/**
+ * Sets a new password on a member's account, for when they're locked out and
+ * the emailed link isn't getting to them. Super user only; the server checks
+ * that again. Nothing is emailed: the new password is passed on by hand.
+ */
+function ResetPasswordCard() {
+  const { toast } = useToast();
+  const reset = useAdminResetPassword();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const mismatch = confirm.length > 0 && confirm !== password;
+  const ready = email.trim().length > 3 && password.length >= 8 && confirm === password;
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ready) return;
+    reset.mutate(
+      { email: email.trim(), password },
+      {
+        onSuccess: (data) => {
+          toast({ title: "Password reset", description: data.message });
+          setPassword("");
+          setConfirm("");
+        },
+        onError: (err: Error) => toast({ title: "Couldn't reset the password", description: err.message, variant: "destructive" }),
+      },
+    );
+  };
+
+  return (
+    <Card className="border-white/5">
+      <CardHeader className="pb-2 font-semibold text-sm flex-row items-center gap-2 space-y-0">
+        <KeyRound className="w-4 h-4 text-accent" />
+        Reset a member's password
+      </CardHeader>
+      <CardContent>
+        <form onSubmit={submit} className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Sets a new password on their account right away. They aren't emailed, so tell them the new password yourself.
+          </p>
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="reset-email" className="text-xs text-muted-foreground">Member's email</Label>
+              <Input id="reset-email" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} data-testid="input-reset-email" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="reset-password" className="text-xs text-muted-foreground">New password (8+ characters)</Label>
+              <Input id="reset-password" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} data-testid="input-reset-password" />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="reset-confirm" className="text-xs text-muted-foreground">Confirm new password</Label>
+              <Input id="reset-confirm" type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} aria-invalid={mismatch} data-testid="input-reset-confirm" />
+            </div>
+          </div>
+          {mismatch && <p className="text-xs text-red-400">The two passwords don't match.</p>}
+          <Button type="submit" size="sm" disabled={!ready || reset.isPending} data-testid="button-reset-password">
+            {reset.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1.5" /> : <KeyRound className="w-4 h-4 mr-1.5" />}
+            Reset password
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 

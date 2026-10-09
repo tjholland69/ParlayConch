@@ -6,12 +6,14 @@ import type { Player } from "@shared/schema";
  * The search only covers the two teams playing `gameId`, so with nothing
  * typed it still returns that game's players (quarterbacks, backs and
  * receivers first). Mirrors web's useGamePlayerSearch (client/src/hooks/use-bets.ts). */
-export function useGamePlayerSearch(gameId: number, query: string, enabled = true) {
+export function useGamePlayerSearch(gameId: number | undefined, query: string, enabled = true) {
   const trimmed = query.trim();
   return useQuery<Player[]>({
-    queryKey: ["/api/players", trimmed, { gameId }],
-    queryFn: () => apiRequest<Player[]>("GET", `/api/players?q=${encodeURIComponent(trimmed)}&gameId=${gameId}`),
-    enabled: enabled && !!gameId,
+    queryKey: ["/api/players", trimmed, { gameId: gameId ?? null }],
+    // No game: the search covers every team (the any-player prop entry),
+    // and waits for something to be typed.
+    queryFn: () => apiRequest<Player[]>("GET", `/api/players?q=${encodeURIComponent(trimmed)}${gameId ? `&gameId=${gameId}` : ""}`),
+    enabled: enabled && (!!gameId || trimmed.length >= 2),
     // Keep the last results up while the next keystroke's load, so the list
     // doesn't blink to a spinner on every letter.
     placeholderData: keepPreviousData,

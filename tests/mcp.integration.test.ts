@@ -135,7 +135,7 @@ describe("MCP connector", () => {
     const json = JSON.parse((await callTool(amyToken, "get_report", { league_id: leagueId, report_id: "standings_all_time" })).content[0].text);
     expect(json.dataset).toBe("league_standings_all_time");
     expect(json.rows.find((r: { member: string }) => r.member === "Amy")).toMatchObject({ wins: 1, losses: 0 });
-    expect(json.columns.find((c: { key: string }) => c.key === "bar").description).toContain("Bets Above Replacement");
+    expect(json.columns.find((c: { key: string }) => c.key === "win_rate_pct").description).toContain("Wins as a percentage");
 
     const md = (await callTool(amyToken, "get_report", { league_id: leagueId, report_id: "allocation", scope: "all", format: "markdown" })).content[0].text;
     expect(md).toContain("| Bet Type |");

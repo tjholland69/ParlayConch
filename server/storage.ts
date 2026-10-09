@@ -2,7 +2,7 @@ import { db } from "./db";
 import { logger } from "./logger";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks, leaguePokes,
-  pickDelegations, unlockRequests,
+  pickDelegations, unlockRequests, legSussVotes,
   players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes, teams,
 } from "@shared/db-schema";
 import {
@@ -28,6 +28,7 @@ import { normalizeJoinedGame, normalizeParlayLegPatch } from "@shared/dataIntegr
 import { countParlayOutcomes, mergeUserSettings, buildUserStat, normalizeOutcomeCounts } from "@shared/statsAggregation";
 import { formatPickOwnerLabel } from "@shared/pickOwnerLabel";
 import { eq, and, or, desc, asc, inArray, sql, ilike, not, isNull } from "drizzle-orm";
+import { NFLVERSE_ABBREV_TO_SHORT } from "@shared/nflTeams";
 import { alias } from "drizzle-orm/pg-core";
 import {
   averagePowerScore,
@@ -1347,6 +1348,9 @@ export class DatabaseStorage implements IStorage {
         throw new PickRuleError(`${toTakenPick(conflict).takenBy.mobile} already has ${marketLabel(leg)} in this parlay. Pick something else.`);
       }
       const mine = target.legs.filter(l => l.userId === userId);
+      // A reopened parlay can hold picks on games already underway. Those
+      // stay as they are: nobody gets to swap out a bet after kickoff.
+      await this.assertLegGamesNotStarted(tx, mine.map(l => l.gameId), "Your pick's game has already started, so it can no longer be changed.");
       const maxLegs = league.maxLegsPerParlay || 5;
       if (mine.length === 0 && target.legs.length >= maxLegs) {
         throw new PickRuleError(`This parlay is full (${maxLegs} legs).`);
@@ -1395,6 +1399,7 @@ export class DatabaseStorage implements IStorage {
         if (!mine && !opts.canRemoveOthers) {
           throw new PickRuleError("You can only remove your own pick.");
         }
+        await this.assertLegGamesNotStarted(tx, [leg.gameId], "That pick's game has already started, so it can no longer be removed.");
         await tx.delete(parlayLegs).where(eq(parlayLegs.id, legId));
       }
 
@@ -1520,9 +1525,25 @@ export class DatabaseStorage implements IStorage {
         user: legOwnerSummary(owner) ?? undefined,
       })),
       week,
-      taken: current.legs.filter(l => l.userId !== userId).map(toTakenPick),
+      taken: await this.withPlayerTeams(current.legs.filter(l => l.userId !== userId).map(toTakenPick)),
       canStartAnother: canStartParlay(weekParlays, league?.maxParlaysPerWeek),
     };
+  }
+
+  /** Fills in each prop pick's `playerTeam` from the players table, where it's known. */
+  private async withPlayerTeams(taken: TakenPick[]): Promise<TakenPick[]> {
+    const names = [...new Set(taken.filter(t => t.betType === "player_prop" && t.playerName).map(t => t.playerName!.trim().toLowerCase()))];
+    if (names.length === 0) return taken;
+    const rows = await db.select({ name: players.name, displayName: players.displayName, team: players.team }).from(players)
+      .where(or(inArray(sql`lower(${players.name})`, names), inArray(sql`lower(${players.displayName})`, names)));
+    const teamByName = new Map<string, string>();
+    for (const r of rows) {
+      const team = r.team ? NFLVERSE_ABBREV_TO_SHORT[r.team] ?? r.team : null;
+      if (!team) continue;
+      teamByName.set(r.name.toLowerCase(), team);
+      if (r.displayName) teamByName.set(r.displayName.toLowerCase(), team);
+    }
+    return taken.map(t => (t.playerName ? { ...t, playerTeam: teamByName.get(t.playerName.trim().toLowerCase()) ?? null } : t));
   }
 
   async getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]> {
@@ -2319,20 +2340,19 @@ export class DatabaseStorage implements IStorage {
         ? "Your dispute was reviewed and resolved."
         : "Your dispute was reviewed and dismissed — no change was made.";
 
-    let result: ParlayLegDispute;
-    if (status === "dismissed") {
-      // Dismissed disputes have nothing worth keeping on record — hard-delete
-      // the row rather than archiving it (screenshot cleanup is the caller's
-      // job, since bucket access lives outside this data-access layer).
-      await db.delete(parlayLegDisputes).where(eq(parlayLegDisputes.id, id));
-      result = { ...existing, status, resolvedByUserId: resolverUserId, resolvedAt, resolutionNotes: notes ?? null };
-    } else {
-      const [updated] = await db.update(parlayLegDisputes)
-        .set({ status, resolvedByUserId: resolverUserId, resolvedAt, resolutionNotes: notes ?? null, archivedAt: resolvedAt })
-        .where(eq(parlayLegDisputes.id, id))
-        .returning();
-      result = updated;
-    }
+    // Both rulings stay on record, so the Disputes Report can count them.
+    // A dismissed dispute drops its screenshot (the caller removes the file).
+    const [result] = await db.update(parlayLegDisputes)
+      .set({
+        status,
+        resolvedByUserId: resolverUserId,
+        resolvedAt,
+        resolutionNotes: notes ?? null,
+        archivedAt: resolvedAt,
+        ...(status === "dismissed" ? { screenshotKey: null } : {}),
+      })
+      .where(eq(parlayLegDisputes.id, id))
+      .returning();
 
     await this.createNotification({ userId: existing.raisedByUserId, type: "dispute_resolved", title, message });
 
@@ -2739,6 +2759,134 @@ export class DatabaseStorage implements IStorage {
     });
     emitLeague(leagueId, weekId, "lock_updated");
     emitLeague(leagueId, weekId, "parlays_updated");
+  }
+
+  private async assertLegGamesNotStarted(tx: PickTx | typeof db, gameIds: (number | null | undefined)[], message: string): Promise<void> {
+    const ids = gameIds.filter((id): id is number => id != null);
+    if (ids.length === 0) return;
+    const rows = await tx.select({ gameTime: games.gameTime, isFinished: games.isFinished }).from(games).where(inArray(games.id, ids));
+    if (rows.some(g => hasGameStarted(g))) throw new PickRuleError(message);
+  }
+
+  // ─── Placed / reopen ───────────────────────────────────────────────────────
+
+  /**
+   * A member says the locked parlay is in at their sportsbook. Any member
+   * can, and it doesn't matter how many of them placed it: the parlay is
+   * simply Placed from then on, and can't be unlocked the ordinary way.
+   */
+  async confirmParlayPlaced(parlayId: number): Promise<Parlay> {
+    const [updated] = await db.update(parlays)
+      .set({ status: "placed" })
+      .where(and(eq(parlays.id, parlayId), inArray(parlays.status, ["pending", "approved", "sent", "placed"])))
+      .returning();
+    if (!updated) throw new PickRuleError("Only a locked parlay can be marked as placed.");
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
+    return updated;
+  }
+
+  /**
+   * Once a game on a locked parlay kicks off, the parlay is taken as placed:
+   * nobody has to confirm it. Returns how many parlays moved.
+   */
+  async markStartedParlaysPlaced(now: Date = new Date()): Promise<number> {
+    const rows = await db
+      .select({ id: parlays.id, leagueId: parlays.leagueId, weekId: parlays.weekId, gameTime: games.gameTime, isFinished: games.isFinished })
+      .from(parlays)
+      .innerJoin(parlayLegs, eq(parlayLegs.parlayId, parlays.id))
+      .innerJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(inArray(parlays.status, ["pending", "approved", "sent"]));
+    const started = new Map<number, { leagueId: number; weekId: number }>();
+    for (const r of rows) if (hasGameStarted(r, now)) started.set(r.id, r);
+    if (started.size === 0) return 0;
+    await db.update(parlays).set({ status: "placed" })
+      .where(and(inArray(parlays.id, [...started.keys()]), inArray(parlays.status, ["pending", "approved", "sent"])));
+    for (const p of started.values()) emitLeague(p.leagueId, p.weekId, "parlays_updated");
+    return started.size;
+  }
+
+  /**
+   * The Maestro's "Bust": puts a locked or placed parlay back to open and
+   * lifts the week's lock, for when it was marked placed by mistake. Works
+   * after kickoff too, but picks on games that have started stay as they
+   * are (setDraftPick and removeDraftParlayLeg refuse to touch them). A
+   * parlay that has already settled is left for the Data Editor.
+   */
+  async reopenParlay(parlayId: number): Promise<Parlay> {
+    const [found] = await db.select({ leagueId: parlays.leagueId }).from(parlays).where(eq(parlays.id, parlayId));
+    if (!found) throw new PickRuleError("Parlay not found");
+    const reopened = await db.transaction(async (tx) => {
+      await this.lockLeagueForPicks(tx, found.leagueId);
+      const [updated] = await tx.update(parlays)
+        .set({ status: "draft" })
+        .where(and(eq(parlays.id, parlayId), inArray(parlays.status, ["pending", "approved", "sent", "placed"])))
+        .returning();
+      if (!updated) throw new PickRuleError("Only a locked or placed parlay that hasn't settled can be reopened. Use the Data Editor for anything else.");
+      await tx.delete(leagueWeekLocks)
+        .where(and(eq(leagueWeekLocks.leagueId, updated.leagueId), eq(leagueWeekLocks.weekId, updated.weekId)));
+      return updated;
+    });
+    emitLeague(reopened.leagueId, reopened.weekId, "lock_updated");
+    emitLeague(reopened.leagueId, reopened.weekId, "parlays_updated");
+    return reopened;
+  }
+
+  // ─── The Suss Meter ────────────────────────────────────────────────────────
+
+  /**
+   * Adds or takes back a member's down vote on someone else's pick in an
+   * open parlay. Votes are anonymous: nothing here ever hands back who voted.
+   */
+  async setSussVote(legId: number, voterUserId: string, on: boolean): Promise<{ leagueId: number; weekId: number }> {
+    const [row] = await db
+      .select({ ownerId: parlayLegs.userId, status: parlays.status, leagueId: parlays.leagueId, weekId: parlays.weekId })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(eq(parlayLegs.id, legId));
+    if (!row) throw new PickRuleError("That pick is no longer in the parlay.");
+    if (row.status !== "draft") throw new PickRuleError("Picks can only be down-voted while the parlay is open.");
+    if (row.ownerId === voterUserId) throw new PickRuleError("You can't down-vote your own pick.");
+    const members = await this.getLeagueMembers(row.leagueId);
+    if (!members.some(m => m.userId === voterUserId)) throw new PickRuleError("Only league members can vote.");
+
+    if (on) {
+      await db.insert(legSussVotes).values({ parlayLegId: legId, voterUserId }).onConflictDoNothing();
+    } else {
+      await db.delete(legSussVotes).where(and(eq(legSussVotes.parlayLegId, legId), eq(legSussVotes.voterUserId, voterUserId)));
+    }
+    emitLeague(row.leagueId, row.weekId, "parlays_updated");
+    return { leagueId: row.leagueId, weekId: row.weekId };
+  }
+
+  /**
+   * Down-vote counts for every pick in the league's open parlays, keyed by
+   * leg id. `voters` is how many members could vote on it (everyone but its
+   * owner); `mine` is whether the viewer did. No voter ids leave this method.
+   */
+  async getSussForLeague(leagueId: number, viewerUserId: string | null, weekId?: number): Promise<Record<number, { votes: number; voters: number; mine: boolean }>> {
+    const [legs, members] = await Promise.all([
+      db.select({ id: parlayLegs.id, ownerId: parlayLegs.userId })
+        .from(parlayLegs)
+        .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+        .where(and(eq(parlays.leagueId, leagueId), eq(parlays.status, "draft"), ...(weekId != null ? [eq(parlays.weekId, weekId)] : []))),
+      this.getLeagueMembers(leagueId),
+    ]);
+    if (legs.length === 0) return {};
+    const memberIds = new Set(members.map(m => m.userId));
+    const votes = await db.select({ legId: legSussVotes.parlayLegId, voter: legSussVotes.voterUserId })
+      .from(legSussVotes)
+      .where(inArray(legSussVotes.parlayLegId, legs.map(l => l.id)));
+    const result: Record<number, { votes: number; voters: number; mine: boolean }> = {};
+    for (const leg of legs) {
+      // Only current members' votes count, and never the owner's own.
+      const forLeg = votes.filter(v => v.legId === leg.id && v.voter !== leg.ownerId && memberIds.has(v.voter));
+      result[leg.id] = {
+        votes: forLeg.length,
+        voters: members.filter(m => m.userId !== leg.ownerId).length,
+        mine: viewerUserId != null && forLeg.some(v => v.voter === viewerUserId),
+      };
+    }
+    return result;
   }
 
   /** Whoever started one of the week's live parlays: they can lock it too. */

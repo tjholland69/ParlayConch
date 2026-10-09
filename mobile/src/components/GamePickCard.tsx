@@ -6,6 +6,7 @@ import { useTeams } from "@/hooks/use-teams";
 import { useGameWeather } from "@/hooks/use-game-weather";
 import {
   awaySpreadDisplay,
+  homeSpreadDisplay,
   isGamePast,
   shortLegLabel,
   canBuyPoints,
@@ -124,7 +125,7 @@ export function GamePickCard({
 }) {
   const past = readOnly || isGamePast(game);
   const awaySpread = awaySpreadDisplay(game.spread);
-  const homeSpread = game.spread || null;
+  const homeSpread = homeSpreadDisplay(game.spread);
     const spreadTaken = !!takenBy?.spread && selectedLeg?.betType !== "spread";
   const moneylineTaken = !!takenBy?.moneyline && selectedLeg?.betType !== "moneyline";
   const totalTaken = !!takenBy?.total && selectedLeg?.betType !== "over" && selectedLeg?.betType !== "under";

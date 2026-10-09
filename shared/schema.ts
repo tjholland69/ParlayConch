@@ -416,6 +416,9 @@ export type TakenPick = {
   pick: string;
   playerName?: string | null;
   propType?: string | null;
+  // A prop's player's team, as games name it ("Chiefs"), when the players
+  // table knows it. Used to spot Illogical Bets (shared/illogicalBets.ts).
+  playerTeam?: string | null;
   // Who owns this pick, pre-formatted server-side (so a last name reaches
   // the client only in this abbreviated form, never raw) — `web` is
   // "F.Lastname", `mobile` is just the first name. See shared/pickOwnerLabel.ts.

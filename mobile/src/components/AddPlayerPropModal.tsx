@@ -3,22 +3,23 @@ import { View, Text, TextInput, Pressable, ScrollView, Modal, Alert, KeyboardAvo
 import { Ionicons } from "@expo/vector-icons";
 import type { Game } from "@shared/schema";
 import { PLAYER_PROP_TYPES } from "@shared/schema";
-import { YES_NO_PROP_TYPES } from "@shared/multiBetValidation";
+import { propPickOptions } from "@shared/multiBetValidation";
+import { teamShortName } from "@shared/nflTeams";
 import { primaryPropType, propTypesForPosition } from "@shared/propPosition";
 import { stepLine } from "@shared/propLines";
 import { PlayerTypeahead } from "@/components/PlayerTypeahead";
 import { useAccentColor } from "@/hooks/use-accent-color";
 
-const PICK_OPTIONS = ["over", "under", "yes", "no"] as const;
+const PICK_OPTIONS = ["over", "under", "yes"] as const;
 type PickOption = (typeof PICK_OPTIONS)[number];
-/** Scoring props are a yes/no call; every other prop is an over/under. */
+/** A touchdown-scorer prop is only ever bet Yes; every other prop is an
+ * over/under (shared/multiBetValidation.ts). */
 const pickOptionsFor = (propType: string | null): readonly PickOption[] =>
-  !propType ? PICK_OPTIONS : YES_NO_PROP_TYPES.has(propType) ? ["yes", "no"] : ["over", "under"];
-const PICK_LABELS: Record<(typeof PICK_OPTIONS)[number], string> = {
+  !propType ? ["over", "under"] : (propPickOptions(propType) as readonly PickOption[]);
+const PICK_LABELS: Record<PickOption, string> = {
   over: "Over",
   under: "Under",
   yes: "Yes",
-  no: "No",
 };
 
 export type AddPlayerPropLeg = {
@@ -28,6 +29,8 @@ export type AddPlayerPropLeg = {
   line?: string;
   playerName: string;
   propType: string;
+  /** The player's team ("Chiefs"), when they were picked from the search. */
+  playerTeam?: string | null;
 };
 
 /** Add-a-player-prop entry sheet for one game — opened from GamePickCard's
@@ -46,12 +49,16 @@ export type AddPlayerPropLeg = {
  * receiver is never offered sacks or interceptions thrown. A name typed in
  * by hand has no known position, so it's offered every prop type. */
 export function AddPlayerPropModal({
-  game,
+  game: gameProp,
+  anyPlayerGames,
   onClose,
   onAdd,
   isPending,
 }: {
   game: Game | null;
+  /** Opens the sheet with no game chosen: the search covers every team, and
+   * the game is whichever of these the chosen player is in. */
+  anyPlayerGames?: Game[] | null;
   onClose: () => void;
   onAdd: (leg: AddPlayerPropLeg) => Promise<void> | void;
   /** True while onAdd's own async work (if any) is in flight — disables the
@@ -61,35 +68,47 @@ export function AddPlayerPropModal({
   const accent = useAccentColor();
   const [playerName, setPlayerName] = useState("");
   const [playerPosition, setPlayerPosition] = useState<string | null>(null);
+  const [playerTeam, setPlayerTeam] = useState<string | null>(null);
   const [propType, setPropType] = useState<string | null>(null);
   const [pick, setPick] = useState<PickOption | null>(null);
   const [line, setLine] = useState("");
+  // While the player search is open the rest of the form steps aside, so
+  // the results sit right under the box and above the keyboard.
+  const [searching, setSearching] = useState(false);
 
-  // Reset the form each time a different game's sheet opens.
+  const anyPlayer = !gameProp && !!anyPlayerGames;
+  // Any-player mode: the game is the one the chosen player's team is in.
+  const game = gameProp ?? (playerTeam ? anyPlayerGames?.find((g) => g.homeTeam === playerTeam || g.awayTeam === playerTeam) ?? null : null);
+
+  // Reset the form each time the sheet opens on a different game (or mode).
   useEffect(() => {
-    if (game) {
-      setPlayerName("");
-      setPlayerPosition(null);
-      setPropType(null);
-      setPick(null);
-      setLine("");
-    }
-  }, [game?.id]);
+    setPlayerName("");
+    setPlayerPosition(null);
+    setPlayerTeam(null);
+    setPropType(null);
+    setPick(null);
+    setLine("");
+    setSearching(false);
+  }, [gameProp?.id, anyPlayer]);
 
-  if (!game) return null;
+  if (!gameProp && !anyPlayer) return null;
 
-  const canAdd = playerName.trim().length > 0 && !!propType && !!pick;
+  const canAdd = !!game && playerName.trim().length > 0 && !!propType && !!pick;
   const propOptions = playerPosition ? propTypesForPosition(playerPosition).primary : PLAYER_PROP_TYPES;
   const pickOptions = pickOptionsFor(propType);
 
   function changePropType(next: string) {
     setPropType(next);
-    // Drop a pick the new prop type can't have (e.g. "over" on Anytime TD).
-    if (pick && !pickOptionsFor(next).includes(pick)) setPick(null);
+    // A prop with one side (a touchdown prop is always Yes) picks itself;
+    // otherwise drop a pick the new prop type can't have.
+    const options = pickOptionsFor(next);
+    if (options.length === 1) setPick(options[0]);
+    else if (pick && !options.includes(pick)) setPick(null);
   }
 
-  function changePlayer(name: string, player: { position?: string | null } | null) {
+  function changePlayer(name: string, player: { position?: string | null; team?: string | null } | null) {
     setPlayerName(name);
+    setPlayerTeam(player ? teamShortName(player.team) : null);
     const position = player?.position ?? null;
     setPlayerPosition(position);
     // Start on the stat this position is usually bet on; this also moves
@@ -107,6 +126,7 @@ export function AddPlayerPropModal({
         line: line.trim() || undefined,
         playerName: playerName.trim(),
         propType: propType!,
+        playerTeam,
       });
       onClose();
     } catch (err) {
@@ -120,13 +140,19 @@ export function AddPlayerPropModal({
         <Pressable style={styles.backdrop} onPress={onClose} />
         <View style={styles.sheet}>
           <Text style={styles.title}>Add Player Prop</Text>
-          <Text style={styles.subtitle} numberOfLines={1}>
-            {game.awayTeam} @ {game.homeTeam}
+          <Text style={styles.subtitle} numberOfLines={2}>
+            {game
+              ? `${game.awayTeam} @ ${game.homeTeam}`
+              : playerTeam
+                ? `The ${playerTeam} don't have a game open for picks this week.`
+                : "Search any player with a game this week."}
           </Text>
 
           <Text style={styles.label}>Player</Text>
-          <PlayerTypeahead gameId={game.id} value={playerName} onChange={changePlayer} />
+          <PlayerTypeahead gameId={gameProp?.id} value={playerName} onChange={changePlayer} onFocusChange={setSearching} />
 
+          {!searching && (
+          <>
           <Text style={styles.label}>Prop Type</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
             {propOptions.map((t) => (
@@ -207,6 +233,8 @@ export function AddPlayerPropModal({
               <Text style={styles.addBtnText}>{isPending ? "Adding…" : "Add"}</Text>
             </Pressable>
           </View>
+          </>
+          )}
         </View>
       </KeyboardAvoidingView>
     </Modal>

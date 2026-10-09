@@ -4,10 +4,11 @@ import { storage, ParlayAlreadyExistsError } from "./storage";
 import { logger } from "./logger";
 import { db } from "./db";
 import { setupAuth, registerAuthRoutes, isAuthenticated, registerLocalAuthRoutes } from "./auth";
+import { authRateLimiter, hashPassword } from "./auth/localAuth";
 import { z } from "zod";
 import { insertLeagueSchema, users, leagueMembers, parlayLegs, parlays } from "@shared/db-schema";
 import { type LieutenantPermissions, DEFAULT_LIEUTENANT_PERMISSIONS, insertCustomIndexSchema, updateCustomIndexSchema, customIndexFiltersEqual, type CustomIndexFilters } from "@shared/schema";
-import { ilike, eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
+import { ilike, eq, and, or, inArray, isNull, sql as drizzleSql } from "drizzle-orm";
 import { getApiUsage, fetchUpcomingGames, syncGameScores } from "./services/oddsApi";
 import { runOddsSyncQueued, startOddsSyncWorker, getOddsSyncJobStatus } from "./jobs/odds-sync-queue";
 import {
@@ -62,6 +63,8 @@ import { abbreviationsForTeam } from "@shared/nflTeams";
 import multer from "multer";
 import { PickRuleError } from "@shared/weekParlays";
 import { notifyLeague, notifyUsers } from "./services/notify";
+import { openParlayReminderText } from "@shared/parlayReminder";
+import { userPasswords, passwordResetTokens } from "@shared/models/auth";
 import { registerMcpRoutes } from "./mcp";
 import { createApiToken, listApiTokens, revokeApiToken } from "./services/apiTokens";
 import { getLeagueReport } from "./services/reports";
@@ -1146,6 +1149,177 @@ export async function registerRoutes(
       res.json({ success: true, action, override: result.override });
     } catch (err) {
       sendPickError(res, err, "decide on pick");
+    }
+  });
+
+  // ─── Placed / reopen ──────────────────────────────────────────────────────
+
+  // Any member confirms the locked parlay is in at their sportsbook. It
+  // doesn't matter how many members placed it: one confirmation is enough.
+  app.post("/api/parlays/:id/confirm-placed", isAuthenticated, auditLog("parlay.confirm_placed", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlayId = Number(req.params.id);
+      const parlay = await storage.getParlay(parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      if (!(await isLeagueMember(parlay.leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+      res.json(await storage.confirmParlayPlaced(parlayId));
+    } catch (err) {
+      sendPickError(res, err, "mark parlay placed");
+    }
+  });
+
+  // The Maestro's "Bust": reopens a locked or placed parlay (say it was
+  // marked placed by mistake). Picks on games already underway stay put.
+  app.post("/api/parlays/:id/reopen", isAuthenticated, auditLog("parlay.reopen", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlayId = Number(req.params.id);
+      const parlay = await storage.getParlay(parlayId);
+      if (!parlay) return res.status(404).json({ message: "Parlay not found" });
+      if (!(await storage.isLeagueAdmin(parlay.leagueId, userId))) {
+        return res.status(403).json({ message: "Only the Parlay Maestro can bust and reopen a parlay" });
+      }
+      const reopened = await storage.reopenParlay(parlayId);
+      const [league, actor, week] = await Promise.all([storage.getLeague(parlay.leagueId), storage.getUser(userId), storage.getWeek(parlay.weekId)]);
+      void notifyLeague(parlay.leagueId, {
+        event: "parlay_unlocked",
+        actorUserId: userId,
+        title: `${league?.name ?? "Your league"}: the ${week?.label ?? "week's"} parlay is open again`,
+        message: `${displayNameOf(actor)} reopened it. Picks on games that have already started can't change.`,
+        path: `/leagues/${parlay.leagueId}`,
+      });
+      res.json(reopened);
+    } catch (err) {
+      sendPickError(res, err, "reopen parlay");
+    }
+  });
+
+  // ─── The Suss Meter ───────────────────────────────────────────────────────
+
+  // Down-vote counts for the picks in the league's open parlays. Anonymous:
+  // counts only, plus whether the caller voted.
+  app.get("/api/leagues/:id/suss", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const leagueId = Number(req.params.id);
+    if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+    const weekId = req.query.weekId ? Number(req.query.weekId) : undefined;
+    res.json(await storage.getSussForLeague(leagueId, userId, Number.isFinite(weekId) ? weekId : undefined));
+  });
+
+  // Adds or takes back the caller's down vote. Deliberately not audit
+  // logged: a log line naming the voter would undo the anonymity.
+  app.put("/api/parlay-legs/:legId/suss", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const { vote } = z.object({ vote: z.boolean() }).parse(req.body);
+      await storage.setSussVote(Number(req.params.legId), userId, vote);
+      res.json({ success: true, vote });
+    } catch (err) {
+      sendPickError(res, err, "vote on pick");
+    }
+  });
+
+  // ─── Open-parlay reminder ─────────────────────────────────────────────────
+
+  async function buildReminder(leagueId: number, weekId: number) {
+    const [league, week, weekParlays, members, weekGames, lock] = await Promise.all([
+      storage.getLeague(leagueId),
+      storage.getWeek(weekId),
+      storage.getLeagueParlaysForWeek(leagueId, weekId),
+      storage.getLeagueMembersWithUsers(leagueId),
+      storage.getGamesByWeek(weekId),
+      storage.getWeekLockStatus(leagueId, weekId),
+    ]);
+    const open = weekParlays.filter((p) => p.status === "draft");
+    const legs = open.flatMap((p) => p.legs ?? []);
+    const inIds = new Set(legs.map((l) => l.userId));
+    const missing = members.filter((m) => !inIds.has(m.userId));
+    return {
+      league,
+      week,
+      hasOpenParlay: open.length > 0,
+      isLocked: lock.isLocked,
+      missingIds: missing.map((m) => m.userId),
+      text: openParlayReminderText({
+        leagueName: league?.name ?? "Your league",
+        weekLabel: week?.label ?? "This week's",
+        legs: legs.map((l) => ({ owner: displayNameOf(l.user), bet: legShortLabel(l, l.game) })),
+        missing: missing.map((m) => displayNameOf(m.user)),
+        games: weekGames,
+      }),
+    };
+  }
+
+  // The reminder as text, for the group chat. POST also nudges, in the app,
+  // every member who hasn't picked (at most once an hour per member).
+  app.get("/api/leagues/:id/weeks/:weekId/reminder", isAuthenticated, async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const leagueId = Number(req.params.id);
+    if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+    const reminder = await buildReminder(leagueId, Number(req.params.weekId));
+    res.json({ text: reminder.text, missingCount: reminder.missingIds.length });
+  });
+
+  app.post("/api/leagues/:id/weeks/:weekId/reminder", isAuthenticated, auditLog("parlay.reminder", { targetParam: "id", targetType: "league" }), async (req, res) => {
+    const userId = (req.user as any).claims.sub;
+    const leagueId = Number(req.params.id);
+    const weekId = Number(req.params.weekId);
+    if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+    const reminder = await buildReminder(leagueId, weekId);
+    if (reminder.isLocked) return res.status(409).json({ message: "This week's parlay is locked, so there's nothing left to pick." });
+    const actor = await storage.getUser(userId);
+    void notifyUsers(reminder.missingIds, {
+      event: "parlay_reminder",
+      leagueId,
+      actorUserId: userId,
+      title: `${reminder.league?.name ?? "Your league"}: your ${reminder.week?.label ?? "weekly"} pick is still needed`,
+      message: `${displayNameOf(actor)} sent a reminder. ${reminder.hasOpenParlay ? "The parlay is open and waiting on you." : "Nobody has started the parlay yet."}`,
+      path: `/leagues/${leagueId}`,
+      dedupeKey: `reminder:${leagueId}:${weekId}:${new Date().toISOString().slice(0, 13)}`,
+    });
+    res.json({ text: reminder.text, missingCount: reminder.missingIds.length });
+  });
+
+  // ─── Super user: reset a member's password ────────────────────────────────
+
+  // Sets a new password on someone's account. Super user only, and checked
+  // against the signed-in user, never an act-for identity. The password is
+  // never logged: the audit entry records who and for whom.
+  app.post("/api/admin/users/reset-password", isAuthenticated, authRateLimiter, async (req, res) => {
+    try {
+      const adminId = realUserId(req);
+      if (!(await storage.isSuperUser(adminId))) return res.status(403).json({ message: "Super user access required" });
+      const { email, password } = z.object({
+        email: z.string().trim().email("Enter the member's email address"),
+        password: z.string().min(8, "Password must be at least 8 characters").max(128),
+      }).parse(req.body);
+
+      const [target] = await db.select({ id: users.id, email: users.email }).from(users)
+        .where(eq(drizzleSql`lower(${users.email})`, email.toLowerCase()));
+      if (!target) return res.status(404).json({ message: "No account uses that email address." });
+
+      const passwordHash = await hashPassword(password);
+      await db.insert(userPasswords)
+        .values({ userId: target.id, passwordHash })
+        .onConflictDoUpdate({ target: userPasswords.userId, set: { passwordHash, updatedAt: new Date() } });
+      // Any set-password link still out for the account stops working.
+      await db.update(passwordResetTokens).set({ usedAt: new Date() })
+        .where(and(eq(passwordResetTokens.userId, target.id), isNull(passwordResetTokens.usedAt)));
+
+      void recordAuditEvent({
+        eventType: "admin.reset_password",
+        actorUserId: adminId,
+        targetType: "user",
+        targetId: target.id,
+        ip: req.ip,
+        userAgent: req.get("user-agent") ?? undefined,
+      });
+      res.json({ message: `Password reset for ${target.email}. Give them the new password yourself; nothing was emailed.` });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0]?.message ?? "Invalid input" });
+      logger.error({ err }, "[admin] password reset failed");
+      res.status(500).json({ message: "Couldn't reset the password." });
     }
   });
 
@@ -2728,7 +2902,7 @@ export async function registerRoutes(
 
         const updated = await storage.resolveDispute(disputeId, userId, status, notes);
 
-        // Dismissed disputes are hard-deleted (see storage.resolveDispute) —
+        // A dismissed dispute stays on record without its screenshot —
         // clean up the screenshot evidence in the bucket along with the row.
         if (status === "dismissed" && dispute.screenshotKey) {
           await deleteDisputeScreenshot(dispute.screenshotKey).catch((err) => {

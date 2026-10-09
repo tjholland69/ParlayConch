@@ -1,8 +1,12 @@
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Info } from "lucide-react";
+import { Download, Info } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { legsToCsv } from "@shared/legsCsv";
 import { cn } from "@/lib/utils";
-import { formatPickLabel, withPlusSign } from "@/lib/formatPick";
+import { withPlusSign } from "@/lib/formatPick";
+import { legPickColumnLabel } from "@shared/formatPick";
+import { kickoffTimeLabel } from "@shared/parlayReminder";
 import { getDisplayName } from "@/lib/displayName";
 import { useEffectiveUserId } from "@/hooks/use-acting-as";
 import { legMatchup } from "@/lib/legLabel";
@@ -29,7 +33,7 @@ const COLUMNS = [
   { key: "line", label: "Line" },
   { key: "odds", label: "Odds" },
   { key: "date", label: "Date" },
-  { key: "kickoff", label: "Kickoff (ET)" },
+  { key: "kickoff", label: "Kickoff" },
   { key: "slate", label: "Slate" },
   { key: "result", label: "Result" },
 ] as const;
@@ -44,6 +48,56 @@ function kickoffMinutesEt(leg: Leg): number | null {
     .split(":")
     .map(Number);
   return (h % 24) * 60 + m;
+}
+
+/** A small "CSV" button for the title of a popout that lists only legs. */
+export function LegsCsvButton({ legs, filename }: { legs: ParlayLegWithParlayContext[] | undefined; filename: string }) {
+  if (!legs || legs.length === 0) return null;
+  const download = () => {
+    const csv = legsToCsv(legs.map((leg) => ({
+      legId: leg.id,
+      parlayId: leg.parlay.id,
+      league: "",
+      season: leg.parlay.week?.season ?? 0,
+      week: leg.parlay.week?.weekNumber ?? 0,
+      parlayStatus: leg.parlay.status,
+      betOwner: getDisplayName(leg.user ?? leg.parlay.owner),
+      betType: leg.betType,
+      awayTeam: leg.game?.awayTeam ?? null,
+      homeTeam: leg.game?.homeTeam ?? null,
+      playerName: leg.playerName,
+      propType: leg.propType,
+      pick: leg.pick,
+      line: leg.line,
+      odds: leg.odds,
+      oddsSource: leg.oddsSource ?? null,
+      gameSegment: leg.gameSegment ?? null,
+      result: leg.result,
+      resultDetail: leg.resultDetail ?? null,
+      kickoff: leg.game?.gameTime ?? null,
+      decidedAt: leg.decidedAt ?? null,
+      notes: leg.notes ?? null,
+    })));
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${filename.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "legs"}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 px-2 gap-1 text-xs text-muted-foreground hover:text-foreground"
+      onClick={download}
+      title="Download these legs as a CSV file"
+      data-testid="button-legs-csv"
+    >
+      <Download className="w-3.5 h-3.5" />
+      CSV
+    </Button>
+  );
 }
 
 // Standard "lookthrough" grid for a set of parlay legs spanning multiple
@@ -63,7 +117,7 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
     owner: (l) => (l.userId === effectiveUserId ? "You" : getDisplayName(l.user, "Member")),
     matchup: (l) => legMatchup(l),
     type: (l) => l.betType,
-    pick: (l) => formatPickLabel(l),
+    pick: (l) => legPickColumnLabel(l, l.game),
     line: (l) => numeric(l.line),
     odds: (l) => parseAmericanOdds(l.odds),
     date: kickoff,
@@ -133,7 +187,7 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
                   {leg.betType === "player_prop" ? "PROP" : (leg.betType ?? "").toUpperCase() || "—"}
                 </Badge>
               </td>
-              <td className="px-3 py-2 text-muted-foreground text-xs">{formatPickLabel(leg)}</td>
+              <td className="px-3 py-2 text-muted-foreground text-xs whitespace-nowrap">{legPickColumnLabel(leg, leg.game)}</td>
               <td className="px-3 py-2 text-muted-foreground text-xs">{leg.line || "—"}</td>
               <td className="px-3 py-2 text-muted-foreground text-xs">
                 {withPlusSign(leg.odds) ?? "—"}
@@ -146,7 +200,7 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
               </td>
               <td className="px-3 py-2 text-muted-foreground text-xs whitespace-nowrap">
                 {leg.game?.gameTime
-                  ? new Date(leg.game.gameTime).toLocaleTimeString(undefined, { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" })
+                  ? kickoffTimeLabel(leg.game.gameTime)
                   : "—"}
               </td>
               <td className="px-3 py-2 text-muted-foreground text-xs whitespace-nowrap">

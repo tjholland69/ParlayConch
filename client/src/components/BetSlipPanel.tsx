@@ -137,7 +137,7 @@ export function BetSlipPanel({ parlay, leagueName }: Props) {
           ))}
         </div>
         <p className="text-[10px] text-muted-foreground/50 italic">
-          Auto-staging picks in sportsbook apps is coming soon. Copy the slip above and paste it manually for now.
+          These open the sportsbook's site. None of them can take a ready-made slip, so copy it above and enter the bets there.
         </p>
       </div>
     </div>

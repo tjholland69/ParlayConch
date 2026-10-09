@@ -1,5 +1,5 @@
 import type { Game, TakenPick } from "@shared/schema";
-import { legChipLabel } from "@shared/formatPick";
+import { legChipLabel, spreadLabels } from "@shared/formatPick";
 import { canBuyPoints, impliedPointsMoved, lineForBet, MAX_POINTS_MOVE, POINTS_STEP } from "@shared/buyPoints";
 
 export { canBuyPoints, MAX_POINTS_MOVE, POINTS_STEP };
@@ -26,9 +26,14 @@ export function derivePointsMoved(game: Game, betType: string, pick: string, sto
   return Math.min(MAX_POINTS_MOVE, Math.max(-MAX_POINTS_MOVE, raw));
 }
 
+/** The away side of a game's home spread, signed: "-7" -> "+7", "+3" -> "-3". */
 export function awaySpreadDisplay(spread: string | null | undefined): string | null {
-  if (!spread) return null;
-  return `+${spread.replace(/^[+-]/, "")}`;
+  return spreadLabels({ spread }).away;
+}
+
+/** The home side, signed: an unsigned "3" reads "+3". */
+export function homeSpreadDisplay(spread: string | null | undefined): string | null {
+  return spreadLabels({ spread }).home;
 }
 
 /** A selected pick as it reads on the bet slip and a game's selection strip

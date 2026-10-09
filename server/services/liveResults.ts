@@ -2,7 +2,7 @@
  * Keeps results moving while games are on, without anyone pressing a sync
  * button. Run every few minutes (server/jobs/live-results-queue.ts).
  *
- * A tick with nothing to do costs two small database reads and no network:
+ * A tick with nothing to do costs three small database reads and no network:
  * it only reaches out once a game on the active week has kicked off and
  * isn't final yet.
  *
@@ -51,6 +51,9 @@ async function propsAwaitingStats(weekId: number): Promise<number> {
 }
 
 export async function runLiveResultsTick(now: Date = new Date()): Promise<LiveResultsTick> {
+  // A locked parlay whose first game has kicked off is taken as placed.
+  await storage.markStartedParlaysPlaced(now).catch((err) => logger.error({ err }, "[live results] couldn't mark started parlays placed"));
+
   const activeWeek = await storage.getActiveWeek();
   if (!activeWeek) return { ran: false, reason: "No active week" };
 

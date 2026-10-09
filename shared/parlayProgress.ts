@@ -14,6 +14,19 @@ export function hasGameStarted(game: GameLike | null | undefined, now: Date = ne
 
 const OPEN_STATUSES = new Set(["pending", "approved", "sent", "placed"]);
 
+/**
+ * Locked: closed to picks and not settled yet. Only a locked parlay can be
+ * copied out to a sportsbook, since an open one can still change.
+ */
+export function isParlayLocked(parlay: { status?: string | null }): boolean {
+  return OPEN_STATUSES.has(parlay.status ?? "");
+}
+
+/** Locked, and nobody has said it's in at a sportsbook yet. */
+export function canConfirmPlaced(parlay: { status?: string | null }): boolean {
+  return isParlayLocked(parlay) && parlay.status !== "placed";
+}
+
 /** An open parlay with at least one game underway: picks can no longer change. */
 export function isParlayInProgress(
   parlay: { status?: string | null; legs?: { game?: GameLike | null }[] | null },
