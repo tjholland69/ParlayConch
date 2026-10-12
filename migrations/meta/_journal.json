@@ -197,6 +197,27 @@
       "when": 1791517860329,
       "tag": "0027_suss_votes",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1791751605202,
+      "tag": "0028_actual_odds_user_contacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1791756648683,
+      "tag": "0029_pick_suggestions",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1791766916854,
+      "tag": "0030_leg_player_link",
+      "breakpoints": true
     }
   ]
 }

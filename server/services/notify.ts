@@ -16,6 +16,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { logger } from "../logger";
 import { leagueMembers, notifications, users } from "@shared/db-schema";
+import { userContacts } from "@shared/models/auth";
 import type { UserNotificationPreferences, UserSettings } from "@shared/schema";
 import {
   enabledChannels,
@@ -31,6 +32,8 @@ type Recipient = {
   email: string | null;
   firstName: string | null;
   prefs: UserNotificationPreferences | null;
+  /** Where texts would go (user_contacts). Null when they haven't given one. */
+  phoneNumber: string | null;
 };
 
 export type NotifyInput = {
@@ -67,14 +70,16 @@ const CHANNEL_SENDERS: Record<NotificationChannel, ChannelSender | null> = {
 async function loadRecipients(userIds: string[]): Promise<Recipient[]> {
   if (userIds.length === 0) return [];
   const rows = await db
-    .select({ id: users.id, email: users.email, firstName: users.firstName, settings: users.settings })
+    .select({ id: users.id, email: users.email, firstName: users.firstName, settings: users.settings, phoneNumber: userContacts.phoneNumber })
     .from(users)
+    .leftJoin(userContacts, eq(userContacts.userId, users.id))
     .where(inArray(users.id, userIds));
   return rows.map((r) => ({
     id: r.id,
     email: r.email,
     firstName: r.firstName,
     prefs: (r.settings as UserSettings | null)?.notificationPreferences ?? null,
+    phoneNumber: r.phoneNumber,
   }));
 }
 
@@ -104,7 +109,7 @@ export async function notifyUsers(userIds: string[], input: NotifyInput): Promis
     for (const to of recipients) {
       if (!fresh.has(to.id)) continue;
       void publishUserEvent(to.id, "notifications_updated").catch(() => undefined);
-      for (const channel of enabledChannels(to.prefs)) {
+      for (const channel of enabledChannels(to.prefs, to.phoneNumber)) {
         const send = CHANNEL_SENDERS[channel];
         if (!send) continue;
         send(to, input).catch((err) => logger.warn({ err, channel, event: input.event }, "[notify] channel send failed"));

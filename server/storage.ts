@@ -2,7 +2,7 @@ import { db } from "./db";
 import { logger } from "./logger";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks, leaguePokes,
-  pickDelegations, unlockRequests, legSussVotes,
+  pickDelegations, unlockRequests, legSussVotes, pickSuggestions,
   players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes, teams,
 } from "@shared/db-schema";
 import {
@@ -40,6 +40,7 @@ import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 import { impliedPointsMoved, MAX_POINTS_MOVE } from "@shared/buyPoints";
 import type { MultiBetLegInput } from "@shared/multiBetValidation";
 import { hasGameStarted } from "@shared/parlayProgress";
+import { happenedAt } from "@shared/membershipWindow";
 import {
   PickRuleError, canStartParlay, currentParlayFor, findMarketConflict, isOpenForPicks, marketLabel, openParlayFor,
 } from "@shared/weekParlays";
@@ -82,6 +83,11 @@ function pickKey(leg: { betType: string; gameId?: number | null; pick: string; p
     ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
     : `game:${leg.gameId}:${leg.betType}:${leg.pick}`;
 }
+
+// A timestamp computed in SQL (min(), coalesce()) comes back as the bare
+// text Postgres stores, which is UTC like every timestamp column here.
+const dbTimestamp = (value: unknown): Date | null =>
+  value == null ? null : value instanceof Date ? value : new Date(`${String(value).replace(" ", "T")}Z`);
 
 type PickTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type LegWithOwner = ParlayLeg & { owner: typeof users.$inferSelect | null };
@@ -198,6 +204,7 @@ export interface IStorage {
   getUnlockRequests(leagueId: number, weekId: number): Promise<UnlockRequest[]>;
   resolveUnlockRequest(id: number, resolvedBy: string, status: "granted" | "dismissed"): Promise<UnlockRequest | null>;
   setParlayBoost(parlayId: number, boostPct: number | null): Promise<Parlay>;
+  setParlayActualOdds(parlayId: number, actualOdds: string | null): Promise<Parlay>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(
     leagueId: number,
@@ -322,6 +329,7 @@ export interface IStorage {
   setLegDecision(legId: number, info: { decidedAt: Date; decidedPlayDesc: string; decidedQuarter: string; decidedClock: string; decidedConfidence: string }): Promise<void>;
   patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
   updateGameTime(gameId: number, gameTime: Date): Promise<void>;
+  updateGameVenue(gameId: number, venue: string | null): Promise<void>;
   getUser(userId: string): Promise<typeof users.$inferSelect | null>;
 
   // nflverse / Players
@@ -505,6 +513,29 @@ export class DatabaseStorage implements IStorage {
    * window. Absence of a valid submission in an eligible week — whether or
    * not a void row actually exists for it — is what counts against them.
    */
+  /**
+   * When each week with real league activity happened: its first kickoff.
+   * A week whose games carry no time falls back to its earliest submission,
+   * which is only right for parlays entered at the time (an import made
+   * years later would date the week to the day of the import).
+   */
+  private async weekAnchors(legRows: { weekId: number; createdAt: Date | null }[]): Promise<Map<number, number>> {
+    const submissions = new Map<number, (Date | null)[]>();
+    for (const row of legRows) submissions.set(row.weekId, [...(submissions.get(row.weekId) ?? []), row.createdAt]);
+    const weekIds = [...submissions.keys()];
+    if (weekIds.length === 0) return new Map();
+    const kickoffs = await db.select({ weekId: games.weekId, first: sql<string | null>`min(${games.gameTime})`.mapWith(dbTimestamp) })
+      .from(games).where(inArray(games.weekId, weekIds)).groupBy(games.weekId);
+    const firstKickoff = new Map(kickoffs.map(k => [k.weekId, k.first]));
+    const anchors = new Map<number, number>();
+    for (const [weekId, entered] of submissions) {
+      const earliestEntry = happenedAt(entered, null);
+      const t = happenedAt([firstKickoff.get(weekId)], earliestEntry);
+      if (t != null) anchors.set(weekId, t);
+    }
+    return anchors;
+  }
+
   async getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]> {
     const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
     const memberIds = members.map(m => m.userId);
@@ -531,15 +562,7 @@ export class DatabaseStorage implements IStorage {
         weekFilter,
       ));
 
-    // Anchor each week that saw real league activity to its earliest submission
-    // — the closest thing to "when that week happened" available to us.
-    const weekAnchor = new Map<number, number>();
-    for (const row of legRows) {
-      if (!row.createdAt) continue;
-      const t = new Date(row.createdAt).getTime();
-      const existing = weekAnchor.get(row.weekId);
-      if (existing === undefined || t < existing) weekAnchor.set(row.weekId, t);
-    }
+    const weekAnchor = await this.weekAnchors(legRows);
     const activeWeekIds = [...weekAnchor.keys()];
 
     // Participation uses leg contribution (a member contributed at least one
@@ -637,13 +660,7 @@ export class DatabaseStorage implements IStorage {
         inArray(parlayLegs.userId, memberIds),
       ));
 
-    const weekAnchor = new Map<number, number>();
-    for (const row of legRows) {
-      if (!row.createdAt) continue;
-      const t = new Date(row.createdAt).getTime();
-      const existing = weekAnchor.get(row.weekId);
-      if (existing === undefined || t < existing) weekAnchor.set(row.weekId, t);
-    }
+    const weekAnchor = await this.weekAnchors(legRows);
 
     const submittedWeeks = new Set(legRows.filter(r => r.userId === userId).map(r => r.weekId));
 
@@ -1009,6 +1026,57 @@ export class DatabaseStorage implements IStorage {
     return member?.role === 'lieutenant';
   }
 
+  /**
+   * Parlay Maestro: corrects when a member was in the league. Voids and
+   * participation are worked out from this window, so backdating a start
+   * makes a founding member answerable for old weeks, and moving it later
+   * clears weeks from before they joined. An end date only applies to a
+   * member who has left.
+   */
+  async setMemberDates(leagueId: number, userId: string, dates: { startDate: Date; endDate?: Date | null }): Promise<typeof leagueMembers.$inferSelect> {
+    const [member] = await db.select().from(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+    if (!member) throw new PickRuleError("That person isn't in this league.");
+    if (dates.startDate.getTime() > Date.now()) throw new PickRuleError("A start date can't be in the future.");
+    const endDate = dates.endDate === undefined ? member.endDate : dates.endDate;
+    if (member.isActive && endDate) throw new PickRuleError("Only a member who has left the league has an end date.");
+    if (!member.isActive && !endDate) throw new PickRuleError("A member who has left needs an end date.");
+    if (endDate && endDate.getTime() <= dates.startDate.getTime()) throw new PickRuleError("The end date has to come after the start date.");
+    const [updated] = await db.update(leagueMembers).set({ startDate: dates.startDate, endDate })
+      .where(eq(leagueMembers.id, member.id)).returning();
+    return updated;
+  }
+
+  /**
+   * Parlay Maestro: moves every member's start date back to the kickoff of
+   * their first pick in the league, where that's earlier than the date on
+   * file. For a league whose history was imported: members' picks from
+   * before they signed up to the app then count from when they were made.
+   * Never moves a date later. Returns who changed.
+   */
+  async backdateMembersToFirstPick(leagueId: number): Promise<{ userId: string; from: Date; to: Date }[]> {
+    const firstPicks = await db.select({
+      userId: parlayLegs.userId,
+      first: sql<string | null>`min(coalesce(${games.gameTime}, (select min(g2.game_time) from games g2 where g2.week_id = ${parlays.weekId}), ${parlays.createdAt}))`.mapWith(dbTimestamp),
+    })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(and(eq(parlays.leagueId, leagueId), not(inArray(parlays.status as any, ["void", "rejected", "draft"]))))
+      .groupBy(parlayLegs.userId);
+    const firstByUser = new Map(firstPicks.filter(r => r.first).map(r => [r.userId, r.first!]));
+
+    const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
+    const changed: { userId: string; from: Date; to: Date }[] = [];
+    for (const member of members) {
+      const first = firstByUser.get(member.userId);
+      if (!first || first.getTime() >= member.startDate.getTime()) continue;
+      await db.update(leagueMembers).set({ startDate: first }).where(eq(leagueMembers.id, member.id));
+      changed.push({ userId: member.userId, from: member.startDate, to: first });
+    }
+    return changed;
+  }
+
   async getLeagueMembersWithUsers(leagueId: number, opts?: { includeInactive?: boolean; asOfDate?: Date }): Promise<LeagueMemberWithUser[]> {
     const conditions = [eq(leagueMembers.leagueId, leagueId)];
     if (opts?.asOfDate) {
@@ -1303,6 +1371,16 @@ export class DatabaseStorage implements IStorage {
     const parlayRecord = await db.transaction(async (tx) => {
       const league = await this.lockLeagueForPicks(tx, leagueId);
 
+      // A pick always belongs to a member of the league. A super user can
+      // act in any league, but only On Behalf Of someone who's in it.
+      const [membership] = await tx.select({ id: leagueMembers.id }).from(leagueMembers)
+        .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true)));
+      if (!membership) {
+        throw new PickRuleError(placedBy
+          ? "That person isn't a member of this league, so they can't have a pick in its parlay."
+          : "You aren't a member of this league, so you can't have a pick in its parlay. To add one, make it On Behalf Of a member.");
+      }
+
       const [lock] = await tx.select({ id: leagueWeekLocks.id }).from(leagueWeekLocks)
         .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
       if (lock) throw new PickRuleError("This week's picks are locked and can no longer be changed.");
@@ -1356,9 +1434,30 @@ export class DatabaseStorage implements IStorage {
         throw new PickRuleError(`This parlay is full (${maxLegs} legs).`);
       }
 
+      // A pick only counts as "from a suggestion" when that suggestion was
+      // made to this member for this exact bet. Re-saving the same bet
+      // (moving its line, say) keeps the link it already had.
+      let suggestionId: number | null = null;
+      if (leg.suggestionId != null) {
+        const [suggestion] = await tx.select({ id: pickSuggestions.id }).from(pickSuggestions)
+          .where(and(
+            eq(pickSuggestions.id, leg.suggestionId),
+            eq(pickSuggestions.userId, userId),
+            eq(pickSuggestions.leagueId, leagueId),
+            eq(pickSuggestions.weekId, weekId),
+            eq(pickSuggestions.betType, leg.betType),
+            eq(pickSuggestions.pick, leg.pick),
+            ...(leg.gameId != null ? [eq(pickSuggestions.gameId, leg.gameId)] : []),
+          ));
+        suggestionId = leg.gameId != null && suggestion ? suggestion.id : null;
+      } else {
+        suggestionId = mine.find(l => l.gameId === leg.gameId && l.betType === leg.betType && l.pick === leg.pick)?.suggestionId ?? null;
+      }
+
       if (mine.length > 0) await tx.delete(parlayLegs).where(inArray(parlayLegs.id, mine.map(l => l.id)));
       await tx.insert(parlayLegs).values({
         ...leg,
+        suggestionId,
         parlayId: target.id,
         userId,
         ...(placedBy ? { placedByUserId: placedBy, approvalStatus: "pending" } : {}),
@@ -1493,6 +1592,13 @@ export class DatabaseStorage implements IStorage {
   /** Sets or clears (null) a parlay's promo boost. Allowed at any status. */
   async setParlayBoost(parlayId: number, boostPct: number | null): Promise<Parlay> {
     const [updated] = await db.update(parlays).set({ boostPct }).where(eq(parlays.id, parlayId)).returning();
+    if (!updated) throw new Error("Parlay not found");
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
+    return updated;
+  }
+
+  async setParlayActualOdds(parlayId: number, actualOdds: string | null): Promise<Parlay> {
+    const [updated] = await db.update(parlays).set({ actualOdds }).where(eq(parlays.id, parlayId)).returning();
     if (!updated) throw new Error("Parlay not found");
     emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
     return updated;
@@ -3186,6 +3292,10 @@ export class DatabaseStorage implements IStorage {
     await db.update(games).set({ gameTime }).where(eq(games.id, gameId));
   }
 
+  async updateGameVenue(gameId: number, venue: string | null): Promise<void> {
+    await db.update(games).set({ venue }).where(eq(games.id, gameId));
+  }
+
   /**
    * One-time backfill for games that were finished before `finishedAt` existed.
    * Estimates finish time as kickoff + ~3.5 hours (typical NFL game length) —
@@ -3543,6 +3653,11 @@ export class DatabaseStorage implements IStorage {
         .returning({ id: players.id, nflverseId: players.nflverseId });
       for (const p of saved) if (p.nflverseId) idByNflverseId.set(p.nflverseId, p.id);
     }
+    // New players may be who an unlinked prop was about all along.
+    await db.execute(sql`
+      update parlay_legs set player_id = leg_player_id(player_name, game_id)
+      where bet_type = 'player_prop' and player_id is null and player_name is not null
+        and leg_player_id(player_name, game_id) is not null`);
     return idByNflverseId;
   }
 

@@ -202,6 +202,10 @@ export const parlays = pgTable("parlays", {
   // 25% boost). Null when there's no boost. Editable at any status, since a
   // boost claimed at the book is often recorded here after the bet is live.
   boostPct: real("boost_pct"),
+  // What the sportsbook actually paid on the whole ticket, as American odds
+  // ("+650"), recorded by whoever placed it. Null until someone does; the
+  // app then shows its own estimate from the legs (shared/parlayOdds.ts).
+  actualOdds: text("actual_odds"),
 }, (table) => [
   // Not unique: in a league that runs several parlays a week, the same
   // member can start more than one.
@@ -210,6 +214,41 @@ export const parlays = pgTable("parlays", {
   index("parlays_status_idx").on(table.status),
   index("parlays_league_status_idx").on(table.leagueId, table.status),
 ]);
+
+// A pick the app suggested to a member for a week's parlay, and why. Every
+// suggestion shown is kept, taken or not: a leg made from one points back at
+// it (parlay_legs.suggestion_id), so a row no leg points to is a suggestion
+// the member passed on. One row per member per bet per week; showing it again
+// refreshes the line, odds and reason.
+export const pickSuggestions = pgTable("pick_suggestions", {
+  id: serial("id").primaryKey(),
+  leagueId: integer("league_id")
+    .notNull()
+    .references(() => leagues.id, { onDelete: "cascade" }),
+  weekId: integer("week_id")
+    .notNull()
+    .references(() => weeks.id, { onDelete: "cascade" }),
+  userId: varchar("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  gameId: integer("game_id")
+    .notNull()
+    .references(() => games.id, { onDelete: "cascade" }),
+  betType: text("bet_type").notNull(), // 'spread' | 'moneyline' | 'over' | 'under'
+  pick: text("pick").notNull(),        // 'home' | 'away' | 'over' | 'under'
+  line: text("line"), // market line and odds when it was last shown
+  odds: text("odds"),
+  reason: text("reason").notNull(),    // see SUGGESTION_REASONS in shared/pickSuggestions.ts
+  detail: text("detail").notNull(),    // what the member read, e.g. "You're 4-1 picking the Bills"
+  rank: integer("rank").notNull(),     // 1 = top of the list when last shown
+  createdAt: timestamp("created_at").notNull().defaultNow(), // first shown
+  updatedAt: timestamp("updated_at").notNull().defaultNow(), // last shown
+}, (table) => [
+  uniqueIndex("pick_suggestions_member_bet_uidx").on(table.leagueId, table.weekId, table.userId, table.gameId, table.betType, table.pick),
+  index("pick_suggestions_user_idx").on(table.userId),
+]);
+
+export type PickSuggestionRow = typeof pickSuggestions.$inferSelect;
 
 // Parlay legs - individual picks within a parlay
 export const parlayLegs = pgTable("parlay_legs", {
@@ -231,6 +270,12 @@ export const parlayLegs = pgTable("parlay_legs", {
   resultDetail: text("result_detail"), // human-readable justification for the result, e.g. "Passed for 312 yds (needed 245.5+)" or "Final: DAL 24 @ PHI 17"
   oddsEnriched: boolean("odds_enriched").default(false), // true once odds/result have been auto-resolved
   playerName: text("player_name"), // for player_prop bets: the player's name
+  // The player that name belongs to, when the players table has exactly one
+  // (or exactly one on this game's two teams). Kept in step with playerName
+  // by a database trigger (parlay_legs_link_player, migration 0030), so every
+  // way of writing a leg gets it: nothing in the app sets it. Null for a
+  // name the table doesn't know, or can't tell apart.
+  playerId: integer("player_id").references(() => players.id, { onDelete: "set null" }),
   propType: text("prop_type"),     // for player_prop bets: the prop category (e.g. 'rush_yards')
   notes: text("notes"),            // free-text note, display only
   enrichmentLog: text("enrichment_log"), // JSON: { at, changes, warnings, errors } — last data-fetch attempt
@@ -257,10 +302,14 @@ export const parlayLegs = pgTable("parlay_legs", {
   approvalStatus: text("approval_status"), // null | 'pending' | 'approved'
   approvalByUserId: varchar("approval_by_user_id").references(() => users.id, { onDelete: "set null" }),
   approvalAt: timestamp("approval_at"),
+  // Set when the member took this pick from a suggestion (pick_suggestions).
+  // Null for a pick they chose themselves.
+  suggestionId: integer("suggestion_id").references(() => pickSuggestions.id, { onDelete: "set null" }),
 }, (table) => [
   index("parlay_legs_parlay_id_idx").on(table.parlayId),
   index("parlay_legs_user_id_idx").on(table.userId),
   index("parlay_legs_odds_enriched_idx").on(table.oddsEnriched),
+  index("parlay_legs_player_id_idx").on(table.playerId),
 ]);
 
 // A league member disputing a leg's outcome or entry. Reviewed by support in

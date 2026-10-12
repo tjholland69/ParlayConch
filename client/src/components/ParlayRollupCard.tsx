@@ -1,3 +1,4 @@
+import { PlayerCombobox } from "@/components/PlayerCombobox";
 import React, { useState, memo } from "react";
 import { useDeleteParlay, useDeleteParlayLeg, useUpdateParlayLeg, useUpdateParlayStatus, useAddParlayLeg, useEnrichParlayLeg, useRecalcParlay, useSplitParlayLegs, useCloneParlay, useSetParlayBoost, useWeeks, type EnrichLog } from "@/hooks/use-bets";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -34,6 +35,9 @@ import { legLookthroughLabel, legPickColumnLabel } from "@shared/formatPick";
 import { kickoffTimeLabel } from "@shared/parlayReminder";
 import { legContextLine } from "@shared/nflWeek";
 import { boostLabel } from "@shared/parlayBoost";
+import { ParlayOddsDialog } from "@/components/ParlayOddsDialog";
+import { parlayOdds, parlayOddsText } from "@shared/parlayOdds";
+import { useSetParlayActualOdds } from "@/hooks/use-parlay-extras";
 import { BoostDialog } from "@/components/BoostDialog";
 import { ShameReportDialog } from "@/components/ShameReportDialog";
 import { canShameSeason } from "@shared/shameReport";
@@ -131,7 +135,7 @@ export function LegSheet({ open, onOpenChange, title, initial, onSave, isSaving 
             <>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Player Name</Label>
-                <Input className="h-9" value={form.playerName} onChange={e => set("playerName")(e.target.value)} placeholder="e.g. Travis Kelce" />
+                <PlayerCombobox value={form.playerName} onChange={set("playerName")} placeholder="Search players" allowCustom testId="combobox-leg-player" />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Prop Type</Label>
@@ -362,6 +366,10 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
   const [boostOpen, setBoostOpen] = useState(false);
   const setBoost = useSetParlayBoost();
   const boostEditable = !selectMode && (canManage || !readOnly || parlay.userId === effectiveUserId);
+  const odds = parlay.status === "void" ? null : parlayOdds(parlay);
+  const oddsEditable = boostEditable && parlay.status !== "draft";
+  const [oddsOpen, setOddsOpen] = useState(false);
+  const setActualOdds = useSetParlayActualOdds();
   const [splitMode, setSplitMode] = useState(false);
   const [splitSelected, setSplitSelected] = useState<Set<number>>(new Set());
   const splitLegs = useSplitParlayLegs(leagueId);
@@ -597,6 +605,29 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
                 data-testid={`button-parlay-boost-${parlay.id}`}
               >
                 🚀
+              </button>
+            )}
+
+            {/* The whole ticket's odds: what was recorded off the sportsbook,
+                else the app's estimate. Whoever can set a boost can record
+                the real number once the parlay is locked. */}
+            {odds && (
+              <button
+                type="button"
+                disabled={!oddsEditable}
+                onClick={e => { e.stopPropagation(); setOddsOpen(true); }}
+                title={odds.estimated
+                  ? `Estimated from the legs${oddsEditable ? ". Click to enter the odds you got at the sportsbook" : ""}`
+                  : `Odds at placement${oddsEditable ? " (click to change)" : ""}`}
+                aria-label={`Parlay odds: ${parlayOddsText(odds)}`}
+                className={cn(
+                  "shrink-0 rounded-full border px-1.5 py-0.5 text-xs leading-none tabular-nums transition-colors",
+                  odds.estimated ? "border-dashed border-white/15 text-muted-foreground" : "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
+                  oddsEditable && "hover:border-emerald-400/60 hover:text-emerald-200",
+                )}
+                data-testid={`button-parlay-odds-${parlay.id}`}
+              >
+                {parlayOddsText(odds)}
               </button>
             )}
 
@@ -1119,6 +1150,16 @@ export const ParlayRollupCard = memo(function ParlayRollupCard({
         <ShameReportDialog story={story} open={shameOpen} onOpenChange={setShameOpen} />
       )}
 
+      <ParlayOddsDialog
+        open={oddsOpen}
+        onOpenChange={setOddsOpen}
+        actualOdds={parlay.actualOdds}
+        estimate={parlayOdds({ ...parlay, actualOdds: null })?.label}
+        isSaving={setActualOdds.isPending}
+        onConfirm={(actualOdds) =>
+          setActualOdds.mutate({ parlayId: parlay.id, actualOdds }, { onSuccess: () => setOddsOpen(false) })
+        }
+      />
       <BoostDialog
         open={boostOpen}
         onOpenChange={setBoostOpen}

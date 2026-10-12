@@ -2,6 +2,7 @@ import { View, Text, ScrollView, RefreshControl, Pressable, Modal, TextInput, St
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from "expo-router";
 import { useDashboardSummary, useDashboardPatterns, useDashboardPerformance, useCustomIndexes, useCustomIndexPerformance, type DashboardDateRange, type WinRateTimeSeriesPoint } from "@/hooks/use-dashboard";
 import { useLeagues } from "@/hooks/use-leagues";
 import { useMyParlayLegsByIds } from "@/hooks/use-parlays";
@@ -64,8 +65,13 @@ function StatTile({
 
 function SummarySlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: DashboardDateRange }) {
   const accent = useAccentColor();
+  const router = useRouter();
   const { data, isLoading, error } = useDashboardSummary(leagueId, dateRange);
+  const { data: leagues } = useLeagues();
   const [lookthrough, setLookthrough] = useState<Lookthrough | null>(null);
+  const [leaguesOpen, setLeaguesOpen] = useState(false);
+  // The leagues behind the count: the one being filtered to, else all of them.
+  const countedLeagues = (leagues ?? []).filter((l) => leagueId === undefined || l.id === leagueId);
 
   if (isLoading) return <DashboardLoading message="Loading summary…" />;
   if (error || !data) return <DashboardEmptyState message="Couldn't load your summary right now." />;
@@ -79,7 +85,12 @@ function SummarySlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: 
     <View>
       <Text style={styles.slideTitle}>Summary</Text>
       <View style={styles.statGrid}>
-        <StatTile icon="people-outline" label="Leagues" value={String(data.leagueCount)} />
+        <StatTile
+          icon="people-outline"
+          label="Leagues"
+          value={String(data.leagueCount)}
+          onPress={countedLeagues.length > 0 ? () => setLeaguesOpen(true) : undefined}
+        />
         <StatTile
           icon="checkmark-done-outline"
           label="Parlays Owned"
@@ -99,7 +110,7 @@ function SummarySlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: 
           value={`${data.legWinRate.toFixed(1)}%`}
           onPress={open("Decided Legs", ids && [...ids.winLegIds, ...ids.lossLegIds])}
         />
-        <StatTile icon="pulse-outline" label="Participation" value={`${(data.participationRate * 100).toFixed(0)}%`} />
+        <StatTile icon="pulse-outline" label="Particip." value={`${(data.participationRate * 100).toFixed(0)}%`} />
         <StatTile
           icon="flash-outline"
           label="Power Score"
@@ -125,6 +136,33 @@ function SummarySlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: 
         />
       </View>
       <DashLookthrough lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
+      {/* The Leagues tile has no legs behind it: its lookthrough is the leagues themselves. */}
+      <LegLookthroughSheet visible={leaguesOpen} title="Leagues" onClose={() => setLeaguesOpen(false)}>
+        <ScrollView style={{ flexGrow: 0 }}>
+          {countedLeagues.map((league) => (
+            <Pressable
+              key={league.id}
+              onPress={() => {
+                setLeaguesOpen(false);
+                router.push({ pathname: "/leagues/[id]", params: { id: String(league.id) } });
+              }}
+              style={({ pressed }) => [styles.leagueRow, pressed && { opacity: 0.7 }]}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${league.name}`}
+              testID={`row-dash-league-${league.id}`}
+            >
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.leagueRowName} numberOfLines={1}>{league.name}</Text>
+                <Text style={styles.leagueRowMeta} numberOfLines={1}>
+                  {league.isAdmin ? "Parlay Maestro" : league.isLieutenant ? "Parlay Lieutenant" : "Member"}
+                  {league.memberCount != null ? ` · ${league.memberCount} member${league.memberCount === 1 ? "" : "s"}` : ""}
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={14} color="#475569" />
+            </Pressable>
+          ))}
+        </ScrollView>
+      </LegLookthroughSheet>
     </View>
   );
 }
@@ -744,9 +782,9 @@ const styles = StyleSheet.create({
   currentSwatchIndex: { height: 0, borderTopWidth: 2, borderStyle: "dashed", backgroundColor: "transparent" },
   currentLabel: { fontSize: 11, color: "#94a3b8" },
   currentPct: { fontSize: 13, fontWeight: "700", color: "#f1f5f9", minWidth: 46, textAlign: "right" },
-  statGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  statGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 8 },
   statTile: {
-    width: "47%",
+    width: "48.5%",
     backgroundColor: "#141926",
     borderWidth: 1,
     borderColor: "#2a3447",
@@ -787,6 +825,16 @@ const styles = StyleSheet.create({
   slateRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 4 },
   slateRowLabel: { fontSize: 13, color: "#94a3b8" },
   slateRowValue: { fontSize: 13, fontWeight: "700", color: "#f1f5f9" },
+  leagueRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 11,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderColor: "#2a3447",
+  },
+  leagueRowName: { fontSize: 14, fontWeight: "700", color: "#f1f5f9" },
+  leagueRowMeta: { fontSize: 11, color: "#64748b", marginTop: 2 },
 
   leagueFilterWrap: {
     width: "100%",

@@ -55,8 +55,8 @@ function kickoffLabel(gameTime: Date | string): string {
 /**
  * One parlay leg, the same two lines everywhere a leg is listed:
  *   Bet Owner · the bet ("49ers +6.5", "Lamar Jackson - Rush Yds O 25")   Result
- *   Week 4 2026 - Patriots @ Bills - 1:05pm EDT
- * The right side holds the result and nothing else. Tapping the row opens
+ *   Week 4 2026 - Patriots @ Bills - 1:05pm EDT                            -110
+ * The right side holds the result, with the bet's odds under it. Tapping the row opens
  * the game details underneath. On the member's own bet (`disputable`) the
  * bet text is a link that opens the dispute sheet. `trailing` sits before
  * the result (the Suss Meter, on an open parlay).
@@ -125,12 +125,13 @@ export function LegRow({
         <View style={styles.line}>
           <Text style={styles.meta} numberOfLines={1}>{secondLine || "—"}</Text>
           <Ionicons name={open ? "chevron-up" : "chevron-down"} size={12} color="#475569" />
+          {/* The bet's odds, right under its result. */}
+          {odds ? <Text style={styles.odds} testID={`text-leg-odds-${leg.id}`}>{odds}</Text> : null}
         </View>
       </Pressable>
       {open && (
         <View style={styles.details}>
           {game?.gameTime ? <Text style={styles.detailText}>Kickoff: {kickoffLabel(game.gameTime)} ET</Text> : null}
-          {odds ? <Text style={styles.detailText}>Odds: {odds}</Text> : null}
           {score ? <Text style={styles.detailText}>{score}</Text> : null}
           <Text style={styles.detailText}>
             {leg.result ? `${leg.result.toUpperCase()}: ${resolveResultDetail(leg, game)}` : "Not settled yet"}
@@ -255,6 +256,7 @@ const styles = StyleSheet.create({
   pick: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: "600" },
   pickLink: { textDecorationLine: "underline" },
   result: { fontSize: 12, fontWeight: "700", flexShrink: 0, minWidth: 48, textAlign: "right" },
+  odds: { fontSize: 11, fontWeight: "600", color: "#94a3b8", flexShrink: 0, minWidth: 40, textAlign: "right", fontVariant: ["tabular-nums"] },
   voidRow: { opacity: 0.7 },
   slateRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, marginBottom: 2 },
   slateLabel: { fontSize: 10, fontWeight: "700", letterSpacing: 0.8, color: "#64748b" },

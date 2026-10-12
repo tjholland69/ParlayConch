@@ -36,6 +36,20 @@ export const userPasswords = pgTable("user_passwords", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// A member's mobile number, for text reminders and (later) two-factor sign-in.
+// Its own table, like passwords: user rows travel with a member's name to
+// everyone in their leagues, and a phone number must not go with them. Only
+// ever sent back to the account's owner and to super users.
+export const userContacts = pgTable("user_contacts", {
+  userId: varchar("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  // E.164 form: "+15085551234".
+  phoneNumber: varchar("phone_number"),
+  // Set once the number has been confirmed by a code sent to it. Nothing
+  // verifies numbers yet, so this stays null for now.
+  phoneVerifiedAt: timestamp("phone_verified_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // One-time tokens for the "set your password" flow (accounts from the retired
 // single sign-on) and for future password resets. Stores a hash of the
 // token, never the raw value.

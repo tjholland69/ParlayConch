@@ -66,6 +66,8 @@ export type UserNotificationPreferences = {
   email: boolean;
   sms: boolean;
   push: boolean;
+  /** No longer used: the mobile number moved to user_contacts so it stops
+   * travelling with settings. Old app builds may still send it; it's dropped. */
   phone?: string;
   /** Which alerts the member wants, by NOTIFICATION_EVENTS key. An alert
    * left out follows its default (shared/notifications.ts). */

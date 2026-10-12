@@ -14,6 +14,7 @@ import {
   buildAllocationReport,
   buildDisputesReport,
   buildLoserReport,
+  buildOpenParlaysReport,
   buildSussReport,
   buildStandingsReport,
   type Report,
@@ -97,7 +98,7 @@ async function allocationReport(league: typeof leagues.$inferSelect, scope: Repo
   });
 }
 
-type NameUser = { settings: unknown; firstName: string | null; email: string | null } | null | undefined;
+type NameUser = { settings?: unknown; firstName?: string | null; email?: string | null } | null | undefined;
 const nameOf = (u: NameUser) => (u?.settings as UserSettings | null)?.displayName || u?.firstName || u?.email || "Unknown";
 
 async function disputesReport(league: typeof leagues.$inferSelect): Promise<Report> {
@@ -157,6 +158,41 @@ async function sussReport(league: typeof leagues.$inferSelect): Promise<Report> 
   return buildSussReport({ leagueName: league.name, parlays: [...byParlay.values()] });
 }
 
+async function openParlaysReport(league: typeof leagues.$inferSelect): Promise<Report> {
+  const [rows, members] = await Promise.all([
+    db.select({ parlay: parlays, week: weeks, leg: parlayLegs, game: games, owner: users })
+      .from(parlays)
+      .innerJoin(weeks, eq(parlays.weekId, weeks.id))
+      .leftJoin(parlayLegs, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .leftJoin(users, eq(parlayLegs.userId, users.id))
+      .where(and(eq(parlays.leagueId, league.id), eq(parlays.status, "draft"))),
+    storage.getLeagueMembersWithUsers(league.id),
+  ]);
+  const byParlay = new Map<number, { parlayId: number; weekId: number; weekLabel: string; inIds: Set<string>; legs: { owner: string; bet: string; pickedAt: Date | null }[] }>();
+  for (const r of rows) {
+    const entry = byParlay.get(r.parlay.id) ?? { parlayId: r.parlay.id, weekId: r.week.id, weekLabel: r.week.label, inIds: new Set<string>(), legs: [] };
+    if (r.leg) {
+      entry.inIds.add(r.leg.userId);
+      entry.legs.push({ owner: nameOf(r.owner), bet: legShortLabel(r.leg, r.game), pickedAt: r.leg.createdAt });
+    }
+    byParlay.set(r.parlay.id, entry);
+  }
+  const open = [...byParlay.values()].sort((a, b) => a.weekId - b.weekId || a.parlayId - b.parlayId);
+  const weekIds = [...new Set(open.map((p) => p.weekId))];
+  const weekGames = weekIds.length === 0 ? [] : await db.select({ weekId: games.weekId, gameTime: games.gameTime }).from(games).where(inArray(games.weekId, weekIds));
+  return buildOpenParlaysReport({
+    leagueName: league.name,
+    parlays: open.map((p) => ({
+      parlayId: p.parlayId,
+      weekLabel: p.weekLabel,
+      legs: p.legs,
+      missing: members.filter((m) => !p.inIds.has(m.userId)).map((m) => nameOf(m.user)),
+      games: weekGames.filter((g) => g.weekId === p.weekId),
+    })),
+  });
+}
+
 /** Null when the league doesn't exist. `scope` only applies to the allocation report. */
 export async function getLeagueReport(leagueId: number, reportId: ReportId, scope: ReportScope = "season"): Promise<Report | null> {
   const league = await storage.getLeague(leagueId);
@@ -184,5 +220,7 @@ export async function getLeagueReport(leagueId: number, reportId: ReportId, scop
       return disputesReport(league);
     case "suss":
       return sussReport(league);
+    case "open_parlays":
+      return openParlaysReport(league);
   }
 }

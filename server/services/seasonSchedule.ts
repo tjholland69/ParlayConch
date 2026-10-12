@@ -9,6 +9,7 @@ import {
   zonedWallTimeToUtc,
   type NflverseScheduleRow,
 } from "./nflverse";
+import { neutralVenueLabel } from "@shared/stadiums";
 
 export type SeasonScheduleReport = {
   season: number;
@@ -141,6 +142,7 @@ export async function syncSeasonSchedule(season: number, opts: { apply: boolean 
         moneylineHome: row.home_moneyline || null,
         moneylineAway: row.away_moneyline || null,
         gameTime: kickoff(row),
+        venue: row.location === "Neutral" ? neutralVenueLabel(homeTeam, row.stadium) : null,
         isFinished: false,
       });
     }

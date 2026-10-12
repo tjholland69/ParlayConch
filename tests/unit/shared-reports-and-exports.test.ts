@@ -295,7 +295,9 @@ describe("shared/notifications", () => {
 
   test("text only counts as a channel with a phone number", () => {
     expect(enabledChannels({ email: true, sms: true, push: false })).toEqual(["email"]);
-    expect(enabledChannels({ email: false, sms: true, push: true, phone: "+15551212" })).toEqual(["sms", "push"]);
+    expect(enabledChannels({ email: false, sms: true, push: true }, "+15085551212")).toEqual(["sms", "push"]);
+    // The number that used to sit inside the preferences no longer counts.
+    expect(enabledChannels({ email: false, sms: true, push: false, phone: "+15085551212" })).toEqual([]);
   });
 });
 

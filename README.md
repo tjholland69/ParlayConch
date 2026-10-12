@@ -317,7 +317,13 @@ WHERE email = 'admin@example.com';
 
 There is no public API for granting this role.
 
-A super user can set a new password on any account from the Admin page (`POST /api/admin/users/reset-password`). It checks the signed-in user, never an act-for identity, writes an `admin.reset_password` audit event, and emails nothing: the new password is passed on by hand.
+### User Manager (super users)
+
+The Admin page has a User Manager for supporting members without writing SQL: search every account by name or email, then correct its first name, last name, display name, email or mobile number, flag it as demo, or set a new password (`/api/admin/users`, `server/accountRoutes.ts`). Every route checks the signed-in user, never an act-for identity. A change writes an `admin.user_update` audit event naming the fields that changed (and the email before and after); a password reset writes `admin.reset_password` and emails nothing, so the new password is passed on by hand. Making someone a super user is still done in the database.
+
+### Mobile numbers
+
+A member can save a mobile number in Settings (`PUT /api/users/me/phone`), stored in E.164 form in `user_contacts`. It has its own table, like passwords, because user rows and their `settings` are sent to everyone in a member's leagues; the number only goes back to its owner and to super users. Nothing texts or verifies it yet (`phone_verified_at` is there for when something does).
 
 ## Parlay lifecycle
 
@@ -338,6 +344,12 @@ Submitting again for the same user, league, and week replaces the existing parla
 
 **Placed.** Only a locked parlay can be copied out to a sportsbook, and any member can do it. The app doesn't count how many members placed it: one member confirming (`POST /api/parlays/:id/confirm-placed`) moves it to `placed`, even before kickoff. A locked parlay whose first game has kicked off is taken as placed on the next results tick. If that's wrong, the Maestro can "Bust & reopen" it (`POST /api/parlays/:id/reopen`): it goes back to a draft and the week unlocks, but a pick on a game that has started can't be changed, removed or re-bet. Web links out to DraftKings, FanDuel, BetMGM and Caesars; mobile deep-links to FanDuel and DraftKings (`shared/sportsbook-providers.ts`). None of them accept a ready-made slip, so the bets are entered by hand from the copied text.
 
+**Parlay odds.** A parlay shows its odds as the legs' posted odds multiplied out, with any boost, marked "est." (`shared/parlayOdds.ts`). A sportsbook prices the ticket as a whole and the number moves, so once a parlay is locked its owner or the Maestro can record what it actually got (`PUT /api/parlays/:id/actual-odds`, American odds like `+650`; `null` goes back to the estimate). That's kept on the parlay, never per leg, and wins wherever the parlay's odds are shown, the league record included.
+
+**Who can pick.** A pick always belongs to an active member of the league. A super user can act in any league, but in one they haven't joined they can only pick On Behalf Of a member (`setDraftPick` in `server/storage.ts`). Each pick's `created_at` is when the pick that stands was saved: changing a pick writes a new row, so the time moves with it.
+
+**Where a game is played.** Game tiles show the stadium and its city ("Gillette Stadium - Foxborough, MA", `shared/stadiums.ts`). That's the home team's stadium unless the official schedule marks the game as neutral-site (an international game), in which case the nflverse sync stamps the real venue on `games.venue`.
+
 **On Behalf Of.** The Maestro can make a pick for any member. A lieutenant can too when the league turns on the "Pick On Behalf Of Anyone" permission. Anyone else needs the member's own permission, which the member gives on the league's Members tab (`pick_delegations`). The pick belongs to the member (`parlay_legs.user_id`), records who made it (`placed_by_user_id`), and waits on the member's approval (`approval_status`). A parlay with a pick still waiting can't be submitted or locked, unless the Maestro does it, which is recorded as the Maestro's approval. Every step writes an audit event (`pick.on_behalf.*`).
 
 ## Notifications
@@ -354,7 +366,13 @@ Submitting again for the same user, league, and week replaces the existing parla
 
 ## Reports and exports
 
-Reports: league standings (current year and all time), the loser report, allocation by bet type, disputes (every dispute, the week it touched and its ruling), and The Suss Report (open parlays only). Dismissed disputes are kept on record from this version on; earlier ones were deleted when dismissed.
+Suggested picks: while a parlay is open, the pick page (web and app) lists up to five bets nobody else has taken that have a winning record behind them, each with its reason ("You're 4-1 picking the Bills", "The league is 7-2 on spread favorites"). A record needs at least three decided picks and more wins than losses; with no history nothing is suggested. Every suggestion shown is stored in `pick_suggestions`, taken or not, and a pick made from one points back at it through `parlay_legs.suggestion_id`. The scoring lives in `shared/pickSuggestions.ts`.
+
+Pick trends: the same card shows the member's own records by kind of bet, hot and cold ("You're 7-2 betting running backs", "You're 1-6 on unders"). Player props are sliced by the player's position, the stat, the side and the player. A prop leg is linked to its player (`parlay_legs.player_id`) by a database trigger that matches the typed name against the `players` table, using the leg's game to tell apart players who share a name; props whose player isn't on file yet are linked the next time players sync. `shared/pickTrends.ts` holds the slicing, and `GET /api/leagues/:id/pick-trends` returns the member's and the league's.
+
+Member dates and Voids: a member is only Void, and only loses participation, for weeks played while they were in the league (`league_members.start_date` to `end_date`). A week happened at its first kickoff, not when its parlay was typed in, so history entered after the fact lines up. The Parlay Maestro corrects a member's dates in League Settings (web and app), or uses "Backdate to first pick" to move everyone's start to the day of their first pick. Both are audit logged.
+
+Reports: league standings (current year and all time), the loser report, allocation by bet type, disputes (every dispute, the week it touched and its ruling), The Suss Report (open parlays only), and the Open Parlays Report (who's in each parlay still taking picks, when each pick was saved, who still owes one, and the countdown to kickoff). The Open Parlays Report also opens from the pick page and, in the app, from the top-right of an open parlay's tile on Your Picks. Dismissed disputes are kept on record from this version on; earlier ones were deleted when dismissed.
 
 `GET /api/leagues/:id/reports/:reportId` returns a report (`shared/reports.ts`) for the app to draw. Add `?format=csv|json|xml|md` for a file. Bet history exports the same way from `/api/parlay-legs/export.{csv,json,xml,md}`. JSON, XML and Markdown carry a description of every column, so a file can be read without the app (see `shared/dataExport.ts`).
 

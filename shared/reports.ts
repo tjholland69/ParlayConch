@@ -8,8 +8,9 @@
  */
 import type { Dataset, DatasetValue } from "./dataExport";
 import { standingsText } from "./standingsExport";
+import { openParlayReminderText } from "./parlayReminder";
 
-export const REPORT_IDS = ["standings_season", "standings_all_time", "loser_report", "allocation", "disputes", "suss"] as const;
+export const REPORT_IDS = ["standings_season", "standings_all_time", "loser_report", "allocation", "disputes", "suss", "open_parlays"] as const;
 export type ReportId = (typeof REPORT_IDS)[number];
 
 export function isReportId(value: unknown): value is ReportId {
@@ -27,6 +28,7 @@ export function reportCatalog(loserLabel: string): ReportCatalogEntry[] {
     { id: "allocation", title: "Allocation Report", description: "How the league's bets break out by bet type, and how each type has done." },
     { id: "disputes", title: "Disputes Report", description: "Every dispute raised: the bet, the week it touched, and how it was ruled." },
     { id: "suss", title: "The Suss Report", description: "How suss the league finds each pick in the open parlay." },
+    { id: "open_parlays", title: "Open Parlays Report", description: "Who's in the open parlay, who still owes a pick, and how long is left." },
   ];
 }
 
@@ -409,5 +411,59 @@ export function buildSussReport(input: { leagueName: string; parlays: SussInput[
       rows.length === 0 ? "No picks in an open parlay right now." : null,
       ...rows.map((r) => `${r.owner} - ${r.bet}: ${r.pct}% suss`),
     ].filter((l): l is string => l != null).join("\n"),
+  };
+}
+
+export type OpenParlayInput = {
+  parlayId: number;
+  weekLabel: string;
+  /** Picks in the parlay, each with its owner and when it was saved. */
+  legs: { owner: string; bet: string; pickedAt?: Date | string | null }[];
+  /** Members with no pick in yet. */
+  missing: string[];
+  /** The week's games, for the countdown to kickoff. */
+  games: { gameTime?: Date | string | null }[];
+};
+
+/** Every parlay still taking picks: who's in, who isn't, and the time left. */
+export function buildOpenParlaysReport(input: { leagueName: string; parlays: OpenParlayInput[]; now?: Date }): Report {
+  const now = input.now ?? new Date();
+  const title = `${input.leagueName} · Open Parlays`;
+  const rows = input.parlays.flatMap((p) => [
+    ...p.legs.map((l) => ({ week: p.weekLabel, parlayId: p.parlayId, member: l.owner, status: "In", bet: l.bet as string | null, pickedAt: l.pickedAt ? new Date(l.pickedAt).toISOString() : null })),
+    ...p.missing.map((member) => ({ week: p.weekLabel, parlayId: p.parlayId, member, status: "Open", bet: null, pickedAt: null })),
+  ]);
+  return {
+    id: "open_parlays",
+    dataset: {
+      name: "open_parlays_report",
+      title,
+      description: "One row per member for each parlay still taking picks: their pick and when it was saved, or Open if they haven't picked.",
+      generatedAt: now.toISOString(),
+      scope: { league: input.leagueName, open_parlays: input.parlays.length },
+      columns: [
+        { key: "week", label: "Week", type: "string", description: "The week the open parlay is for." },
+        { key: "parlay_id", label: "Parlay ID", type: "number", description: "The open parlay." },
+        { key: "member", label: "Member", type: "string", description: "The league member." },
+        { key: "status", label: "Status", type: "string", description: "In when their pick is saved, Open when it isn't." },
+        { key: "bet", label: "Bet", type: "string", description: "Their pick. Blank while it's open." },
+        { key: "picked_at", label: "Picked At", type: "string", description: "When the pick that stands was saved (UTC). Changing a pick updates it." },
+      ],
+      rows: rows.map((r) => ({ week: r.week, parlay_id: r.parlayId, member: r.member, status: r.status, bet: r.bet, picked_at: r.pickedAt })),
+    },
+    chart: {
+      title: "Picks in",
+      max: Math.max(1, ...input.parlays.map((p) => p.legs.length + p.missing.length)),
+      bars: input.parlays.map((p) => ({
+        label: p.weekLabel,
+        value: p.legs.length,
+        display: `${p.legs.length}/${p.legs.length + p.missing.length}`,
+      })),
+    },
+    text: input.parlays.length === 0
+      ? `⏰ ${title}\nNo parlay is open for picks right now.`
+      : input.parlays
+          .map((p) => openParlayReminderText({ leagueName: input.leagueName, weekLabel: p.weekLabel, legs: p.legs, missing: p.missing, games: p.games, now }))
+          .join("\n\n"),
   };
 }

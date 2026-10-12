@@ -8,3 +8,6 @@ vite.config.ts.*
 .env.*.local
 # Claude Code agent worktrees (local only)
 .claude/worktrees/
+
+# Apple crash logs dropped in for analysis
+crash-logs/

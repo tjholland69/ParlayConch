@@ -1,3 +1,5 @@
+import { useMyPhone, useSetMyPhone } from "@/hooks/use-parlay-extras";
+import { formatPhone, normalizePhone, PHONE_HINT } from "@shared/phone";
 import { NOTIFICATION_EVENTS } from "@shared/notifications";
 import {
   View,
@@ -29,7 +31,7 @@ import { useTeams } from "@/hooks/use-teams";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 
-type NotificationPreferences = { email: boolean; sms: boolean; push: boolean; phone?: string; events?: Record<string, boolean> };
+type NotificationPreferences = { email: boolean; sms: boolean; push: boolean; events?: Record<string, boolean> };
 const DEFAULT_NOTIF_PREFS: NotificationPreferences = { email: true, sms: false, push: true };
 
 type ThemeMode = "dark" | "light" | "system";
@@ -276,6 +278,26 @@ export default function SettingsScreen() {
     );
   }
 
+  // The member's own mobile number. Kept apart from settings, which other
+  // league members' apps receive along with their name.
+  const { data: myPhone } = useMyPhone();
+  const setMyPhone = useSetMyPhone();
+  const savedPhone = myPhone?.phoneNumber ?? null;
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneText, setPhoneText] = useState("");
+  useEffect(() => setPhoneText(formatPhone(savedPhone)), [savedPhone]);
+  const phoneBlank = phoneText.trim() === "";
+  const phoneParsed = normalizePhone(phoneText);
+  const phoneInvalid = !phoneBlank && !phoneParsed;
+  const phoneUnchanged = (phoneBlank ? null : phoneParsed) === savedPhone;
+
+  function savePhone() {
+    setMyPhone.mutate(phoneBlank ? null : phoneParsed, {
+      onSuccess: () => setEditingPhone(false),
+      onError: (err: Error) => Alert.alert("Couldn't save your mobile number", err.message || "Please try again."),
+    });
+  }
+
   const savedAccent = (user?.settings as any)?.primaryColor || DEFAULT_ACCENT;
   const savedTheme = ((user?.settings as any)?.theme as ThemeMode) || "dark";
 
@@ -371,6 +393,48 @@ export default function SettingsScreen() {
           <Row icon="person-outline" label="Display Name" value={nameForAvatar} onPress={() => setEditingName(true)} />
         )}
         <Divider />
+        {editingPhone ? (
+          <View>
+            <View style={styles.editNameRow}>
+              <TextInput
+                style={styles.editNameInput}
+                value={phoneText}
+                onChangeText={setPhoneText}
+                placeholder="(508) 555-1234"
+                placeholderTextColor="#475569"
+                keyboardType="phone-pad"
+                textContentType="telephoneNumber"
+                autoFocus
+                testID="input-settings-phone"
+              />
+              <Button
+                size="sm"
+                loading={setMyPhone.isPending}
+                disabled={phoneInvalid || phoneUnchanged}
+                onPress={savePhone}
+                testID="button-settings-save-phone"
+              >
+                {phoneBlank && savedPhone ? "Remove" : "Save"}
+              </Button>
+              <Pressable onPress={() => { setEditingPhone(false); setPhoneText(formatPhone(savedPhone)); }} hitSlop={8} accessibilityLabel="Cancel">
+                <Ionicons name="close" size={20} color="#64748b" />
+              </Pressable>
+            </View>
+            <Text style={[styles.rowNote, phoneInvalid && { color: "#f87171" }]}>
+              {phoneInvalid
+                ? `That doesn't look like a phone number. Use ${PHONE_HINT}`
+                : "Only you can see this. It's for text reminders and extra sign-in security later; nothing is sent to it yet."}
+            </Text>
+          </View>
+        ) : (
+          <Row
+            icon="call-outline"
+            label="Mobile Number"
+            value={savedPhone ? formatPhone(savedPhone) : "Add"}
+            onPress={() => setEditingPhone(true)}
+          />
+        )}
+        <Divider />
         <Row
           icon="mail-outline"
           label="Email"
@@ -459,18 +523,9 @@ export default function SettingsScreen() {
           }
         />
         {notifPrefs.sms && (
-          <View style={styles.phoneRow}>
-            <TextInput
-              style={styles.phoneInput}
-              value={notifPrefs.phone ?? ""}
-              onChangeText={(v) => setNotifPrefs((p) => ({ ...p, phone: v }))}
-              onEndEditing={() => updateNotifPrefsMutation.mutate(notifPrefs)}
-              placeholder="Phone number"
-              placeholderTextColor="#475569"
-              keyboardType="phone-pad"
-              testID="input-notif-phone"
-            />
-          </View>
+          <Text style={styles.rowNote}>
+            Texts go to your mobile number, under Profile. None are being sent yet.
+          </Text>
         )}
         <Divider />
         <Row
@@ -755,17 +810,7 @@ const styles = StyleSheet.create({
   themeChipText: { fontSize: 12, fontWeight: "600", color: "#94a3b8" },
   themeChipTextActive: { color: "#93c5fd" },
 
-  phoneRow: { paddingHorizontal: 16, paddingBottom: 12 },
-  phoneInput: {
-    backgroundColor: "#141926",
-    color: "#f1f5f9",
-    borderWidth: 1,
-    borderColor: "#2a3447",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 14,
-  },
+  rowNote: { fontSize: 12, lineHeight: 17, color: "#64748b", paddingHorizontal: 16, paddingBottom: 12 },
 
   actingAsBanner: {
     flexDirection: "row",

@@ -23,6 +23,7 @@ import { sortParlayLegs } from "@shared/legOrder";
 import { CHIP_MIN_HEIGHT, shadows } from "@/lib/theme";
 import { getOpenParlayVisualStyle, getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { LegRow, LegsBySlate, legOwnerName } from "@/components/LegLookthrough";
+import { ReportSheet } from "@/components/ReportSheet";
 import { estimateWeekDateRange } from "@shared/nflWeek";
 import { isParlayInProgress, isParlayLocked, legTally } from "@shared/parlayProgress";
 
@@ -42,6 +43,8 @@ function ParlayTile({
   border,
   onPress,
   actionIcon,
+  onAction,
+  actionLabel,
   glow,
   ctaLabel,
   tint,
@@ -57,12 +60,16 @@ function ParlayTile({
   border: string;
   onPress?: () => void;
   actionIcon?: IconName;
+  /** Makes the top-right icon its own button (e.g. export the Open Parlays
+   * report), separate from whatever the rest of the tile does. */
+  onAction?: () => void;
+  actionLabel?: string;
   /** Won parlays pulse with a soft green glow — the mobile take on the web
    * app's animated "perfect week" glow (see client/src/lib/parlayVisuals.ts).
    * An active parlay (approved, sent or placed) holds the same glow steady. */
   glow?: "pulse" | "steady";
-  /** Explicit CTA button below the tile's meta text — same action as tapping
-   * the card, kept for tiles where the action shouldn't be implicit-only. */
+  /** A button below the tile's meta text. When it's there, it's the only
+   * thing that runs `onPress`: tapping the rest of the tile does nothing. */
   ctaLabel?: string;
   /** Faint wash over the card, e.g. the red-to-green result color. */
   tint?: string;
@@ -86,7 +93,7 @@ function ParlayTile({
   }));
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [pressed && styles.pressed]}>
+    <Pressable onPress={ctaLabel ? undefined : onPress} disabled={!!ctaLabel || !onPress} style={({ pressed }) => [pressed && styles.pressed]}>
       <Animated.View style={[styles.shadowWrap, glow && styles.shadowWrapGlow, glowStyle]}>
         <View style={[styles.parlayCard, { backgroundColor: bg, borderColor: border }]}>
           {tint ? <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: tint }]} /> : null}
@@ -107,7 +114,20 @@ function ParlayTile({
                   {leagueName}
                 </Text>
               </View>
-              <Ionicons name={actionIcon ?? "chevron-forward"} size={16} color="#374151" />
+              {onAction ? (
+                <Pressable
+                  onPress={onAction}
+                  hitSlop={14}
+                  style={({ pressed }) => [styles.tileActionBtn, pressed && styles.pressed]}
+                  accessibilityRole="button"
+                  accessibilityLabel={actionLabel}
+                  testID="button-tile-action"
+                >
+                  <Ionicons name={actionIcon ?? "share-outline"} size={18} color="#93c5fd" />
+                </Pressable>
+              ) : ctaLabel ? null : (
+                <Ionicons name={actionIcon ?? "chevron-forward"} size={16} color="#374151" />
+              )}
             </View>
 
             <Text style={styles.parlayStatusLabel}>{statusLabel}</Text>
@@ -120,11 +140,16 @@ function ParlayTile({
               </View>
             ) : null}
 
-            {/* Visual CTA only — same onPress as the card (no nested Pressable). */}
+            {/* The only part of the tile that opens the pick screen. */}
             {ctaLabel ? (
-              <View style={styles.tileCtaBtn}>
+              <Pressable
+                onPress={onPress}
+                style={({ pressed }) => [styles.tileCtaBtn, pressed && styles.pressed]}
+                accessibilityRole="button"
+                testID="button-tile-cta"
+              >
                 <Text style={styles.tileCtaBtnText}>{ctaLabel}</Text>
-              </View>
+              </Pressable>
             ) : null}
 
             {children}
@@ -137,7 +162,14 @@ function ParlayTile({
 
 /** For a league where the member still owes a pick this week: either the
  * league's parlay is open and waiting on them, or nobody has started one. */
-function NeedsPickTile({ leagueId, weekId, leagueName, status }: { leagueId: number; weekId: number; leagueName: string; status?: ActiveWeekStatus }) {
+function NeedsPickTile({ leagueId, weekId, leagueName, status, onExport }: {
+  leagueId: number;
+  weekId: number;
+  leagueName: string;
+  status?: ActiveWeekStatus;
+  /** Opens the Open Parlays report for this league, to share with the group chat. */
+  onExport: () => void;
+}) {
   const router = useRouter();
   const effectiveUserId = useEffectiveUserId();
   const { data: parlay, isLoading } = useMyParlay(leagueId, weekId);
@@ -201,9 +233,11 @@ function NeedsPickTile({ leagueId, weekId, leagueName, status }: { leagueId: num
       progress={parlay ? membersInProgress(status) : undefined}
       bg="#1c1a0a"
       border="#3d2e00"
-      actionIcon="create-outline"
       ctaLabel={parlay ? "Make Your Pick" : "Create New Parlay"}
       onPress={openBuild}
+      // The report is about an open parlay, so there's nothing to export before one exists.
+      onAction={parlay ? onExport : undefined}
+      actionLabel="Export the Open Parlays report"
     />
   );
 }
@@ -232,7 +266,7 @@ function membersInProgress(status: ActiveWeekStatus | undefined): number | undef
   return status?.totalMembers ? status.submittedCount / status.totalMembers : undefined;
 }
 
-function HistoryTile({ parlay, leagueName, status }: { parlay: ParlayWithLegs; leagueName: string; status?: ActiveWeekStatus }) {
+function HistoryTile({ parlay, leagueName, status, onExport }: { parlay: ParlayWithLegs; leagueName: string; status?: ActiveWeekStatus; onExport: () => void }) {
   const router = useRouter();
   const effectiveUserId = useEffectiveUserId();
   const [expanded, setExpanded] = useState(false);
@@ -284,7 +318,12 @@ function HistoryTile({ parlay, leagueName, status }: { parlay: ParlayWithLegs; l
       border={isDraft ? meta.border : openVisual?.borderColor ?? visual.borderColor}
       tint={!isDraft && !openVisual ? visual.tintColor : undefined}
       glow={openVisual?.glowColor ? "steady" : undefined}
-      actionIcon={isDraft ? "create-outline" : expanded ? "chevron-up" : "chevron-down"}
+      actionIcon={isDraft ? undefined : expanded ? "chevron-up" : "chevron-down"}
+      // An open parlay: only the button opens the pick screen, and the
+      // top-right icon exports the Open Parlays report.
+      ctaLabel={isDraft ? (hasMyLeg ? "Change Your Pick" : "Make Your Pick") : undefined}
+      onAction={isDraft ? onExport : undefined}
+      actionLabel="Export the Open Parlays report"
       onPress={() =>
         isDraft
           ? router.push({ pathname: "/leagues/[id]/build", params: { id: String(parlay.leagueId) } })
@@ -501,6 +540,8 @@ export default function PicksScreen() {
   const [leagueFilter, setLeagueFilter] = useState("all");
   const [resultFilter, setResultFilter] = useState("all");
   const [weekFilter, setWeekFilter] = useState("all");
+  // The league whose Open Parlays report is up, from a tile's top-right icon.
+  const [reportLeagueId, setReportLeagueId] = useState<number | null>(null);
 
   // Every week on record, chronological (oldest first) — used to walk
   // backward from the active week one at a time as "load previous week" is
@@ -725,6 +766,7 @@ export default function PicksScreen() {
   );
 
   return (
+    <>
     <SectionList
       style={styles.container}
       contentContainerStyle={styles.content}
@@ -763,6 +805,7 @@ export default function PicksScreen() {
             weekId={item.weekId}
             leagueName={item.leagueName}
             status={weekStatus?.[item.leagueId]}
+            onExport={() => setReportLeagueId(item.leagueId)}
           />
         ) : (
           <HistoryTile
@@ -770,6 +813,7 @@ export default function PicksScreen() {
             leagueName={leagueName(item.parlay.leagueId)}
             // Only the active week's parlay has a live "members in" count.
             status={item.parlay.weekId === activeWeek?.id ? weekStatus?.[item.parlay.leagueId] : undefined}
+            onExport={() => setReportLeagueId(item.parlay.leagueId)}
           />
         )
       }
@@ -807,6 +851,13 @@ export default function PicksScreen() {
         </View>
       }
     />
+    <ReportSheet
+      leagueId={reportLeagueId ?? 0}
+      reportId={reportLeagueId != null ? "open_parlays" : null}
+      title="Open Parlays Report"
+      onClose={() => setReportLeagueId(null)}
+    />
+    </>
   );
 }
 
@@ -948,6 +999,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  tileActionBtn: { padding: 4, margin: -4 },
   tileCtaBtnText: { color: "#ffffff", fontSize: 13, fontWeight: "700" },
   sectionLabel: {
     fontSize: 11,

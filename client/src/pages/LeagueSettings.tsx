@@ -57,6 +57,8 @@ import { DEFAULT_LIEUTENANT_PERMISSIONS, DEFAULT_LEAGUE_NOTIFICATION_SETTINGS } 
 import { DEFAULT_SHAME_EMOJI, HERO_LABEL_TEXT, LOSER_LABEL_TEXT, SHAME_EMOJI_CHOICES } from "@shared/leagueLabels";
 import { PERMISSION_LABELS } from "@/lib/leaguePermissionLabels";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
+import { MemberDatesDialog } from "@/components/MemberDatesDialog";
+import { useBackdateMembers } from "@/hooks/use-parlay-extras";
 
 function formatMemberDateRange(startDate: string | Date | null, endDate: string | Date | null): string {
   const fmt = (d: string | Date) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -71,6 +73,7 @@ function MemberRow({
   onRoleChange,
   isPending,
   onRemove,
+  onEditDates,
 }: {
   member: LeagueMemberWithUser;
   isAdmin: boolean;
@@ -78,6 +81,7 @@ function MemberRow({
   onRoleChange: (userId: string, role: string) => void;
   isPending: boolean;
   onRemove: (member: LeagueMemberWithUser) => void;
+  onEditDates: (member: LeagueMemberWithUser) => void;
 }) {
   const isLt = member.role === "lieutenant";
   const isMemberAdmin = member.role === "admin";
@@ -127,7 +131,19 @@ function MemberRow({
             )}
           </div>
           <p className="text-xs text-muted-foreground">{member.user.email}</p>
-          <p className="text-[11px] text-muted-foreground/70">{formatMemberDateRange(member.startDate, member.endDate)}</p>
+          {isAdmin ? (
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground/70 underline decoration-dotted underline-offset-2 hover:text-foreground"
+              onClick={() => onEditDates(member)}
+              title="Change when this member was in the league"
+              data-testid={`button-member-dates-${member.userId}`}
+            >
+              {formatMemberDateRange(member.startDate, member.endDate)} · Edit
+            </button>
+          ) : (
+            <p className="text-[11px] text-muted-foreground/70">{formatMemberDateRange(member.startDate, member.endDate)}</p>
+          )}
         </div>
       </div>
       {isAdmin && !isMemberAdmin && !isInactive && (
@@ -408,6 +424,8 @@ export default function LeagueSettings() {
 
   const { data: members, isLoading: loadingMembers } = useLeagueMembersWithUsers(leagueId, { includeInactive: true });
   const [removeTarget, setRemoveTarget] = useState<LeagueMemberWithUser | null>(null);
+  const [datesTarget, setDatesTarget] = useState<LeagueMemberWithUser | null>(null);
+  const backdateMembers = useBackdateMembers(leagueId);
 
   const updateSettings = useUpdateLeagueSettings(leagueId);
   const setMemberRole = useSetMemberRole(leagueId);
@@ -766,6 +784,17 @@ export default function LeagueSettings() {
                 </p>
               </div>
 
+              {league.isAdmin && (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-white/5 mb-2">
+                  <p className="text-xs text-muted-foreground max-w-md">
+                    A member is only Void for parlays played while they were in the league. Tap a member's dates to correct them, or set everyone's start to the day of their first pick.
+                  </p>
+                  <Button size="sm" variant="outline" onClick={() => backdateMembers.mutate()} disabled={backdateMembers.isPending} data-testid="button-backdate-members">
+                    Backdate to first pick
+                  </Button>
+                </div>
+              )}
+
               {loadingMembers ? (
                 <div className="space-y-2">
                   {[1, 2, 3].map((i) => (
@@ -783,6 +812,7 @@ export default function LeagueSettings() {
                       onRoleChange={(userId, role) => setMemberRole.mutate({ userId, role })}
                       isPending={setMemberRole.isPending}
                       onRemove={setRemoveTarget}
+                      onEditDates={setDatesTarget}
                     />
                   ))}
                 </div>
@@ -791,6 +821,8 @@ export default function LeagueSettings() {
           </Card>
 
           <ExceptionsBlotterCard leagueId={leagueId} activeMembers={activeMembers} />
+
+          <MemberDatesDialog leagueId={leagueId} member={datesTarget} onClose={() => setDatesTarget(null)} />
 
           <RemoveMemberDialog
             open={!!removeTarget}

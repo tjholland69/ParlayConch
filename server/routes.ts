@@ -66,6 +66,9 @@ import { notifyLeague, notifyUsers } from "./services/notify";
 import { openParlayReminderText } from "@shared/parlayReminder";
 import { userPasswords, passwordResetTokens } from "@shared/models/auth";
 import { registerMcpRoutes } from "./mcp";
+import { registerAccountRoutes } from "./accountRoutes";
+import { leaguePickTrends, suggestPicks } from "./services/pickSuggestions";
+import { parseActualOdds } from "@shared/parlayOdds";
 import { createApiToken, listApiTokens, revokeApiToken } from "./services/apiTokens";
 import { getLeagueReport } from "./services/reports";
 import { startLiveResultsWorker } from "./jobs/live-results-queue";
@@ -163,6 +166,7 @@ export async function registerRoutes(
   // tokens, not the session, so it's registered ahead of the act-for
   // middleware and never sees an act-for identity.
   registerMcpRoutes(app);
+  registerAccountRoutes(app);
 
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
@@ -843,6 +847,41 @@ export async function registerRoutes(
     res.json(picks);
   });
 
+  // Suggested picks for the caller in this week's parlay (?parlayId, when
+  // one is open, so bets other members already have are left out). Each one
+  // shown is stored: see services/pickSuggestions.ts.
+  app.get("/api/leagues/:leagueId/weeks/:weekId/suggestions", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const weekId = Number(req.params.weekId);
+      const userId = (req.user as any).claims.sub;
+      if (!Number.isInteger(leagueId) || !Number.isInteger(weekId)) return res.status(400).json({ message: "Invalid league or week" });
+      // Suggestions are stored against the member, so a super user looking
+      // in on a league they aren't in gets none.
+      if (!(await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId)) return res.json([]);
+      const parlayId = req.query.parlayId != null ? Number(req.query.parlayId) : undefined;
+      res.json(await suggestPicks(userId, leagueId, weekId, Number.isInteger(parlayId) ? parlayId : undefined));
+    } catch (err) {
+      logger.error({ err }, "[suggestions] failed");
+      res.status(500).json({ message: "Couldn't load suggestions." });
+    }
+  });
+
+  // The caller's and the league's win-loss records by kind of bet
+  // ("You're 7-2 betting running backs"). See shared/pickTrends.ts.
+  app.get("/api/leagues/:leagueId/pick-trends", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const userId = (req.user as any).claims.sub;
+      if (!Number.isInteger(leagueId)) return res.status(400).json({ message: "Invalid league" });
+      if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+      res.json(await leaguePickTrends(userId, leagueId));
+    } catch (err) {
+      logger.error({ err }, "[trends] failed");
+      res.status(500).json({ message: "Couldn't load trends." });
+    }
+  });
+
   // Every pick a DIFFERENT league member already has this week (in
   // ?parlayId, when given), so the client can gray out those tiles. See
   // storage.getTakenPicksForWeek.
@@ -911,6 +950,7 @@ export async function registerRoutes(
         line: emptyToNull(leg.line),
         playerName: leg.playerName ?? null,
         propType: leg.propType ?? null,
+        suggestionId: leg.suggestionId ?? null,
       };
       const saved = await storage.setDraftPick(ownerId, leagueId, weekId, legInput, {
         parlayId,
@@ -1027,6 +1067,34 @@ export async function registerRoutes(
       }
       const { boostPct } = parlayBoostInputSchema.parse(req.body);
       res.json(await storage.setParlayBoost(parlayId, boostPct));
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // PUT /api/parlays/:id/actual-odds — records what the sportsbook actually
+  // paid on the whole ticket ("+650"), or clears it with null so the app's
+  // estimate shows again. Books reprice a parlay as a unit and the number
+  // moves, so this is set at the parlay, never per leg. Works at any status.
+  // Open to the parlay's owner and the league's Parlay Maestro, like a boost.
+  app.put("/api/parlays/:id/actual-odds", isAuthenticated, auditLog("parlay.set_actual_odds", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlayId = Number(req.params.id);
+      const existing = await storage.getParlay(parlayId);
+      if (!existing) return res.status(404).json({ message: "Parlay not found" });
+      if (existing.userId !== userId && !(await storage.isLeagueAdmin(existing.leagueId, userId))) {
+        return res.status(403).json({ message: "Only the parlay's owner or the Parlay Maestro can change its odds" });
+      }
+      if (existing.status === "draft") {
+        return res.status(409).json({ message: "This parlay is still open. Record its odds once it's locked and placed." });
+      }
+      const { actualOdds } = z.object({ actualOdds: z.string().max(12).nullable() }).strict().parse(req.body);
+      const parsed = actualOdds == null || actualOdds.trim() === "" ? null : parseActualOdds(actualOdds);
+      if (actualOdds != null && actualOdds.trim() !== "" && !parsed) {
+        return res.status(400).json({ message: "Enter the odds the way your sportsbook shows them, like +650 or -120." });
+      }
+      res.json(await storage.setParlayActualOdds(parlayId, parsed));
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
@@ -2055,7 +2123,7 @@ export async function registerRoutes(
       if (cached) return res.json(cached);
 
       const teams = await storage.getAllTeams();
-      const homeTeam = teams.find((t) => t.abbreviation === game.homeTeam);
+      const homeTeam = teams.find((t) => t.nickname === game.homeTeam || t.abbreviation === game.homeTeam);
       if (!homeTeam || (homeTeam.stadiumType && homeTeam.stadiumType !== "outdoor")) {
         return res.json(null);
       }
@@ -2304,6 +2372,47 @@ export async function registerRoutes(
       res.json(league);
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // Parlay Maestro: correct when a member was in the league (see
+  // storage.setMemberDates). Dates are calendar days, "2023-09-07".
+  app.patch("/api/leagues/:id/members/:userId/dates", isAuthenticated, auditLog("league_member.dates_change", { targetParam: "userId", targetType: "league_member" }), async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      if (!(await storage.isLeagueAdmin(leagueId, (req.user as any).claims.sub))) {
+        return res.status(403).json({ message: "Parlay Maestro access required" });
+      }
+      const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2023-09-07");
+      const input = z.object({ startDate: day, endDate: day.nullable().optional() }).strict().parse(req.body);
+      // A start counts from the beginning of its day and an end to the end
+      // of its day, so a parlay on either day is inside the window.
+      const startDate = new Date(`${input.startDate}T00:00:00Z`);
+      const endDate = input.endDate == null ? input.endDate : new Date(`${input.endDate}T23:59:59Z`);
+      if (Number.isNaN(startDate.getTime()) || (endDate && Number.isNaN(endDate.getTime()))) {
+        return res.status(400).json({ message: "That isn't a real date." });
+      }
+      res.json(await storage.setMemberDates(leagueId, req.params.userId, { startDate, endDate }));
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0]?.message ?? "Invalid input" });
+      if (err instanceof PickRuleError) return res.status(400).json({ message: err.message });
+      logger.error({ err }, "[members] save member dates failed");
+      res.status(500).json({ message: "Couldn't save that. Please try again." });
+    }
+  });
+
+  // Parlay Maestro: move every member's start date back to their first pick.
+  app.post("/api/leagues/:id/members/backdate-to-first-pick", isAuthenticated, auditLog("league_member.backdate_all", { targetParam: "id", targetType: "league" }), async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      if (!(await storage.isLeagueAdmin(leagueId, (req.user as any).claims.sub))) {
+        return res.status(403).json({ message: "Parlay Maestro access required" });
+      }
+      res.json({ changed: await storage.backdateMembersToFirstPick(leagueId) });
+    } catch (err) {
+      if (err instanceof PickRuleError) return res.status(400).json({ message: err.message });
+      logger.error({ err }, "[members] backdate members failed");
+      res.status(500).json({ message: "Couldn't save that. Please try again." });
     }
   });
 
@@ -3116,7 +3225,9 @@ export async function registerRoutes(
   app.patch("/api/users/me/notification-preferences", isAuthenticated, async (req, res) => {
     try {
       const userId = realUserId(req);
-      const prefs = notificationPreferencesSchema.parse(req.body);
+      // An old app build may still send `phone`. It isn't kept here: settings
+      // travel to everyone in the member's leagues (see user_contacts).
+      const { phone: _phone, ...prefs } = notificationPreferencesSchema.parse(req.body);
 
       await storage.updateUserSettings(userId, { notificationPreferences: prefs });
       res.json({ success: true });

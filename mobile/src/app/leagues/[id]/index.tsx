@@ -38,6 +38,7 @@ import {
   type LeagueRecordEntry,
 } from "@/hooks/use-leagues";
 import type { ReportId } from "@shared/reports";
+import { parlayHappenedAt, wasMemberAt } from "@shared/membershipWindow";
 import {
   useAllLeagueParlaysForWeeks,
   useApproveParlay,
@@ -53,7 +54,7 @@ import { heroLabelText as heroLabelFor, loserLabelText as loserLabelFor } from "
 import { sortParlayLegs } from "@shared/legOrder";
 import { standingsText } from "@shared/standingsExport";
 import { boostLabel } from "@shared/parlayBoost";
-import { useConfirmParlayPlaced, useReopenParlay, useSuss } from "@/hooks/use-parlay-extras";
+import { useConfirmParlayPlaced, useReopenParlay, useSetParlayActualOdds, useSuss } from "@/hooks/use-parlay-extras";
 import { SussMeter } from "@/components/SussMeter";
 import { parlaySlipText } from "@shared/betSlip";
 import { useActiveWeek, useWeeks } from "@/hooks/use-weeks";
@@ -66,12 +67,14 @@ import type { ParlayWithLegs } from "@shared/schema";
 import { getSlate } from "@shared/slate";
 import { canConfirmPlaced, isParlayInProgress, isParlayLocked, legTally } from "@shared/parlayProgress";
 import { LegsBySlate, LegRow, VoidLegRow, LegLookthroughSheet, legOwnerName } from "@/components/LegLookthrough";
+import { ReportSheet } from "@/components/ReportSheet";
+import { ParlayOddsSheet } from "@/components/ParlayOddsSheet";
+import { parlayOdds, parlayOddsText } from "@shared/parlayOdds";
 import { webLeagueSettingsUrl } from "@/lib/pickHelpers";
 import { shadows } from "@/lib/theme";
 import { getOpenParlayVisualStyle, getParlayVisualStyle, getWinPctColor } from "@/lib/parlayVisuals";
 import { getBustedLeg } from "@/lib/parlayLoser";
 import { getHeroLeg } from "@/lib/parlayHero";
-import { ParlayMixBar } from "@/components/ParlayMixBar";
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
 type MCIIconName = React.ComponentProps<typeof MaterialCommunityIcons>["name"];
@@ -93,94 +96,6 @@ const TAB_ICONS: Record<Tab, React.ComponentProps<typeof Ionicons>["name"]> = {
   stats: "bar-chart-outline",
   reports: "reader-outline",
 };
-
-/**
- * One report in a bottom sheet: its bars, then a button that shares the text
- * version (Messages, Copy, …). The pared-down mobile take on the web's
- * Reports page: no file downloads, and no Story Studio.
- */
-/** The view as a PNG file, or null where the capture module isn't in this build (Expo Go). */
-async function captureAsImage(view: View | null): Promise<string | null> {
-  if (!view) return null;
-  try {
-    const { captureRef } = require("react-native-view-shot") as typeof import("react-native-view-shot");
-    return await captureRef(view, { format: "png", quality: 1, result: "tmpfile" });
-  } catch {
-    return null;
-  }
-}
-
-function ReportSheet({ leagueId, reportId, title, onClose }: { leagueId: number; reportId: ReportId | null; title: string; onClose: () => void }) {
-  const { data: report, isLoading, isError } = useLeagueReport(leagueId, reportId);
-  const graphicRef = useRef<View>(null);
-  const [sharingImage, setSharingImage] = useState(false);
-
-  // The graphic as a picture for the group chat. Falls back to the text
-  // where a picture can't be made.
-  async function shareImage() {
-    if (!report || sharingImage) return;
-    setSharingImage(true);
-    try {
-      const uri = await captureAsImage(graphicRef.current);
-      await Share.share(uri ? { url: uri } : { message: report.text });
-    } catch {
-      // The share sheet was dismissed.
-    } finally {
-      setSharingImage(false);
-    }
-  }
-
-  return (
-    <LegLookthroughSheet visible={!!reportId} title={title} isLoading={isLoading} onClose={onClose}>
-      {isError || !report ? (
-        <Text style={styles.reportEmpty}>Couldn't load this report. Try again in a moment.</Text>
-      ) : (
-        <ScrollView style={{ flexGrow: 0 }}>
-          {/* collapsable={false} keeps this a real native view, so it can be captured. */}
-          <View ref={graphicRef} collapsable={false} style={styles.reportGraphic}>
-            <Text style={styles.reportGraphicTitle}>{report.dataset.title}</Text>
-            <Text style={styles.reportChartTitle}>{report.chart.title}</Text>
-            {report.chart.bars.length === 0 ? (
-              <Text style={styles.reportEmpty}>Nothing to chart yet.</Text>
-            ) : (
-              report.chart.bars.map((bar) => (
-                <View key={bar.label} style={styles.reportBarRow} accessibilityLabel={`${bar.label}: ${bar.display}`}>
-                  <Text style={styles.reportBarLabel} numberOfLines={1}>{bar.label}</Text>
-                  <View style={styles.reportBarTrack}>
-                    <View style={[styles.reportBarFill, { width: `${Math.max(0, Math.min(100, (bar.value / (report.chart.max || 1)) * 100))}%` }]} />
-                  </View>
-                  <Text style={styles.reportBarValue}>{bar.display}</Text>
-                </View>
-              ))
-            )}
-          </View>
-          <Text style={styles.reportText} selectable testID="text-report-sms">{report.text}</Text>
-          <View style={styles.reportShareRow}>
-            <Pressable
-              onPress={shareImage}
-              disabled={sharingImage}
-              style={({ pressed }) => [styles.reportShareBtn, styles.reportShareBtnHalf, pressed && { opacity: 0.8 }]}
-              accessibilityRole="button"
-              testID="button-report-share-image"
-            >
-              {sharingImage ? <ActivityIndicator size="small" color="#ffffff" /> : <Ionicons name="image-outline" size={16} color="#ffffff" />}
-              <Text style={styles.reportShareText}>Share as image</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => void Share.share({ message: report.text }).catch(() => undefined)}
-              style={({ pressed }) => [styles.reportShareBtn, styles.reportShareBtnHalf, styles.reportShareBtnAlt, pressed && { opacity: 0.8 }]}
-              accessibilityRole="button"
-              testID="button-report-share-text"
-            >
-              <Ionicons name="share-outline" size={16} color="#ffffff" />
-              <Text style={styles.reportShareText}>Share as text</Text>
-            </Pressable>
-          </View>
-        </ScrollView>
-      )}
-    </LegLookthroughSheet>
-  );
-}
 
 /** The Parlays tab's filters, as they apply to one leg. Filters narrow the
  * legs shown inside each card; the cards themselves always stay. */
@@ -243,6 +158,13 @@ function ParlayCard({
   const boostEditable = isAdmin || parlay.userId === effectiveUserId;
   // The boost control only shows once the card is expanded to its legs.
   const showBoostChip = !collapsed && parlay.status !== "void" && (!!parlay.boostPct || boostEditable);
+  // The whole ticket's odds: what was recorded off the sportsbook, else the
+  // app's estimate from the legs. Whoever can set a boost can record them,
+  // once the parlay is locked.
+  const odds = parlay.status === "void" ? null : parlayOdds(parlay);
+  const [oddsOpen, setOddsOpen] = useState(false);
+  const setActualOdds = useSetParlayActualOdds(leagueId);
+  const showOddsChip = !collapsed && boostEditable && parlay.status !== "void" && parlay.status !== "draft";
   const [shameOpen, setShameOpen] = useState(false);
   const currentSeason = useActiveWeek()?.season;
   // Multi-game "Send to Sportsbook" walkthrough — set only when the parlay
@@ -275,8 +197,8 @@ function ParlayCard({
             m.isActive !== false &&
             !legs.some((l) => l.userId === m.userId) &&
             (legFilter.member === "all" || legFilter.member === m.userId) &&
-            // Only members who were in the league when the parlay was made.
-            (!m.startDate || !parlay.createdAt || new Date(m.startDate) <= new Date(parlay.createdAt)),
+            // Only members who were in the league when the parlay was played.
+            wasMemberAt(m, parlayHappenedAt(parlay, legs)),
         );
   const { pct, label: tallyLabel } = legTally(legs);
   const visual = getParlayVisualStyle(pct, 1);
@@ -553,22 +475,37 @@ function ParlayCard({
           <Text style={styles.parlayCardStatus}>{statusLabel}</Text>
         </View>
 
-        {pct !== null && (
-          <Text style={[styles.parlayCardFraction, { color: pctColor }]}>{tallyLabel}</Text>
+        {/* Right side: the result tally, with the parlay's odds under it. */}
+        {(pct !== null || odds) && (
+          <View style={styles.parlayCardRight}>
+            {pct !== null && (
+              <Text style={[styles.parlayCardFraction, { color: pctColor }]}>{tallyLabel}</Text>
+            )}
+            {odds && (
+              <Text style={styles.parlayCardOdds} testID={`text-parlay-odds-${parlay.id}`}>{parlayOddsText(odds)}</Text>
+            )}
+          </View>
         )}
 
         {statusIcon && <Ionicons name={statusIcon} size={22} color={statusColor} />}
       </Pressable>
 
-      {/* Bet-type mix stays visible when collapsed — it's the at-a-glance summary. */}
-      <View style={styles.mixBarWrap}>
-        <ParlayMixBar legs={legs} />
-      </View>
-
       {/* Promo boost: a rocket, on the expanded card only. Lit when a boost
           is set; tapping it opens the boost sheet for whoever can set it. */}
-      {(showBoostChip || canShame || canLocks) && (
+      {(showBoostChip || showOddsChip || canShame || canLocks) && (
         <View style={styles.cardChipRow}>
+          {showOddsChip && (
+            <Pressable
+              onPress={() => setOddsOpen(true)}
+              style={({ pressed }) => [styles.boostChip, !!parlay.actualOdds && styles.boostChipActive, pressed && { opacity: 0.7 }]}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={parlay.actualOdds ? `Odds at placement: ${parlay.actualOdds}. Change` : "Enter the odds you got at the sportsbook"}
+              testID={`button-parlay-odds-${parlay.id}`}
+            >
+              <Text style={styles.boostChipText}>{parlay.actualOdds ? `Odds ${parlay.actualOdds}` : "Enter actual odds"}</Text>
+            </Pressable>
+          )}
           {showBoostChip && (
             <Pressable
               onPress={() => setBoostOpen(true)}
@@ -615,6 +552,22 @@ function ParlayCard({
       {story && (
         <ShameReportModal story={story} visible={shameOpen} onClose={() => setShameOpen(false)} />
       )}
+      <ParlayOddsSheet
+        visible={oddsOpen}
+        onClose={() => setOddsOpen(false)}
+        actualOdds={parlay.actualOdds}
+        estimate={parlayOdds({ ...parlay, actualOdds: null })?.label}
+        saving={setActualOdds.isPending}
+        onConfirm={(actualOdds) =>
+          setActualOdds.mutate(
+            { parlayId: parlay.id, actualOdds },
+            {
+              onSuccess: () => setOddsOpen(false),
+              onError: (err: Error) => Alert.alert("Couldn't save the odds", err.message || "Please try again."),
+            },
+          )
+        }
+      />
       <BoostSheet
         visible={boostOpen}
         onClose={() => setBoostOpen(false)}
@@ -1045,6 +998,10 @@ function LeagueRecordIcon({ recordKey, size, color }: { recordKey: string; size:
   return <Ionicons name={RECORD_ICONS[recordKey] ?? "trophy-outline"} size={size} color={color} />;
 }
 
+/** "P. Mahomes (12 picks)" reads "P. Mahomes (12)" on a phone: the tile is
+ * too narrow for the word. */
+const dropPicksWord = (text: string) => text.replace(/\((\d[\d,]*) picks?\)/g, "($1)").replace(/^(\d[\d,]*) picks?$/, "$1");
+
 function LeagueRecordTile({ record, members, onLookthrough }: { record: LeagueRecordEntry; members: any[] | undefined; onLookthrough: (record: LeagueRecordEntry) => void }) {
   const holder = record.holderUserId ? members?.find((m) => m.userId === record.holderUserId) : null;
   const holderName = holder ? memberShortName(holder) : null;
@@ -1080,8 +1037,8 @@ function LeagueRecordTile({ record, members, onLookthrough }: { record: LeagueRe
           </View>
         )}
         <Text style={styles.recordValue} numberOfLines={1}>
-          {record.value}
-          {record.detail ? <Text style={styles.recordDetail}> ({record.detail})</Text> : null}
+          {dropPicksWord(record.value)}
+          {record.detail ? <Text style={styles.recordDetail}> ({dropPicksWord(record.detail)})</Text> : null}
         </Text>
         {winLossLabel && <Text style={styles.recordMeta} numberOfLines={1}>Record: {winLossLabel}</Text>}
         {holderName && <Text style={styles.recordMeta} numberOfLines={1}>{holderName}</Text>}
@@ -1097,7 +1054,7 @@ function LeagueRecordTile({ record, members, onLookthrough }: { record: LeagueRe
           ) : (
             <>
               <Text style={styles.recordViewerLabel}>{record.viewerLabel ?? "...and for you..."}</Text>
-              <Text style={styles.recordViewerValue} numberOfLines={1}>{record.viewerValue ?? "—"}</Text>
+              <Text style={styles.recordViewerValue} numberOfLines={1}>{record.viewerValue ? dropPicksWord(record.viewerValue) : "—"}</Text>
             </>
           )}
         </View>
@@ -1214,6 +1171,10 @@ export default function LeagueDetailScreen() {
   // each lists only the legs that match (see ParlayCard's legFilter).
   const legFilter: LegFilter = { member: effectiveMemberFilter, betType: betTypeFilter, result: resultFilter };
 
+  function openLeagueSettings() {
+    router.push({ pathname: "/leagues/[id]/settings", params: { id: String(leagueId) } });
+  }
+
   function openManageOnWeb() {
     WebBrowser.openBrowserAsync(webLeagueSettingsUrl(leagueId, API_BASE_URL));
   }
@@ -1319,9 +1280,12 @@ export default function LeagueDetailScreen() {
               onPress={() =>
                 Alert.alert(leagueName, undefined, [
                   ...(isAdmin
-                    ? [{ text: "Invite members", onPress: () => setInviteOpen(true) }]
+                    ? [
+                        { text: "Invite members", onPress: () => setInviteOpen(true) },
+                        { text: "League settings", onPress: openLeagueSettings },
+                      ]
                     : []),
-                  { text: "Manage on web", onPress: openManageOnWeb },
+                  { text: "Open on the web", onPress: openManageOnWeb },
                   { text: "Cancel", style: "cancel" as const },
                 ])
               }
@@ -1720,13 +1684,25 @@ export default function LeagueDetailScreen() {
                   />
                 </>
               )}
-              <Pressable
-                style={({ pressed }) => [styles.webLinkRow, pressed && { opacity: 0.7 }]}
-                onPress={openManageOnWeb}
-              >
-                <Ionicons name="globe-outline" size={14} color="#64748b" />
-                <Text style={styles.webLinkText}>Manage roles & rules on the web</Text>
-              </Pressable>
+              {isAdmin ? (
+                <Pressable
+                  style={({ pressed }) => [styles.webLinkRow, pressed && { opacity: 0.7 }]}
+                  onPress={openLeagueSettings}
+                  accessibilityRole="button"
+                  testID="button-league-settings"
+                >
+                  <Ionicons name="settings-outline" size={14} color="#93c5fd" />
+                  <Text style={[styles.webLinkText, { color: "#93c5fd" }]}>Manage roles & rules</Text>
+                </Pressable>
+              ) : (
+                <Pressable
+                  style={({ pressed }) => [styles.webLinkRow, pressed && { opacity: 0.7 }]}
+                  onPress={openManageOnWeb}
+                >
+                  <Ionicons name="globe-outline" size={14} color="#64748b" />
+                  <Text style={styles.webLinkText}>See roles & rules on the web</Text>
+                </Pressable>
+              )}
             </>
           )}
 
@@ -2009,31 +1985,6 @@ const styles = StyleSheet.create({
   },
   reportTileTitle: { fontSize: 15, fontWeight: "700", color: "#f1f5f9" },
   reportTileDesc: { fontSize: 12, color: "#94a3b8", marginTop: 3 },
-  reportChartTitle: { fontSize: 11, fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 },
-  reportBarRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
-  reportBarLabel: { width: 92, fontSize: 13, color: "#f1f5f9" },
-  reportBarTrack: { flex: 1, height: 10, borderTopRightRadius: 4, borderBottomRightRadius: 4, backgroundColor: "#141926", overflow: "hidden" },
-  reportBarFill: { height: 10, borderTopRightRadius: 4, borderBottomRightRadius: 4, backgroundColor: "#2563eb" },
-  reportBarValue: { width: 44, textAlign: "right", fontSize: 13, fontWeight: "700", color: "#f1f5f9", fontVariant: ["tabular-nums"] },
-  reportText: { marginTop: 14, padding: 12, borderRadius: 10, backgroundColor: "#141926", fontSize: 13, lineHeight: 19, color: "#cbd5e1" },
-  reportShareBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    minHeight: 46,
-    borderRadius: 12,
-    backgroundColor: "#2563eb",
-    marginTop: 12,
-  },
-  reportShareText: { fontSize: 14, fontWeight: "700", color: "#ffffff" },
-  reportShareRow: { flexDirection: "row", gap: 8 },
-  reportShareBtnHalf: { flex: 1 },
-  reportShareBtnAlt: { backgroundColor: "#334155" },
-  // Its own background and padding, so the captured picture stands alone.
-  reportGraphic: { backgroundColor: "#1c2538", padding: 14, borderRadius: 12 },
-  reportGraphicTitle: { fontSize: 15, fontWeight: "700", color: "#f1f5f9", marginBottom: 8 },
-  reportEmpty: { fontSize: 13, color: "#94a3b8", paddingVertical: 20 },
   legFilterNote: { fontSize: 11, color: "#93c5fd", paddingBottom: 6 },
   boostChip: {
     paddingHorizontal: 10,
@@ -2290,6 +2241,8 @@ const styles = StyleSheet.create({
   parlayCardName: { fontSize: 14, fontWeight: "700", color: "#f1f5f9", flexShrink: 1 },
   parlayCardStatus: { fontSize: 12, color: "#94a3b8", marginTop: 1, textTransform: "capitalize" },
   parlayCardFraction: { fontSize: 12, fontWeight: "700", flexShrink: 0 },
+  parlayCardRight: { alignItems: "flex-end", flexShrink: 0, gap: 2 },
+  parlayCardOdds: { fontSize: 11, fontWeight: "600", color: "#94a3b8", fontVariant: ["tabular-nums"] },
   legCountPill: {
     backgroundColor: "#141926",
     borderWidth: 1,
@@ -2315,7 +2268,6 @@ const styles = StyleSheet.create({
   resultChipTextDestructive: { color: "#ef4444" },
   resultChipSuccess: { borderColor: "#22c55e66" },
   resultChipTextSuccess: { color: "#22c55e" },
-  mixBarWrap: { paddingHorizontal: 14, paddingBottom: 12 },
   legsSection: {
     paddingHorizontal: 14,
     paddingBottom: 4,
@@ -2427,9 +2379,11 @@ const styles = StyleSheet.create({
   memberRole: { fontSize: 12, fontWeight: "600", marginTop: 2 },
 
   /* League Records grid (Stats tab) */
-  recordGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  // Two tiles a row, pushed to the edges so the pair sits centred in the
+  // pane (a fixed gap left the spare width all on the right).
+  recordGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 10 },
   recordTile: {
-    width: "47%",
+    width: "48.5%",
     backgroundColor: "#1c2538",
     borderRadius: 14,
     borderWidth: 1,
