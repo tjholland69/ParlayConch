@@ -1,3 +1,4 @@
+import { isSubcommittee, leagueTerms } from "@shared/subcommittee";
 import { Pressable, View, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
@@ -15,7 +16,13 @@ interface LeagueCardProps {
     memberCount?: number;
     isAdmin?: boolean;
     role?: string;
+    /** Set on a subcommittee: the league it was formed in. */
+    parentLeagueId?: number | null;
   };
+  /** The parent league's name, shown on a subcommittee's card. */
+  parentName?: string;
+  /** A league the member can form a subcommittee in: shows the action. */
+  onNewSubcommittee?: () => void;
   /** All-time win rate + total parlays won — same top-level stats web shows on its Leagues list. */
   stat?: { winRate: number; totalDecided: number; parlaysWon: number };
   /** Shows a "Create New Parlay" button when nobody has started this week's parlay and the member can. */
@@ -27,7 +34,7 @@ interface LeagueCardProps {
   activeWeekId?: number;
 }
 
-export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId }: LeagueCardProps) {
+export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId, parentName, onNewSubcommittee }: LeagueCardProps) {
   const router = useRouter();
   const { data: lockStatus } = useWeekLockStatus(league.id, activeWeekId ?? 0);
   const showOpenParlay = !!openParlay && !lockStatus?.isLocked;
@@ -36,10 +43,12 @@ export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId }
   const statColor =
     stat && stat.winRate >= 60 ? "#4ade80" : stat && stat.winRate >= 40 ? "#facc15" : "#f87171";
 
+  // A subcommittee names its roles differently (Frondeur, Minion).
+  const terms = leagueTerms(league);
   const roleLabel = league.isAdmin
-    ? "Parlay Maestro"
+    ? terms.admin
     : league.role === "lieutenant"
-    ? "Parlay Lieutenant"
+    ? terms.lieutenant
     : "Member";
 
   const roleColor = league.isAdmin
@@ -77,6 +86,15 @@ export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId }
               <Ionicons name="chevron-forward" size={16} color="#374151" style={styles.chevron} />
             </View>
 
+            {isSubcommittee(league) ? (
+              <View style={styles.metaItem}>
+                <Ionicons name="git-branch-outline" size={13} color="#475569" />
+                <Text style={styles.metaTextMuted} numberOfLines={1} testID={`text-subcommittee-of-${league.id}`}>
+                  {parentName ? `Subcommittee of ${parentName}` : "Subcommittee"}
+                </Text>
+              </View>
+            ) : null}
+
             {league.description ? (
               <Text style={styles.description} numberOfLines={2}>
                 {league.description}
@@ -103,7 +121,8 @@ export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId }
                 </View>
               )}
 
-              {league.isAdmin && (
+              {/* A subcommittee has no code to share: its members are picked from the league. */}
+              {league.isAdmin && !isSubcommittee(league) && (
                 <View style={styles.metaItem}>
                   <Ionicons name="key-outline" size={13} color="#475569" />
                   <Text style={styles.inviteCode}>{league.inviteCode}</Text>
@@ -155,6 +174,19 @@ export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId }
             </Pressable>
           )}
 
+          {onNewSubcommittee && (
+            <Pressable
+              onPress={onNewSubcommittee}
+              style={({ pressed }) => [styles.subcommitteeLink, pressed && styles.pressed]}
+              accessibilityRole="button"
+              accessibilityLabel={`Form a subcommittee in ${league.name}`}
+              testID={`button-new-subcommittee-${league.id}`}
+            >
+              <Ionicons name="git-branch-outline" size={14} color="#93c5fd" />
+              <Text style={styles.subcommitteeLinkText}>New subcommittee</Text>
+            </Pressable>
+          )}
+
           {/* Sibling of the card Pressable — nested Pressables were flaky. */}
           {showCreateParlay && (
             <Button
@@ -175,6 +207,8 @@ export function LeagueCard({ league, stat, needsPick, openParlay, activeWeekId }
 }
 
 const styles = StyleSheet.create({
+  subcommitteeLink: { flexDirection: "row", alignItems: "center", gap: 6, minHeight: 44, alignSelf: "flex-start", paddingRight: 12 },
+  subcommitteeLinkText: { fontSize: 13, fontWeight: "600", color: "#93c5fd" },
   shadowWrap: {
     marginBottom: 20,
     borderRadius: 18,

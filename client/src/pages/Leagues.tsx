@@ -1,3 +1,6 @@
+import { isSubcommittee, leagueTerms, withSubcommitteesNested } from "@shared/subcommittee";
+import { CreateSubcommitteeDialog } from "@/components/SubcommitteeDialog";
+import type { LeagueWithMembers } from "@shared/schema";
 import { useState } from "react";
 import { useLeagues, useCreateLeague, useJoinLeague, useLeaguesOverviewStats, useLeaguesActiveStatus, useLeaguesWeeklyWinRates } from "@/hooks/use-bets";
 import { LeagueActivitySparkline } from "@/components/leagues/LeagueActivitySparkline";
@@ -6,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Users, Plus, LogIn, Copy, Crown, FlaskConical } from "lucide-react";
+import { Users, Plus, LogIn, Copy, Crown, FlaskConical, GitBranch } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
@@ -25,6 +28,8 @@ export default function Leagues() {
   const [newLeagueName, setNewLeagueName] = useState("");
   const [newLeagueDesc, setNewLeagueDesc] = useState("");
   const [inviteCode, setInviteCode] = useState("");
+  // The league a new subcommittee is being formed in.
+  const [subcommitteeParent, setSubcommitteeParent] = useState<LeagueWithMembers | null>(null);
 
   const handleCreate = () => {
     if (!newLeagueName.trim()) return;
@@ -143,8 +148,10 @@ export default function Leagues() {
         </div>
       ) : (
         <div className="grid gap-4">
-          {leagues.map((league) => {
+          {withSubcommitteesNested(leagues).map((league) => {
             const status = activeStatus?.[league.id];
+            const sub = isSubcommittee(league);
+            const parent = sub ? leagues.find((l) => l.id === league.parentLeagueId) : undefined;
             const anyOpen = !!status && !status.allSubmitted && !status.isLocked;
             const currentUserOpen = !!status && !status.currentUserSubmitted && !status.isLocked;
             return (
@@ -152,6 +159,8 @@ export default function Leagues() {
               key={league.id}
               className={cn(
                 "bg-card/50 backdrop-blur-sm border-white/5",
+                // A subcommittee sits under its league, set in from the left.
+                sub && parent && "ml-6 md:ml-10 border-l-2 border-l-primary/40",
                 anyOpen && "border-orange-500/40 shadow-[0_0_16px_2px_rgba(249,115,22,0.25)]",
                 currentUserOpen && "animate-pulse border-orange-500/70"
               )}
@@ -164,7 +173,13 @@ export default function Leagues() {
                     {league.isAdmin && (
                       <Badge variant="secondary" className="text-xs">
                         <Crown className="w-3 h-3 mr-1" />
-                        Parlay Maestro
+                        {leagueTerms(league).admin}
+                      </Badge>
+                    )}
+                    {sub && (
+                      <Badge variant="outline" className="text-xs" data-testid={`badge-subcommittee-${league.id}`}>
+                        <GitBranch className="w-3 h-3 mr-1" />
+                        {parent ? `Subcommittee of ${parent.name}` : "Subcommittee"}
                       </Badge>
                     )}
                     {league.isDemo && (
@@ -179,15 +194,30 @@ export default function Leagues() {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button 
-                    variant="ghost" 
-                    size="icon"
-                    onClick={() => copyCode(league.inviteCode)}
-                    title="Copy invite code"
-                    data-testid={`button-copy-code-${league.id}`}
-                  >
-                    <Copy className="w-4 h-4" />
-                  </Button>
+                  {/* A subcommittee has no code to share: its members are picked from the league. */}
+                  {sub ? null : (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setSubcommitteeParent(league)}
+                        title={`Form a subcommittee in ${league.name}`}
+                        data-testid={`button-new-subcommittee-${league.id}`}
+                      >
+                        <GitBranch className="w-4 h-4 mr-1" />
+                        Subcommittee
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => copyCode(league.inviteCode)}
+                        title="Copy invite code"
+                        data-testid={`button-copy-code-${league.id}`}
+                      >
+                        <Copy className="w-4 h-4" />
+                      </Button>
+                    </>
+                  )}
                   <Link href={`/leagues/${league.id}`}>
                     <Button data-testid={`button-view-league-${league.id}`}>
                       View League
@@ -201,11 +231,13 @@ export default function Leagues() {
                     <Users className="w-4 h-4" />
                     <span>{league.memberCount} members</span>
                   </div>
-                  <div>
-                    <span className="font-mono text-xs bg-white/5 px-2 py-1 rounded">
-                      Code: {league.inviteCode}
-                    </span>
-                  </div>
+                  {!sub && (
+                    <div>
+                      <span className="font-mono text-xs bg-white/5 px-2 py-1 rounded">
+                        Code: {league.inviteCode}
+                      </span>
+                    </div>
+                  )}
                   <div>
                     <span>{league.minLegsPerParlay}-{league.maxLegsPerParlay} legs per parlay</span>
                   </div>
@@ -246,6 +278,13 @@ export default function Leagues() {
             );
           })}
         </div>
+      )}
+      {subcommitteeParent && (
+        <CreateSubcommitteeDialog
+          parent={subcommitteeParent}
+          open
+          onOpenChange={(open) => !open && setSubcommitteeParent(null)}
+        />
       )}
     </div>
   );

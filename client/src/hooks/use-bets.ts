@@ -1,3 +1,4 @@
+import { leagueTerms } from "@shared/subcommittee";
 import { useMemo } from "react";
 import { useQuery, useMutation, useQueryClient, useInfiniteQuery, useQueries, keepPreviousData, type InfiniteData } from "@tanstack/react-query";
 import { api, buildUrl } from "@shared/routes";
@@ -1046,6 +1047,8 @@ export function useTransferAndLeave(leagueId: number) {
 export function useUpdateLieutenantPermissions(leagueId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { data: leagues } = useLeagues();
+  const terms = leagueTerms(leagues?.find((l) => l.id === leagueId));
   return useMutation({
     mutationFn: async (permissions: import('@shared/schema').LieutenantPermissions) => {
       const res = await fetch(`/api/leagues/${leagueId}/lieutenant-permissions`, {
@@ -1059,7 +1062,7 @@ export function useUpdateLieutenantPermissions(leagueId: number) {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [api.leagues.list.path] });
-      toast({ title: "Parlay Lieutenant permissions saved" });
+      toast({ title: `${terms.lieutenant} permissions saved` });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });

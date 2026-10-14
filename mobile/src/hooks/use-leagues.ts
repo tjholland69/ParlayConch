@@ -237,3 +237,28 @@ export function useLeagueReport(leagueId: number, reportId: import("@shared/repo
     enabled: !!leagueId && !!reportId,
   });
 }
+
+/** Forms a subcommittee in a league: the caller runs it, `memberUserIds` join them. */
+export function useCreateSubcommittee() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { parentLeagueId: number; name: string; description?: string; memberUserIds: string[] }) => {
+      const { parentLeagueId, ...body } = data;
+      return apiRequest<{ id: number; name: string }>("POST", `/api/leagues/${parentLeagueId}/subcommittees`, body);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
+    },
+  });
+}
+
+/** The Frondeur adds members of the league to their subcommittee. */
+export function useAddSubcommitteeMembers(leagueId: number) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (userIds: string[]) => apiRequest("POST", `/api/leagues/${leagueId}/subcommittee-members`, { userIds }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
+    },
+  });
+}

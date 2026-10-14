@@ -18,12 +18,16 @@ export function PlayerCombobox({
   disabled,
   placeholder = "Any player",
   testId,
+  allowCustom,
 }: {
   value: string;
   onChange: (name: string) => void;
   disabled?: boolean;
   placeholder?: string;
   testId?: string;
+  /** Offer the typed text as the name when it isn't someone in the list
+   * (a retired player in an old bet, say). */
+  allowCustom?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -52,7 +56,7 @@ export function PlayerCombobox({
               </div>
             ) : (
               <>
-                <CommandEmpty>No players found.</CommandEmpty>
+                {!(allowCustom && search.trim()) && <CommandEmpty>No players found.</CommandEmpty>}
                 <CommandGroup>
                   {value && (
                     <CommandItem
@@ -77,6 +81,15 @@ export function PlayerCombobox({
                       </CommandItem>
                     );
                   })}
+                  {allowCustom && search.trim() && !(players ?? []).some((p) => (p.displayName || p.name).toLowerCase() === search.trim().toLowerCase()) && (
+                    <CommandItem
+                      value="__custom__"
+                      onSelect={() => { onChange(search.trim()); setOpen(false); }}
+                      data-testid="option-custom-player"
+                    >
+                      Use "{search.trim()}"
+                    </CommandItem>
+                  )}
                 </CommandGroup>
               </>
             )}

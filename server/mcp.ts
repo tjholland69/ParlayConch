@@ -120,6 +120,7 @@ export function buildMcpServer(userId: string): McpServer {
         "allocation: how the league's bets split across bet types, and each type's record.",
         "disputes: every dispute raised, the bet and game week it touched, and the ruling.",
         "suss: each pick in the open parlay and the share of the league that down-voted it (votes are anonymous).",
+        "open_parlays: every parlay still taking picks, with who's in, who still owes a pick and when each pick was saved.",
       ].join(" "),
       inputSchema: {
         league_id: z.number().int().describe("From list_leagues."),

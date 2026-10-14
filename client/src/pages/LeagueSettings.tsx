@@ -52,11 +52,14 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
+import { isSubcommittee, leagueTerms, subcommitteeWording, type LeagueTerms } from "@shared/subcommittee";
 import type { LieutenantPermissions, LeagueMemberWithUser, LeagueNotificationSettings, ParlayLeg } from "@shared/schema";
 import { DEFAULT_LIEUTENANT_PERMISSIONS, DEFAULT_LEAGUE_NOTIFICATION_SETTINGS } from "@shared/schema";
 import { DEFAULT_SHAME_EMOJI, HERO_LABEL_TEXT, LOSER_LABEL_TEXT, SHAME_EMOJI_CHOICES } from "@shared/leagueLabels";
 import { PERMISSION_LABELS } from "@/lib/leaguePermissionLabels";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
+import { MemberDatesDialog } from "@/components/MemberDatesDialog";
+import { useBackdateMembers } from "@/hooks/use-parlay-extras";
 
 function formatMemberDateRange(startDate: string | Date | null, endDate: string | Date | null): string {
   const fmt = (d: string | Date) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -71,13 +74,18 @@ function MemberRow({
   onRoleChange,
   isPending,
   onRemove,
+  onEditDates,
+  terms,
 }: {
   member: LeagueMemberWithUser;
+  /** Role names for this league: a subcommittee has its own. */
+  terms: LeagueTerms;
   isAdmin: boolean;
   lieutenantCount: number;
   onRoleChange: (userId: string, role: string) => void;
   isPending: boolean;
   onRemove: (member: LeagueMemberWithUser) => void;
+  onEditDates: (member: LeagueMemberWithUser) => void;
 }) {
   const isLt = member.role === "lieutenant";
   const isMemberAdmin = member.role === "admin";
@@ -102,13 +110,13 @@ function MemberRow({
             {isMemberAdmin && (
               <Badge variant="secondary" className="text-xs h-4 px-1">
                 <Crown className="w-2.5 h-2.5 mr-1" />
-                Parlay Maestro
+                {terms.admin}
               </Badge>
             )}
             {isLt && (
               <Badge className="bg-blue-500/20 text-blue-400 border-blue-500/30 text-xs h-4 px-1">
                 <Star className="w-2.5 h-2.5 mr-1" />
-                Parlay Lieutenant
+                {terms.lieutenant}
               </Badge>
             )}
             {member.user.isDemo && (
@@ -127,7 +135,19 @@ function MemberRow({
             )}
           </div>
           <p className="text-xs text-muted-foreground">{member.user.email}</p>
-          <p className="text-[11px] text-muted-foreground/70">{formatMemberDateRange(member.startDate, member.endDate)}</p>
+          {isAdmin ? (
+            <button
+              type="button"
+              className="text-[11px] text-muted-foreground/70 underline decoration-dotted underline-offset-2 hover:text-foreground"
+              onClick={() => onEditDates(member)}
+              title="Change when this member was in the league"
+              data-testid={`button-member-dates-${member.userId}`}
+            >
+              {formatMemberDateRange(member.startDate, member.endDate)} · Edit
+            </button>
+          ) : (
+            <p className="text-[11px] text-muted-foreground/70">{formatMemberDateRange(member.startDate, member.endDate)}</p>
+          )}
         </div>
       </div>
       {isAdmin && !isMemberAdmin && !isInactive && (
@@ -147,10 +167,10 @@ function MemberRow({
             onClick={() => onRoleChange(member.userId, isLt ? "member" : "lieutenant")}
             title={
               isLt
-                ? "Remove Parlay Lieutenant role"
+                ? `Remove ${terms.lieutenant} role`
                 : canPromote
-                ? "Promote to Parlay Lieutenant"
-                : "Maximum 2 Parlay Lieutenants reached"
+                ? `Promote to ${terms.lieutenant}`
+                : `Maximum 2 ${terms.lieutenants} reached`
             }
             data-testid={`button-role-toggle-${member.userId}`}
           >
@@ -405,9 +425,13 @@ export default function LeagueSettings() {
   const { user } = useAuth();
   const { data: leagues } = useLeagues();
   const league = leagues?.find((l) => l.id === leagueId);
+  const terms = leagueTerms(league);
+  const parentLeague = leagues?.find((l) => l.id === league?.parentLeagueId);
 
   const { data: members, isLoading: loadingMembers } = useLeagueMembersWithUsers(leagueId, { includeInactive: true });
   const [removeTarget, setRemoveTarget] = useState<LeagueMemberWithUser | null>(null);
+  const [datesTarget, setDatesTarget] = useState<LeagueMemberWithUser | null>(null);
+  const backdateMembers = useBackdateMembers(leagueId);
 
   const updateSettings = useUpdateLeagueSettings(leagueId);
   const setMemberRole = useSetMemberRole(leagueId);
@@ -460,8 +484,8 @@ export default function LeagueSettings() {
     return (
       <div className="max-w-lg mx-auto text-center py-20">
         <Shield className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-        <h2 className="text-xl font-bold mb-2">Parlay Maestro Access Required</h2>
-        <p className="text-muted-foreground mb-6">Only the Parlay Maestro can access league settings.</p>
+        <h2 className="text-xl font-bold mb-2">{terms.admin} Access Required</h2>
+        <p className="text-muted-foreground mb-6">Only the {terms.admin} can access league settings.</p>
         <Link href={`/leagues/${leagueId}`}>
           <Button variant="outline">Back to League</Button>
         </Link>
@@ -529,7 +553,7 @@ export default function LeagueSettings() {
           </TabsTrigger>
           <TabsTrigger value="lieutenants" data-testid="tab-league-lieutenants">
             <Star className="w-4 h-4 mr-2" />
-            Parlay Lieutenants
+            {terms.lieutenants}
             {lieutenants.length > 0 && (
               <Badge className="ml-1.5 bg-blue-500/20 text-blue-400 border-blue-500/30 text-[10px] px-1 h-4">
                 {lieutenants.length}
@@ -575,6 +599,12 @@ export default function LeagueSettings() {
                   data-testid="input-league-description"
                 />
               </div>
+              {/* A subcommittee has no code to share: its members come from its league. */}
+              {isSubcommittee(league) ? (
+                <p className="text-xs text-muted-foreground" data-testid="text-subcommittee-no-code">
+                  This is a subcommittee{parentLeague ? ` of ${parentLeague.name}` : ""}. Only that league's members can be in it; add them from the Members list on the subcommittee's page.
+                </p>
+              ) : (
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="invite-code">Invite Code</Label>
@@ -588,6 +618,7 @@ export default function LeagueSettings() {
                   <p className="text-xs text-muted-foreground">Share this with friends to join</p>
                 </div>
               </div>
+              )}
             </CardContent>
           </Card>
 
@@ -748,11 +779,11 @@ export default function LeagueSettings() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Star className="w-5 h-5 text-blue-400" />
-                Parlay Lieutenant Assignment
-                <LeagueRolesDialog triggerClassName="h-7 w-7 p-0 ml-auto text-muted-foreground hover:text-foreground" />
+                {terms.lieutenant} Assignment
+                <LeagueRolesDialog league={league} triggerClassName="h-7 w-7 p-0 ml-auto text-muted-foreground hover:text-foreground" />
               </CardTitle>
               <CardDescription>
-                Designate up to 2 trusted members as Parlay Lieutenants. Their permitted actions are configured in the Permissions section below.
+                Designate up to 2 trusted members as {terms.lieutenants}. Their permitted actions are configured in the Permissions section below.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -761,10 +792,21 @@ export default function LeagueSettings() {
                 <Star className="w-4 h-4 text-blue-400 shrink-0" />
                 <p className="text-sm text-blue-300">
                   {lieutenants.length === 0
-                    ? "No Parlay Lieutenants assigned yet"
-                    : `${lieutenants.length} of 2 Parlay Lieutenant slot${lieutenants.length !== 1 ? "s" : ""} filled`}
+                    ? `No ${terms.lieutenants} assigned yet`
+                    : `${lieutenants.length} of 2 ${terms.lieutenant} slot${lieutenants.length !== 1 ? "s" : ""} filled`}
                 </p>
               </div>
+
+              {league.isAdmin && (
+                <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-white/5 mb-2">
+                  <p className="text-xs text-muted-foreground max-w-md">
+                    A member is only Void for parlays played while they were in the league. Tap a member's dates to correct them, or set everyone's start to the day of their first pick.
+                  </p>
+                  <Button size="sm" variant="outline" onClick={() => backdateMembers.mutate()} disabled={backdateMembers.isPending} data-testid="button-backdate-members">
+                    Backdate to first pick
+                  </Button>
+                </div>
+              )}
 
               {loadingMembers ? (
                 <div className="space-y-2">
@@ -776,6 +818,7 @@ export default function LeagueSettings() {
                 <div className="space-y-2" data-testid="list-members">
                   {sortedMembers.map((member) => (
                     <MemberRow
+                      terms={terms}
                       key={member.userId}
                       member={member}
                       isAdmin={league.isAdmin}
@@ -783,6 +826,7 @@ export default function LeagueSettings() {
                       onRoleChange={(userId, role) => setMemberRole.mutate({ userId, role })}
                       isPending={setMemberRole.isPending}
                       onRemove={setRemoveTarget}
+                      onEditDates={setDatesTarget}
                     />
                   ))}
                 </div>
@@ -791,6 +835,8 @@ export default function LeagueSettings() {
           </Card>
 
           <ExceptionsBlotterCard leagueId={leagueId} activeMembers={activeMembers} />
+
+          <MemberDatesDialog leagueId={leagueId} member={datesTarget} onClose={() => setDatesTarget(null)} />
 
           <RemoveMemberDialog
             open={!!removeTarget}
@@ -804,10 +850,10 @@ export default function LeagueSettings() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Shield className="w-5 h-5 text-primary" />
-                Parlay Lieutenant Permissions
+                {terms.lieutenant} Permissions
               </CardTitle>
               <CardDescription>
-                Choose which Parlay Maestro actions Parlay Lieutenants are allowed to perform in this league. Some actions remain admin-only and cannot be delegated.
+                Choose which {terms.admin} actions {terms.lieutenants} are allowed to perform in this league. Some actions remain admin-only and cannot be delegated.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -824,7 +870,7 @@ export default function LeagueSettings() {
                       >
                         <div className="space-y-0.5">
                           <p className="text-sm font-medium">{label}</p>
-                          <p className="text-xs text-muted-foreground">{description}</p>
+                          <p className="text-xs text-muted-foreground">{subcommitteeWording(description, league)}</p>
                         </div>
                         <Switch
                           checked={perms[key] ?? false}
@@ -843,7 +889,7 @@ export default function LeagueSettings() {
                 <div className="space-y-1">
                   <p className="text-xs font-medium">Admin-Only (never delegatable)</p>
                   <p className="text-xs text-muted-foreground">
-                    <strong>Suspend Members</strong> and <strong>Set Lieutenant</strong> are permanently restricted to the Parlay Maestro and cannot be granted to Parlay Lieutenants.
+                    <strong>Suspend Members</strong> and <strong>Set Lieutenant</strong> are permanently restricted to the {terms.admin} and cannot be granted to {terms.lieutenants}.
                   </p>
                 </div>
               </div>

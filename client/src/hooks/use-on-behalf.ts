@@ -1,3 +1,4 @@
+import { useLeagueWording } from "@/hooks/use-league-wording";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { OnBehalfInfo } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
@@ -61,11 +62,12 @@ export function useResolveLegApproval(leagueId: number, weekId: number) {
 export function useRequestUnlock(leagueId: number, weekId: number) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const wording = useLeagueWording(leagueId);
   return useMutation({
     mutationFn: (reason?: string) => send(`/api/leagues/${leagueId}/weeks/${weekId}/unlock-requests`, "POST", { reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/leagues", leagueId, "weeks", weekId, "lock"] });
-      toast({ title: "Unlock requested", description: "The Parlay Maestro has been asked to unlock this week." });
+      toast({ title: "Unlock requested", description: wording("The Parlay Maestro has been asked to unlock this week.") });
     },
     onError: (error: Error) => toast({ title: "Couldn't send the request", description: error.message, variant: "destructive" }),
   });

@@ -1,3 +1,4 @@
+import { storage } from "./storage";
 import type { Server } from "http";
 import crypto from "crypto";
 import type { Express } from "express";
@@ -133,9 +134,14 @@ export function registerRealtimeWebSocket(httpServer: Server, app: Express): voi
         return;
       }
       if (msg.action === "subscribe" && msg.leagueId != null) {
-        meta.leagues.add(msg.leagueId);
-        addToRoom(leagueRooms, msg.leagueId, ws);
-        ws.send(JSON.stringify({ type: "subscribed", leagueId: msg.leagueId }));
+        const leagueId = Number(msg.leagueId);
+        // A subcommittee's updates only go to the people in it.
+        void storage.canSeeLeague(leagueId, userId).then((allowed) => {
+          if (!allowed || ws.readyState !== ws.OPEN) return;
+          meta.leagues.add(leagueId);
+          addToRoom(leagueRooms, leagueId, ws);
+          ws.send(JSON.stringify({ type: "subscribed", leagueId }));
+        }).catch(() => {});
       }
       if (msg.action === "subscribe_user") {
         meta.users.add(userId);

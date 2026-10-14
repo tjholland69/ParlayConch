@@ -1,3 +1,4 @@
+import { gameVenueLabel } from "@shared/stadiums";
 import { View, Text, Image, Pressable, StyleSheet } from "react-native";
 import { format } from "date-fns";
 import { Ionicons } from "@expo/vector-icons";
@@ -142,13 +143,13 @@ export function GamePickCard({
   const canBuyMorePoints = currentPoints < MAX_POINTS_MOVE;
 
   const { data: teams } = useTeams();
-  const homeTeamData = teams?.find((t) => t.abbreviation === game.homeTeam);
-  const awayTeamData = teams?.find((t) => t.abbreviation === game.awayTeam);
-  // The home team's stadium is the game's location (barring the rare
-  // international game) — real `game.venue` data, when present, wins.
-  const locationText =
-    game.venue ||
-    (homeTeamData ? [homeTeamData.stadiumName, homeTeamData.city].filter(Boolean).join(", ") : null);
+  // Games name a team by nickname ("Patriots"); older rows used the abbreviation.
+  const teamFor = (name: string) => teams?.find((t) => t.nickname === name || t.abbreviation === name);
+  const homeTeamData = teamFor(game.homeTeam);
+  const awayTeamData = teamFor(game.awayTeam);
+  // "Gillette Stadium - Foxborough, MA": the home team's stadium, unless the
+  // game was moved (an international game), in which case `game.venue` wins.
+  const locationText = gameVenueLabel(game);
   const isIndoors = homeTeamData?.stadiumType && homeTeamData.stadiumType !== "outdoor";
   const { data: weather } = useGameWeather(game.id, !past && !isIndoors);
 
@@ -184,7 +185,7 @@ export function GamePickCard({
                 )}
               </View>
             ) : null}
-            <Text style={styles.venueText} numberOfLines={1}>
+            <Text style={styles.venueText} numberOfLines={2} testID={`text-game-venue-${game.id}`}>
               {locationText}
             </Text>
           </View>
@@ -404,14 +405,14 @@ const styles = StyleSheet.create({
   },
   metaRow: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
     justifyContent: "space-between",
     marginBottom: 12,
     gap: 8,
   },
   metaText: { fontSize: 12, color: "#94a3b8", flexShrink: 0 },
   venueRow: { flexDirection: "row", alignItems: "center", gap: 4, flex: 1, justifyContent: "flex-end", minWidth: 0 },
-  venueText: { fontSize: 12, color: "#475569", flexShrink: 1, textAlign: "right" },
+  venueText: { fontSize: 11, lineHeight: 14, color: "#475569", flexShrink: 1, textAlign: "right" },
   weatherRow: { flexDirection: "row", alignItems: "center", gap: 2, flexShrink: 0 },
   weatherText: { fontSize: 12, color: "#475569", fontWeight: "600" },
   statusPill: {

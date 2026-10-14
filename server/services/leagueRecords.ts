@@ -4,7 +4,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import { leagueMembers, parlays, parlayLegs, games, weeks, leagues } from "@shared/db-schema";
 import { parseAmericanOdds } from "@shared/powerScore";
 import { getSlate } from "@shared/slate";
-import { applyBoost } from "@shared/parlayBoost";
+import { americanToDecimal, decimalToAmericanLabel, parlayOdds } from "@shared/parlayOdds";
 import { storage } from "../storage";
 
 export type LeagueRecordEntry = {
@@ -66,21 +66,6 @@ const BET_TYPE_LABELS: Record<string, string> = {
   player_prop: "Player Prop",
 };
 
-/** American odds → decimal multiplier, for comparing/combining bets of any sign. */
-function americanToDecimal(american: number): number {
-  return american > 0 ? 1 + american / 100 : 1 + 100 / Math.abs(american);
-}
-
-/** Decimal multiplier → American odds string, for display. */
-function decimalToAmericanLabel(decimal: number): string {
-  if (decimal >= 2) {
-    const american = Math.round((decimal - 1) * 100);
-    return `+${american}`;
-  }
-  const american = Math.round(-100 / (decimal - 1));
-  return String(american);
-}
-
 /** Compact tile label for an NFL player name: "P. Mahomes" instead of
  * "Patrick Mahomes" — same first-initial + last-name space-saving treatment
  * applied to league member names on these tiles (see memberShortName on the
@@ -125,6 +110,7 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
       parlayStatus: parlays.status,
       parlayWeekId: parlays.weekId,
       parlayBoostPct: parlays.boostPct,
+      parlayActualOdds: parlays.actualOdds,
       homeTeam: games.homeTeam,
       awayTeam: games.awayTeam,
       gameFinishedAt: games.finishedAt,
@@ -223,25 +209,23 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
     const arr = legsByParlay.get(r.parlayId);
     if (arr) arr.push(r); else legsByParlay.set(r.parlayId, [r]);
   }
-  let bestParlay: { decimal: number; userId: string | null; weekId: number; parlayId: number } | null = null;
+  let bestParlay: { decimal: number; estimated: boolean; userId: string | null; weekId: number; parlayId: number } | null = null;
   // Runner-up to bestParlay — this tile's bottom half shows the league's
   // second-highest parlay odds rather than the viewer's own best.
   let secondBestParlay = 0;
   for (const [parlayId, legs] of legsByParlay) {
-    let combined = 1;
-    let any = false;
-    for (const r of legs) {
-      const american = parseAmericanOdds(r.leg.odds);
-      if (american == null) continue;
-      combined *= americanToDecimal(american);
-      any = true;
-    }
-    if (!any) continue;
-    // A promo boost raises what the parlay actually pays.
-    combined = applyBoost(combined, legs[0].parlayBoostPct);
+    // The odds recorded off the ticket when someone has entered them, else
+    // the legs' posted odds multiplied out (with any promo boost).
+    const odds = parlayOdds({
+      actualOdds: legs[0].parlayActualOdds,
+      boostPct: legs[0].parlayBoostPct,
+      legs: legs.map(r => r.leg),
+    });
+    if (!odds) continue;
+    const combined = odds.decimal;
     if (!bestParlay || combined > bestParlay.decimal) {
       if (bestParlay) secondBestParlay = bestParlay.decimal;
-      bestParlay = { decimal: combined, userId: legs[0].parlayUserId, weekId: legs[0].parlayWeekId, parlayId };
+      bestParlay = { decimal: combined, estimated: odds.estimated, userId: legs[0].parlayUserId, weekId: legs[0].parlayWeekId, parlayId };
     } else if (combined > secondBestParlay) {
       secondBestParlay = combined;
     }
@@ -255,10 +239,9 @@ export async function getLeagueRecords(leagueId: number, viewerUserId?: string):
       key: "highestParlayOdds",
       title: "Spice Melange",
       label: "Highest Total Parlay Odds",
-      // Product of each leg's posted odds at pick time — not the parlay's
-      // actual settled payout, so it's an approximation of what the book
-      // would offer, not an exact figure.
-      value: `${bestParlay.decimal.toFixed(1)}x (${decimalToAmericanLabel(bestParlay.decimal)}) (est.)`,
+      // "(est.)" when it's the product of each leg's posted odds at pick
+      // time rather than odds recorded off the ticket.
+      value: `${bestParlay.decimal.toFixed(1)}x (${decimalToAmericanLabel(bestParlay.decimal)})${bestParlay.estimated ? " (est.)" : ""}`,
       holderUserId: bestParlay.userId,
       week: weekContext(bestParlay.weekId),
       legIds: legsByParlay.get(bestParlay.parlayId)!.map(r => r.leg.id),

@@ -17,6 +17,7 @@ const mockStorage = vi.hoisted(() => ({
   setLeagueDemoFlag: vi.fn(),
   getLeagueMembers: vi.fn(),
   pokeMember: vi.fn(),
+  setParlayActualOdds: vi.fn(),
 }));
 
 vi.mock("../../server/storage", () => ({ storage: mockStorage }));
@@ -368,6 +369,61 @@ describe("HTTP route validation and auth", () => {
 
       expect(res.status).toBe(201);
       expect(mockStorage.pokeMember).toHaveBeenCalledWith(7, HTTP_TEST_USER, "friend");
+    });
+  });
+
+  describe("PUT /api/parlays/:id/actual-odds", () => {
+    const locked = { id: 1, leagueId: 10, weekId: 2, userId: HTTP_TEST_USER, status: "placed" };
+
+    test("only the parlay's owner or the Parlay Maestro can record the odds", async () => {
+      mockStorage.getParlay.mockResolvedValue({ ...locked, userId: "other" });
+      mockStorage.isLeagueAdmin.mockResolvedValue(false);
+      const res = await request(testApp).put("/api/parlays/1/actual-odds").send({ actualOdds: "+650" });
+      expect(res.status).toBe(403);
+      expect(mockStorage.setParlayActualOdds).not.toHaveBeenCalled();
+    });
+
+    test("an open parlay hasn't been placed, so it has no odds to record", async () => {
+      mockStorage.getParlay.mockResolvedValue({ ...locked, status: "draft" });
+      const res = await request(testApp).put("/api/parlays/1/actual-odds").send({ actualOdds: "+650" });
+      expect(res.status).toBe(409);
+      expect(mockStorage.setParlayActualOdds).not.toHaveBeenCalled();
+    });
+
+    test("odds that aren't American odds are refused with a hint", async () => {
+      mockStorage.getParlay.mockResolvedValue(locked);
+      const res = await request(testApp).put("/api/parlays/1/actual-odds").send({ actualOdds: "6.5" });
+      expect(res.status).toBe(400);
+      expect(res.body.message).toMatch(/\+650 or -120/);
+      expect(mockStorage.setParlayActualOdds).not.toHaveBeenCalled();
+    });
+
+    test("saves them signed, and clears them with null or a blank", async () => {
+      mockStorage.getParlay.mockResolvedValue(locked);
+      mockStorage.setParlayActualOdds.mockImplementation(async (_id: number, actualOdds: string | null) => ({ ...locked, actualOdds }));
+      const saved = await request(testApp).put("/api/parlays/1/actual-odds").send({ actualOdds: "650" });
+      expect(saved.status).toBe(200);
+      expect(mockStorage.setParlayActualOdds).toHaveBeenLastCalledWith(1, "+650");
+      await request(testApp).put("/api/parlays/1/actual-odds").send({ actualOdds: null });
+      expect(mockStorage.setParlayActualOdds).toHaveBeenLastCalledWith(1, null);
+      await request(testApp).put("/api/parlays/1/actual-odds").send({ actualOdds: "  " });
+      expect(mockStorage.setParlayActualOdds).toHaveBeenLastCalledWith(1, null);
+    });
+  });
+
+  describe("User Manager (/api/admin/users)", () => {
+    test("every route is closed to anyone who isn't a super user", async () => {
+      mockStorage.isSuperUser.mockResolvedValue(false);
+      const calls = [
+        request(testApp).get("/api/admin/users?q=amy"),
+        request(testApp).get("/api/admin/users/some-id"),
+        request(testApp).patch("/api/admin/users/some-id").send({ firstName: "Mallory" }),
+        request(testApp).post("/api/admin/users/some-id/reset-password").send({ password: "a-new-password" }),
+      ];
+      for (const res of await Promise.all(calls)) {
+        expect(res.status).toBe(403);
+        expect(res.body.message).toBe("Super user access required");
+      }
     });
   });
 });

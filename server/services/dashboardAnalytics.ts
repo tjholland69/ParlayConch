@@ -360,6 +360,11 @@ export async function computeWinRateSeries(
     scopeLeagueIds = memberships.map((m) => m.leagueId);
   }
 
+  // Whoever is looking never gets a subcommittee they aren't in, however
+  // the league list was arrived at (their own filter, or a shared index's).
+  const closed = await storage.subcommitteesClosedTo(userId);
+  scopeLeagueIds = scopeLeagueIds.filter((id) => !closed.has(id));
+
   if (scopeLeagueIds.length === 0) return { points: [] };
 
   const conditions = [inArray(parlays.leagueId, scopeLeagueIds), isNotNull(parlayLegs.result)];

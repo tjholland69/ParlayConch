@@ -57,7 +57,7 @@ export function LegsCsvButton({ legs, filename }: { legs: ParlayLegWithParlayCon
     const csv = legsToCsv(legs.map((leg) => ({
       legId: leg.id,
       parlayId: leg.parlay.id,
-      league: "",
+      league: leg.parlay.leagueName ?? "",
       season: leg.parlay.week?.season ?? 0,
       week: leg.parlay.week?.weekNumber ?? 0,
       parlayStatus: leg.parlay.status,
@@ -106,7 +106,11 @@ export function LegsCsvButton({ legs, filename }: { legs: ParlayLegWithParlayCon
 // single-parlay legs table in ParlayRollupCard.tsx — the only difference is
 // the leading "Parlay" column, since a row here doesn't already imply which
 // parlay it belongs to the way a rollup tile's own legs table does.
-export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext[] }) {
+//
+// `showLeague` adds the league's name under each row's week. Set it only when
+// the legs are drawn from more than one league; inside a single league it
+// would repeat the same name on every row.
+export function LegsWithParlayTable({ legs, showLeague = false }: { legs: ParlayLegWithParlayContext[]; showLeague?: boolean }) {
   // "Bet Owner" is who placed the leg, which on a group parlay is usually not
   // the member who started the parlay.
   const effectiveUserId = useEffectiveUserId();
@@ -168,6 +172,11 @@ export function LegsWithParlayTable({ legs }: { legs: ParlayLegWithParlayContext
                     </Badge>
                   )}
                 </div>
+                {showLeague && leg.parlay.leagueName && (
+                  <div className="text-[11px] text-muted-foreground truncate max-w-[180px]" data-testid={`text-leg-league-${leg.id}`}>
+                    {leg.parlay.leagueName}
+                  </div>
+                )}
               </td>
               <td className="px-3 py-2 text-xs text-muted-foreground whitespace-nowrap">
                 {leg.userId === effectiveUserId ? "You" : getDisplayName(leg.user, "Member")}

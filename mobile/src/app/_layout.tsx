@@ -51,6 +51,10 @@ export default function RootLayout() {
                 options={{ headerBackTitle: "Leagues" }}
               />
               <Stack.Screen
+                name="leagues/[id]/settings"
+                options={{ headerBackTitle: "League", title: "League Settings" }}
+              />
+              <Stack.Screen
                 name="leagues/[id]/build"
                 options={{ headerBackTitle: "Back", title: "Make Your Pick" }}
               />

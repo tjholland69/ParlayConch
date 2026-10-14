@@ -1,3 +1,4 @@
+import { leagueTerms } from "@shared/subcommittee";
 import {
   View,
   Text,
@@ -45,11 +46,13 @@ import {
 import type { Game, GameWithBet, MemberWeekParlay } from "@shared/schema";
 import { pickStanding } from "@shared/weekParlays";
 import { BoostSheet } from "@/components/BoostSheet";
+import { ReportSheet } from "@/components/ReportSheet";
 import { SussMeter, SussVoteButton } from "@/components/SussMeter";
-import { useSendReminder, useSuss, useSussVote } from "@/hooks/use-parlay-extras";
+import { usePickSuggestions, usePickTrends, useSendReminder, useSuss, useSussVote } from "@/hooks/use-parlay-extras";
 import { findIllogicalBets, illogicalBetWarning, type IllogicalBet } from "@shared/illogicalBets";
 import { gameMatchesTeamQuery } from "@shared/nflTeams";
 import { SUSS_FULL_PROMPT, sussLevel } from "@shared/suss";
+import { trendSentence } from "@shared/pickTrends";
 
 type ParlayLegRow = MemberWeekParlay["legs"][number];
 
@@ -115,6 +118,9 @@ export default function BuildPickScreen() {
   const sendReminder = useSendReminder(leagueId, weekId);
   const [boostPromptOpen, setBoostPromptOpen] = useState(false);
   const [slipExpanded, setSlipExpanded] = useState(false);
+  // "Picks so far" can be folded away to leave the screen to the games.
+  const [summaryCollapsed, setSummaryCollapsed] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   // In a league that runs more than one parlay a week: the member chose to
   // start another instead of looking at the one already submitted.
   const [startingNew, setStartingNew] = useState(false);
@@ -196,6 +202,7 @@ export default function BuildPickScreen() {
             line: leg.line,
             playerName: leg.playerName ?? undefined,
             propType: leg.propType ?? undefined,
+            ...(leg.suggestionId != null ? { suggestionId: leg.suggestionId } : {}),
             ...(startingNew ? { startNew: true } : {}),
           }
         : null,
@@ -247,6 +254,18 @@ export default function BuildPickScreen() {
     const leg: SelectedLeg = { gameId: game.id, betType, pick, line: getLineForBet(game, betType, pick) };
     chooseWithIllogicalCheck(leg, { gameId: game.id, betType, pick });
   }
+
+  // Suggested picks: open bets with a winning record behind them. Not
+  // offered while picking for someone else (they're worked out per member).
+  const { data: suggestions } = usePickSuggestions(leagueId, weekId, parlay?.id, canPick && !onBehalfOf);
+  const { data: pickTrends } = usePickTrends(leagueId, canPick && !onBehalfOf);
+  const shownTrends = canPick && !onBehalfOf ? (pickTrends?.you ?? []).slice(0, 4) : [];
+  const shownSuggestions = (canPick && !onBehalfOf ? suggestions ?? [] : []).flatMap((s) => {
+    const game = gamesById.get(s.gameId);
+    const market = s.betType === "over" || s.betType === "under" ? "total" : (s.betType as "spread" | "moneyline");
+    const mine = myPick && myPick.gameId === s.gameId && myPick.betType === s.betType && myPick.pick === s.pick;
+    return game && !isGamePast(game) && !mine && !takenByGame.get(s.gameId)?.[market] ? [{ s, game }] : [];
+  });
 
   // Nudges whoever hasn't picked, then opens the share sheet with the
   // reminder text for the group chat.
@@ -482,18 +501,32 @@ export default function BuildPickScreen() {
                 <Text style={styles.onBehalfBtnText}>Player prop: search any player</Text>
               </Pressable>
             )}
+            {/* Only while the parlay is open: once it's submitted there's
+                nobody left to remind and nothing open to report on. */}
             {canPick && !!parlay && (
-              <Pressable
-                onPress={sendReminderBlast}
-                disabled={sendReminder.isPending}
-                style={({ pressed }) => [styles.onBehalfBtn, pressed && { opacity: 0.7 }]}
-                accessibilityRole="button"
-                accessibilityLabel="Send a reminder to everyone who hasn't picked"
-                testID="button-send-reminder"
-              >
-                {sendReminder.isPending ? <ActivityIndicator size="small" color="#93c5fd" /> : <Ionicons name="megaphone-outline" size={16} color="#93c5fd" />}
-                <Text style={styles.onBehalfBtnText}>Send reminder</Text>
-              </Pressable>
+              <View style={styles.actionRow}>
+                <Pressable
+                  onPress={sendReminderBlast}
+                  disabled={sendReminder.isPending}
+                  style={({ pressed }) => [styles.onBehalfBtn, styles.actionRowBtn, pressed && { opacity: 0.7 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send a reminder to everyone who hasn't picked"
+                  testID="button-send-reminder"
+                >
+                  {sendReminder.isPending ? <ActivityIndicator size="small" color="#93c5fd" /> : <Ionicons name="megaphone-outline" size={16} color="#93c5fd" />}
+                  <Text style={styles.onBehalfBtnText} numberOfLines={1}>Send reminder</Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => setReportOpen(true)}
+                  style={({ pressed }) => [styles.onBehalfBtn, styles.actionRowBtn, pressed && { opacity: 0.7 }]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Open the Open Parlays report"
+                  testID="button-open-parlays-report"
+                >
+                  <Ionicons name="reader-outline" size={16} color="#93c5fd" />
+                  <Text style={styles.onBehalfBtnText} numberOfLines={1}>Open Parlays report</Text>
+                </Pressable>
+              </View>
             )}
             {/* On Behalf Of mode: only for members who can pick for someone. */}
             {onBehalfTarget ? (
@@ -568,10 +601,21 @@ export default function BuildPickScreen() {
                 first and highlighted. */}
             {pickSummary.length > 0 && (
               <View style={styles.summaryCard} testID="list-pick-summary">
-                <Text style={styles.summaryTitle}>
-                  Picks so far · {pickSummary.filter((r) => r.leg).length} of {pickSummary.length} in
-                </Text>
-                {pickSummary.map((row) => {
+                <Pressable
+                  onPress={() => setSummaryCollapsed((v) => !v)}
+                  style={({ pressed }) => [styles.summaryHeader, pressed && { opacity: 0.7 }]}
+                  hitSlop={6}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: !summaryCollapsed }}
+                  accessibilityLabel={summaryCollapsed ? "Show everyone's picks" : "Hide everyone's picks"}
+                  testID="button-toggle-pick-summary"
+                >
+                  <Text style={[styles.summaryTitle, styles.summaryTitleInHeader]}>
+                    Picks so far · {pickSummary.filter((r) => r.leg).length} of {pickSummary.length} in
+                  </Text>
+                  <Ionicons name={summaryCollapsed ? "chevron-down" : "chevron-up"} size={16} color="#64748b" />
+                </Pressable>
+                {!summaryCollapsed && pickSummary.map((row) => {
                   const tally = row.legId != null ? suss?.[row.legId] : undefined;
                   return (
                     <View key={row.userId} style={[styles.summaryRow, !row.leg && styles.summaryRowOpen]}>
@@ -596,12 +640,56 @@ export default function BuildPickScreen() {
                           }
                         />
                       )}
+                      {/* Take the pick back out, same as the X in the slip below. */}
+                      {row.userId === pickerId && !!row.leg && canPick && (
+                        <Pressable
+                          onPress={() => savePick(null)}
+                          hitSlop={10}
+                          accessibilityRole="button"
+                          accessibilityLabel={onBehalfTarget ? `Remove ${onBehalfTarget.name}'s pick` : "Remove your pick"}
+                          testID="button-summary-remove-pick"
+                        >
+                          <Ionicons name="close-circle" size={20} color="#64748b" />
+                        </Pressable>
+                      )}
                     </View>
                   );
                 })}
-                {savedLeg && sussLevel(suss?.[savedLeg.id]) === 3 && (
+                {!summaryCollapsed && savedLeg && sussLevel(suss?.[savedLeg.id]) === 3 && (
                   <Text style={styles.sussPrompt} testID="text-suss-full">🌡️ {SUSS_FULL_PROMPT}</Text>
                 )}
+              </View>
+            )}
+
+            {(shownSuggestions.length > 0 || shownTrends.length > 0) && (
+              <View style={styles.summaryCard} testID="list-suggested-picks">
+                <Text style={styles.summaryTitle}>{shownSuggestions.length > 0 ? "Suggested picks" : "Your trends"}</Text>
+                {shownSuggestions.map(({ s, game }) => {
+                  const leg: SelectedLeg = { gameId: s.gameId, betType: s.betType, pick: s.pick, line: getLineForBet(game, s.betType, s.pick), suggestionId: s.id };
+                  return (
+                    <View key={s.id} style={styles.suggestionRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.suggestionPick} numberOfLines={1}>{shortLegLabel(leg, game)}</Text>
+                        <Text style={styles.suggestionWhy} numberOfLines={2}>{s.detail}</Text>
+                      </View>
+                      <Pressable
+                        onPress={() => chooseWithIllogicalCheck(leg, { gameId: s.gameId, betType: s.betType, pick: s.pick })}
+                        style={styles.suggestionButton}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Pick ${shortLegLabel(leg, game)}`}
+                        testID={`button-suggestion-${s.id}`}
+                      >
+                        <Text style={styles.suggestionButtonText}>Pick</Text>
+                      </Pressable>
+                    </View>
+                  );
+                })}
+                {shownTrends.map((t) => (
+                  <Text key={t.key} style={[styles.trendRow, { color: t.hot ? "#34d399" : "#f87171" }]} testID={`trend-${t.key}`}>
+                    {t.hot ? "▲" : "▼"} {trendSentence(t, "you")}
+                  </Text>
+                ))}
+                <Text style={styles.suggestionNote}>Past results in this league, not a prediction.</Text>
               </View>
             )}
           </View>
@@ -719,7 +807,7 @@ export default function BuildPickScreen() {
         ) : (
           <Text style={styles.slipNote} testID="text-pick-saved-note">
             {myPick
-              ? `Your pick is saved. Whoever started the parlay, or the Parlay Maestro, submits it once ${minLegs} legs are in.`
+              ? `Your pick is saved. Whoever started the parlay, or the ${leagueTerms(league).admin}, submits it once ${minLegs} legs are in.`
               : `Each member adds one pick. The parlay can be submitted once ${minLegs} legs are in.`}
           </Text>
         )}
@@ -757,6 +845,12 @@ export default function BuildPickScreen() {
         title="Before you submit"
         confirmLabel="Submit parlay"
         onConfirm={submitWithBoost}
+      />
+      <ReportSheet
+        leagueId={leagueId}
+        reportId={reportOpen ? "open_parlays" : null}
+        title="Open Parlays Report"
+        onClose={() => setReportOpen(false)}
       />
     </View>
   );
@@ -809,7 +903,11 @@ const styles = StyleSheet.create({
     borderColor: "rgba(147, 197, 253, 0.4)",
     marginBottom: 12,
   },
-  onBehalfBtnText: { fontSize: 14, fontWeight: "600", color: "#93c5fd" },
+  onBehalfBtnText: { fontSize: 14, fontWeight: "600", color: "#93c5fd", flexShrink: 1 },
+  actionRow: { flexDirection: "row", gap: 8 },
+  actionRowBtn: { flex: 1, paddingHorizontal: 8 },
+  summaryHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 28 },
+  summaryTitleInHeader: { marginBottom: 0, flex: 1 },
   onBehalfBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -865,6 +963,13 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     gap: 4,
   },
+  suggestionRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6, paddingHorizontal: 8 },
+  suggestionPick: { fontSize: 14, fontWeight: "600", color: "#e2e8f0" },
+  suggestionWhy: { fontSize: 12, color: "#94a3b8", marginTop: 1 },
+  suggestionButton: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: "#3b82f6" },
+  suggestionButtonText: { fontSize: 13, fontWeight: "700", color: "#60a5fa" },
+  trendRow: { fontSize: 12, fontWeight: "600", paddingHorizontal: 8, paddingTop: 4 },
+  suggestionNote: { fontSize: 11, color: "#64748b", paddingHorizontal: 8, paddingTop: 4 },
   summaryTitle: { fontSize: 11, fontWeight: "700", color: "#94a3b8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 4 },
   summaryRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 5, paddingHorizontal: 8, borderRadius: 8 },
   summaryRowOpen: { backgroundColor: "rgba(245, 158, 11, 0.1)" },

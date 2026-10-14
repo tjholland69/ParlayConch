@@ -40,6 +40,8 @@ export const draftParlayLegInputSchema = z.object({
   startNew: z.boolean().optional(),
   // "On Behalf Of": the member this pick is for, when it isn't the caller.
   onBehalfOfUserId: z.string().min(1).optional(),
+  // Set when the pick was made by tapping a suggestion (pick_suggestions.id).
+  suggestionId: z.number().int().optional(),
 }).refine(
   // A touchdown-scorer prop is only ever bet "yes" (see propPickOptions).
   (leg) => !(leg.betType === "player_prop" && leg.pick === "no" && !!leg.propType && YES_NO_PROP_TYPES.has(leg.propType)),

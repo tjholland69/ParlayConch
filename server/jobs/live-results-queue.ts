@@ -6,11 +6,11 @@ import { runLiveResultsTick } from "../services/liveResults";
 const QUEUE_NAME = "live-results";
 const REPEATABLE_JOB_NAME = "live-results-tick";
 
-// Every 5 minutes. A tick outside game windows does two small reads and
+// Every 2 minutes. A tick outside game windows does a few small reads and
 // stops (see services/liveResults.ts), so the cadence only costs anything
 // while games are actually being played.
-const TICK_CRON = "*/5 * * * *";
-const TICK_INTERVAL_MS = 5 * 60 * 1000;
+const TICK_CRON = "*/2 * * * *";
+const TICK_INTERVAL_MS = 2 * 60 * 1000;
 
 let queue: Queue | null = null;
 let worker: Worker | null = null;
@@ -36,7 +36,7 @@ async function tick() {
 export async function startLiveResultsWorker(): Promise<void> {
   if (!isRedisConfigured()) {
     if (process.env.NODE_ENV !== "production" || fallbackTimer) return;
-    logger.warn("[live-results] Redis not configured — checking for results every 5 minutes in-process instead.");
+    logger.warn("[live-results] Redis not configured — checking for results every 2 minutes in-process instead.");
     fallbackTimer = setInterval(() => {
       tick().catch((err) => logger.error({ err }, "[live-results] in-process tick failed"));
     }, TICK_INTERVAL_MS);

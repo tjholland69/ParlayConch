@@ -1,6 +1,7 @@
+import { isSubcommittee, leagueTerms } from "@shared/subcommittee";
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
-import { useLeagues, useUpdateLeagueSettings, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, usePopularPicks, useMyParlayHistory, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
+import { useLeagues, useUpdateLeagueSettings, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
 import { LegsCsvButton, LegsWithParlayTable } from "@/components/LegsWithParlayTable";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Trophy, Pencil, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Search, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2, Award, Flame, Shield, User, Dices, TrendingUp, TrendingDown, Citrus } from "lucide-react";
+import { Trophy, Pencil, Calendar, Users, Check, X, Loader2, Upload, Edit, FlaskConical, Settings, Lock, LockOpen, AlertTriangle, UserPlus, Search, Plus, Trash2, Crown, Star, Mail, LogOut, Download, ChevronDown, LayoutGrid, Table2, Award, Flame, Shield, User, Dices, TrendingUp, TrendingDown, Citrus, FileText } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -22,8 +23,10 @@ import { ImportHistoryModal } from "@/components/ImportHistoryModal";
 import { ImportInstructionsDialog } from "@/components/ImportInstructionsDialog";
 import { ParlayPlacementBar } from "@/components/ParlayPlacementBar";
 import { SussMeter, SussVoteButton } from "@/components/SussMeter";
-import { useSendReminder, useSuss, useSussVote } from "@/hooks/use-parlay-extras";
+import { usePickSuggestions, usePickTrends, useSendReminder, useSuss, useSussVote } from "@/hooks/use-parlay-extras";
+import { SuggestedPicks } from "@/components/SuggestedPicks";
 import { findIllogicalBets, illogicalBetWarning } from "@shared/illogicalBets";
+import { gameVenueLabel } from "@shared/stadiums";
 import { gameMatchesTeamQuery } from "@shared/nflTeams";
 import { SUSS_FULL_PROMPT, sussLevel } from "@shared/suss";
 import { ParlayRollupCard } from "@/components/ParlayRollupCard";
@@ -40,6 +43,7 @@ import { standingsCsv } from "@shared/standingsExport";
 import { OnBehalfBar, PendingApprovals, PickDelegatesCard, UnlockRequests } from "@/components/OnBehalfControls";
 import { useOnBehalfInfo } from "@/hooks/use-on-behalf";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
+import { AddSubcommitteeMembersDialog } from "@/components/SubcommitteeDialog";
 import { PageLoader } from "@/components/PageLoader";
 import { UserAvatar } from "@/components/UserAvatar";
 import { getDisplayName, shortId } from "@/lib/displayName";
@@ -419,6 +423,7 @@ export default function LeagueDetail() {
   
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
+  const terms = leagueTerms(league);
   
   const { data: weeks } = useWeeks();
   // Header week dropdown — purely a filter for the All Parlays list. Open Parlays
@@ -481,9 +486,11 @@ export default function LeagueDetail() {
   const myParlay = startingNew ? null : weekParlay ?? null;
   // A pick that would move the member's one pick to a different game waits
   // here for them to confirm the swap.
-  const [pendingSwap, setPendingSwap] = useState<{ from: string; to: string; leg: { gameId: number; betType: string; pick: string; line?: string } } | null>(null);
+  const [pendingSwap, setPendingSwap] = useState<{ from: string; to: string; leg: { gameId: number; betType: string; pick: string; line?: string; suggestionId?: number } } | null>(null);
   const addDraftLeg = useAddDraftLeg();
   const removeDraftLeg = useRemoveDraftLeg();
+  // "Picks so far" on the pick page can be folded away.
+  const [picksCollapsed, setPicksCollapsed] = useState(false);
   const submitDraftParlay = useSubmitDraftParlay();
   const approveParlay = useApproveParlay();
   const rejectParlay = useRejectParlay();
@@ -494,8 +501,6 @@ export default function LeagueDetail() {
     : 1;
   const lockParlay = useLockWeekParlay(leagueId, activeWeekId || 0);
   const unlockParlay = useUnlockWeekParlay(leagueId, activeWeekId || 0);
-  const { data: popularPicks } = usePopularPicks(leagueId, activeWeekId || 0);
-  const { data: myParlayHistory } = useMyParlayHistory(leagueId);
 
   const [propDialogGame, setPropDialogGame] = useState<Game | null>(null);
   // The any-player prop entry above the games: no game chosen up front.
@@ -547,6 +552,7 @@ export default function LeagueDetail() {
   );
   const inviteByEmail = useInviteByEmail(leagueId);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [addSubMembersOpen, setAddSubMembersOpen] = useState(false);
   const [inviteEmails, setInviteEmails] = useState<string[]>(['']);
   const [inviteResults, setInviteResults] = useState<{ email: string; status: string; username?: string }[] | null>(null);
 
@@ -589,7 +595,7 @@ export default function LeagueDetail() {
   const isMyVoidedSide = (gameId: number, betType: string, pick: string) =>
     myLegs.some(l => l.gameId === gameId && marketOf(l.betType) === marketOf(betType) && !(l.betType === betType && l.pick === pick));
 
-  const savePick = (leg: { gameId: number; betType: string; pick: string; line?: string }) => {
+  const savePick = (leg: { gameId: number; betType: string; pick: string; line?: string; suggestionId?: number }) => {
     if (!activeWeekId || !leagueId) return;
     addDraftLeg.mutate(
       { leagueId, weekId: activeWeekId, leg: startingNew ? { ...leg, startNew: true } : leg, userId: pickerId, onBehalfOf },
@@ -597,7 +603,8 @@ export default function LeagueDetail() {
     );
   };
 
-  const toggleLeg = (game: Game, betType: string, pick: string) => {
+  // `suggestionId` is set when the pick comes from the Suggested picks card.
+  const toggleLeg = (game: Game, betType: string, pick: string, suggestionId?: number) => {
     if (!activeWeekId || !leagueId) return;
     const existing = myLegs.find(l => l.gameId === game.id && l.betType === betType && l.pick === pick);
     if (existing) {
@@ -614,11 +621,11 @@ export default function LeagueDetail() {
         setPendingSwap({
           from: legChipLabel(myLeg, (games ?? []).find(g => g.id === myLeg.gameId)),
           to: legChipLabel({ betType, pick, line: line ?? null, propType: null }, game),
-          leg: { gameId: game.id, betType, pick, line },
+          leg: { gameId: game.id, betType, pick, line, suggestionId },
         });
         return;
       }
-      savePick({ gameId: game.id, betType, pick, line });
+      savePick({ gameId: game.id, betType, pick, line, suggestionId });
     };
     // An Illogical Bet (shared/illogicalBets.ts) is allowed, after a warning.
     const illogical = findIllogicalBets({ gameId: game.id, betType, pick }, myParlay?.taken, game);
@@ -631,6 +638,9 @@ export default function LeagueDetail() {
 
   const [illogicalBet, setIllogicalBet] = useState<{ title: string; message: string; proceed: () => void } | null>(null);
   const { toast } = useToast();
+
+  const { data: pickTrends } = usePickTrends(leagueId, !onBehalfOf);
+  const { data: suggestions } = usePickSuggestions(leagueId, activeWeekId ?? undefined, myParlay?.id, !onBehalfOf);
 
   // The Suss Meter: anonymous down votes on the open parlay's picks.
   const { data: suss } = useSuss(leagueId, activeWeekId ?? undefined, !!myParlay && myParlay.status === "draft");
@@ -724,8 +734,12 @@ export default function LeagueDetail() {
       >
         <CardContent className="p-4">
           <div className="flex items-center justify-between mb-1 text-xs text-muted-foreground">
-            <span>{game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}</span>
-            {game.venue && <span className="truncate max-w-[120px]">{game.venue}</span>}
+            <span className="shrink-0">{game.gameTime ? format(new Date(game.gameTime), "EEE, MMM d h:mm a") : "Time TBD"}</span>
+            {gameVenueLabel(game) && (
+              <span className="truncate min-w-0 ml-3 text-right" title={gameVenueLabel(game) ?? undefined} data-testid={`text-game-venue-${game.id}`}>
+                {gameVenueLabel(game)}
+              </span>
+            )}
           </div>
           <div className="flex items-center justify-between mb-3 text-sm font-medium">
             <span className="truncate">{game.awayTeam} <span className="text-xs text-muted-foreground">{game.awayRecord}</span></span>
@@ -897,6 +911,11 @@ export default function LeagueDetail() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-display font-bold" data-testid="text-league-name">{league.name}</h1>
+              {isSubcommittee(league) && (
+                <p className="text-sm text-muted-foreground" data-testid="text-subcommittee-of">
+                  Subcommittee of {leagues?.find((l) => l.id === league.parentLeagueId)?.name ?? "another league"}
+                </p>
+              )}
               {league.isDemo && (
                 <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30" data-testid="badge-league-demo">
                   DEMO
@@ -1080,6 +1099,15 @@ export default function LeagueDetail() {
                     Send reminder
                   </Button>
                 )}
+                {/* Only while a parlay is still taking picks: that's what the report covers. */}
+                {!lockStatus?.isLocked && myParlay?.status === "draft" && (
+                  <Button size="sm" variant="outline" asChild>
+                    <Link href={`/reports?league=${leagueId}&report=open_parlays`} data-testid="link-open-parlays-report">
+                      <FileText className="w-4 h-4 mr-1" />
+                      Open Parlays report
+                    </Link>
+                  </Button>
+                )}
                 {lockStatus?.inProgress ? (
                   <Badge className="bg-sky-500/20 text-sky-300 border-sky-500/30" data-testid="badge-parlay-in-progress">
                     <Lock className="w-3 h-3 mr-1" />In Progress
@@ -1150,7 +1178,7 @@ export default function LeagueDetail() {
 
           {!lockStatus?.isLocked && (!myParlay || myParlay.status === "draft") && (!!myParlay || iAmMissing || !lockStatus || startingNew) ? (
             <>
-              <OnBehalfBar info={onBehalfInfo} targetId={onBehalfOf} onChange={setOnBehalfOf} />
+              <OnBehalfBar leagueId={leagueId} info={onBehalfInfo} targetId={onBehalfOf} onChange={setOnBehalfOf} />
               <PendingApprovals
                 parlay={myParlay}
                 games={allSlateGames}
@@ -1196,9 +1224,21 @@ export default function LeagueDetail() {
                       ? `${minLegs - parlayLegs.length} more ${minLegs - parlayLegs.length === 1 ? "pick" : "picks"} needed before it can be submitted. ${onBehalfOf ? (myLeg ? "Their pick is saved." : "Pick a market below to add theirs.") : myLeg ? "Your pick is saved." : "Pick a market below to add yours."}`
                       : canSubmitRole
                       ? "Enough picks are in. Submit when the league is ready."
-                      : `${myLeg ? "Your pick is saved. " : ""}Whoever started the parlay, or the Parlay Maestro, submits it.`}
+                      : `${myLeg ? "Your pick is saved. " : ""}Whoever started the parlay, or the ${terms.admin}, submits it.`}
                   </p>
                   {parlayLegs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setPicksCollapsed(v => !v)}
+                      className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+                      aria-expanded={!picksCollapsed}
+                      data-testid="button-toggle-pick-summary"
+                    >
+                      <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", picksCollapsed && "-rotate-90")} />
+                      Picks so far · {parlayLegs.length} in
+                    </button>
+                  )}
+                  {parlayLegs.length > 0 && !picksCollapsed && (
                     <div className="flex flex-wrap gap-2">
                       {[...myLegs, ...parlayLegs.filter(l => !myLegs.includes(l))].map((leg) => {
                         const game = allSlateGames.find(g => g.id === leg.gameId);
@@ -1224,6 +1264,20 @@ export default function LeagueDetail() {
                                 disabled={sussVote.isPending}
                                 onVote={(vote) => sussVote.mutate({ legId: leg.id, vote })}
                               />
+                            )}
+                            {/* Take the pick back out. Not while it's still saving (a negative id). */}
+                            {mine && leg.id > 0 && myParlay?.status === "draft" && (
+                              <button
+                                type="button"
+                                onClick={() => removeDraftLeg.mutate({ parlayId: myParlay.id, legId: leg.id, leagueId, weekId: activeWeekId, onBehalfOf })}
+                                disabled={removeDraftLeg.isPending}
+                                className="-mr-1 rounded-full p-0.5 text-muted-foreground hover:bg-white/10 hover:text-foreground disabled:opacity-50"
+                                aria-label={onBehalfOf ? "Remove their pick" : "Remove your pick"}
+                                title={onBehalfOf ? "Remove their pick" : "Remove your pick"}
+                                data-testid={`button-remove-my-pick-${leg.id}`}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
                             )}
                           </Badge>
                         );
@@ -1449,66 +1503,14 @@ export default function LeagueDetail() {
                 ))
               }
 
-              {/* Suggested bets — popular picks this week + your own history */}
-              {!lockStatus?.isLocked && ((popularPicks?.length ?? 0) > 0 || (myParlayHistory?.length ?? 0) > 0) && (
-                <Card className="bg-card/30 border-white/5">
-                  <CardHeader>
-                    <CardTitle className="text-base">Need inspiration?</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {popularPicks && popularPicks.length > 0 && (
-                      <div>
-                        <p className="text-xs text-muted-foreground mb-2">Popular picks this week</p>
-                        <div className="flex flex-wrap gap-2">
-                          {popularPicks.map((p, i) => {
-                            const game = games?.find(g => g.id === p.gameId);
-                            const label = p.betType === 'player_prop'
-                              ? `${p.playerName ?? 'Player'}${p.propType ? ` — ${p.propType.replace(/_/g, ' ')}` : ''} ${p.pick}`
-                              : game
-                                ? `${p.pick === 'home' ? game.homeTeam : p.pick === 'away' ? game.awayTeam : p.pick.toUpperCase()} (${p.betType})`
-                                : `${p.pick} (${p.betType})`;
-                            return (
-                              <Badge key={i} variant="outline" className="text-xs">
-                                {label} · {p.count} pick{p.count !== 1 ? "s" : ""}
-                              </Badge>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                    {(() => {
-                      const freq = new Map<string, { label: string; count: number }>();
-                      for (const p of myParlayHistory ?? []) {
-                        // A shared parlay carries everyone's legs; count only this member's.
-                        for (const leg of p.legs.filter(l => l.userId === effectiveUserId)) {
-                          const key = leg.betType === 'player_prop'
-                            ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
-                            : `bet:${leg.betType}:${leg.pick}`;
-                          const label = leg.betType === 'player_prop'
-                            ? `${leg.playerName ?? 'Player'}${leg.propType ? ` — ${leg.propType.replace(/_/g, ' ')}` : ''} ${leg.pick}`
-                            : `${leg.betType} — ${leg.pick}`;
-                          const existing = freq.get(key);
-                          if (existing) existing.count++;
-                          else freq.set(key, { label, count: 1 });
-                        }
-                      }
-                      const top = [...freq.values()].sort((a, b) => b.count - a.count).slice(0, 5);
-                      if (top.length === 0) return null;
-                      return (
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-2">Picks you've made before</p>
-                          <div className="flex flex-wrap gap-2">
-                            {top.map((t, i) => (
-                              <Badge key={i} variant="outline" className="text-xs capitalize">
-                                {t.label} · {t.count}x
-                              </Badge>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </CardContent>
-                </Card>
+              {/* Suggested picks: open bets with a winning record behind them. */}
+              {!lockStatus?.isLocked && !onBehalfOf && (!myParlay || myParlay.status === "draft") && (
+                <SuggestedPicks
+                  suggestions={(suggestions ?? []).filter(sg => !isMySelection(sg.gameId, sg.betType, sg.pick) && !takenByOther(sg.gameId, sg.betType))}
+                  trends={pickTrends?.you}
+                  games={games ?? []}
+                  onPick={(sg, game) => toggleLeg(game, sg.betType, sg.pick, sg.id)}
+                />
               )}
             </>
           )}
@@ -1890,14 +1892,21 @@ export default function LeagueDetail() {
               <CardTitle className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-primary" />
                 League Members
-                <LeagueRolesDialog />
+                <LeagueRolesDialog league={league} />
                 {(pokes?.received.length ?? 0) > 0 && (
                   <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-xs font-normal" data-testid="badge-pokes-received">
                     👉 {pokes!.received.length} poke{pokes!.received.length !== 1 ? "s" : ""}
                   </Badge>
                 )}
               </CardTitle>
-              {league.isAdmin && (
+              {/* A subcommittee is filled from its league's roster, not by invite. */}
+              {league.isAdmin && isSubcommittee(league) && (
+                <Button size="sm" onClick={() => setAddSubMembersOpen(true)} data-testid="button-add-subcommittee-members">
+                  <UserPlus className="w-4 h-4 mr-1" />
+                  Add Members
+                </Button>
+              )}
+              {league.isAdmin && !isSubcommittee(league) && (
                 <Button
                   size="sm"
                   onClick={() => { setInviteEmails(['']); setInviteResults(null); setInviteOpen(true); }}
@@ -1992,12 +2001,12 @@ export default function LeagueDetail() {
                           {m.role === 'admin' ? (
                             <Badge className="flex items-center gap-1 bg-primary/20 text-primary border-primary/30">
                               <Crown className="w-3 h-3" />
-                              Parlay Maestro
+                              {terms.admin}
                             </Badge>
                           ) : m.role === 'lieutenant' ? (
                             <Badge className="flex items-center gap-1 bg-blue-500/20 text-blue-400 border-blue-500/30">
                               <Star className="w-3 h-3" />
-                              Parlay Lieutenant
+                              {terms.lieutenant}
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-muted-foreground">Member</Badge>
@@ -2087,6 +2096,15 @@ export default function LeagueDetail() {
       />
 
       {/* Invite Members Dialog */}
+      {league && isSubcommittee(league) && (
+        <AddSubcommitteeMembersDialog
+          league={league}
+          parent={leagues?.find((l) => l.id === league.parentLeagueId)}
+          currentMemberIds={(members ?? []).map((m) => m.userId)}
+          open={addSubMembersOpen}
+          onOpenChange={setAddSubMembersOpen}
+        />
+      )}
       <Dialog open={inviteOpen} onOpenChange={(open) => { setInviteOpen(open); if (!open) setInviteResults(null); }}>
         <DialogContent className="sm:max-w-md" data-testid="dialog-invite-members">
           <DialogHeader>
@@ -2351,10 +2369,10 @@ export default function LeagueDetail() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Crown className="w-5 h-5 text-primary" />
-              Transfer Parlay Maestro &amp; Leave
+              Transfer {terms.admin} &amp; Leave
             </DialogTitle>
             <DialogDescription>
-              As the Parlay Maestro, you must hand the role to another member before you can leave. Lieutenants are listed first. Current lieutenants will remain in their roles — the new Maestro can adjust the structure at any time.
+              As the {terms.admin}, you must hand the role to another member before you can leave. {terms.lieutenants} are listed first. Current {terms.lieutenants.toLowerCase()} will remain in their roles — the new Maestro can adjust the structure at any time.
             </DialogDescription>
           </DialogHeader>
 
@@ -2391,7 +2409,7 @@ export default function LeagueDetail() {
                   <div className="flex items-center gap-1.5 shrink-0">
                     {m.role === 'lieutenant' && (
                       <Badge className="text-[10px] px-1.5 py-0 h-5 bg-blue-500/20 text-blue-400 border-blue-500/30">
-                        <Star className="w-2.5 h-2.5 mr-0.5" />Lieutenant
+                        <Star className="w-2.5 h-2.5 mr-0.5" />{terms.lieutenant}
                       </Badge>
                     )}
                     {m.user.isDemo && (

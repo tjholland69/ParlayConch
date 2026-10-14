@@ -11,6 +11,8 @@ export type SelectedLeg = {
   line?: string;
   playerName?: string | null;
   propType?: string | null;
+  /** Set when the pick was made by tapping a suggestion. */
+  suggestionId?: number;
 };
 
 export { lineForBet as getLineForBet };

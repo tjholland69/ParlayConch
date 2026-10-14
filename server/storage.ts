@@ -1,8 +1,9 @@
+import { SubcommitteeError } from "@shared/subcommittee";
 import { db } from "./db";
 import { logger } from "./logger";
 import {
   weeks, games, bets, users, leagues, leagueMembers, parlays, parlayLegs, importBatches, notifications, leagueWeekLocks, leaguePokes,
-  pickDelegations, unlockRequests, legSussVotes,
+  pickDelegations, unlockRequests, legSussVotes, pickSuggestions,
   players, playerWeekStats, customIndexes, customIndexShares, storyReports, storySections, parlayLegDisputes, teams,
 } from "@shared/db-schema";
 import {
@@ -40,6 +41,7 @@ import { publishLeagueEvent, publishUserEvent } from "./realtime-bus";
 import { impliedPointsMoved, MAX_POINTS_MOVE } from "@shared/buyPoints";
 import type { MultiBetLegInput } from "@shared/multiBetValidation";
 import { hasGameStarted } from "@shared/parlayProgress";
+import { happenedAt } from "@shared/membershipWindow";
 import {
   PickRuleError, canStartParlay, currentParlayFor, findMarketConflict, isOpenForPicks, marketLabel, openParlayFor,
 } from "@shared/weekParlays";
@@ -82,6 +84,11 @@ function pickKey(leg: { betType: string; gameId?: number | null; pick: string; p
     ? `prop:${leg.playerName}:${leg.propType}:${leg.pick}`
     : `game:${leg.gameId}:${leg.betType}:${leg.pick}`;
 }
+
+// A timestamp computed in SQL (min(), coalesce()) comes back as the bare
+// text Postgres stores, which is UTC like every timestamp column here.
+const dbTimestamp = (value: unknown): Date | null =>
+  value == null ? null : value instanceof Date ? value : new Date(`${String(value).replace(" ", "T")}Z`);
 
 type PickTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type LegWithOwner = ParlayLeg & { owner: typeof users.$inferSelect | null };
@@ -157,7 +164,12 @@ export interface IStorage {
   // Leagues
   createLeague(userId: string, league: InsertLeague): Promise<League>;
   getLeague(id: number): Promise<League | undefined>;
-  getUserLeagues(userId: string): Promise<LeagueWithMembers[]>;
+createSubcommittee(userId: string, parentLeagueId: number, league: Omit<InsertLeague, "parentLeagueId">, memberUserIds?: string[]): Promise<League>;
+  getSubcommittees(parentLeagueId: number, userId: string): Promise<League[]>;
+  subcommitteesClosedTo(userId: string): Promise<Set<number>>;
+  canSeeLeague(leagueId: number, userId: string): Promise<boolean>;
+  getLeagueIdForLeg(legId: number): Promise<number | null>;
+    getUserLeagues(userId: string): Promise<LeagueWithMembers[]>;
   joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null>;
   getLeagueMembers(leagueId: number): Promise<LeagueMember[]>;
   getLeagueMembersWithUsers(leagueId: number, opts?: { includeInactive?: boolean; asOfDate?: Date }): Promise<LeagueMemberWithUser[]>;
@@ -198,6 +210,7 @@ export interface IStorage {
   getUnlockRequests(leagueId: number, weekId: number): Promise<UnlockRequest[]>;
   resolveUnlockRequest(id: number, resolvedBy: string, status: "granted" | "dismissed"): Promise<UnlockRequest | null>;
   setParlayBoost(parlayId: number, boostPct: number | null): Promise<Parlay>;
+  setParlayActualOdds(parlayId: number, actualOdds: string | null): Promise<Parlay>;
   getLeagueParlaysForWeek(leagueId: number, weekId: number): Promise<ParlayWithLegs[]>;
   getAllLeagueParlays(
     leagueId: number,
@@ -322,6 +335,7 @@ export interface IStorage {
   setLegDecision(legId: number, info: { decidedAt: Date; decidedPlayDesc: string; decidedQuarter: string; decidedClock: string; decidedConfidence: string }): Promise<void>;
   patchGameOdds(gameId: number, odds: { spread?: string; overUnder?: string; moneylineHome?: string; moneylineAway?: string }): Promise<void>;
   updateGameTime(gameId: number, gameTime: Date): Promise<void>;
+  updateGameVenue(gameId: number, venue: string | null): Promise<void>;
   getUser(userId: string): Promise<typeof users.$inferSelect | null>;
 
   // nflverse / Players
@@ -453,7 +467,12 @@ export class DatabaseStorage implements IStorage {
         pushes: sql<number>`count(*) filter (where ${parlays.status} = 'push')`,
       })
       .from(users)
-      .leftJoin(parlays, eq(parlays.userId, users.id))
+      // Everyone sees this board, so a subcommittee's parlays stay off it:
+      // those are for the people in the subcommittee only.
+      .leftJoin(parlays, and(
+        eq(parlays.userId, users.id),
+        sql`not exists (select 1 from ${leagues} where ${leagues.id} = ${parlays.leagueId} and ${leagues.parentLeagueId} is not null)`,
+      ))
       .where(sql`${users.isDemo} is not true`)
       .groupBy(users.id);
 
@@ -505,6 +524,29 @@ export class DatabaseStorage implements IStorage {
    * window. Absence of a valid submission in an eligible week — whether or
    * not a void row actually exists for it — is what counts against them.
    */
+  /**
+   * When each week with real league activity happened: its first kickoff.
+   * A week whose games carry no time falls back to its earliest submission,
+   * which is only right for parlays entered at the time (an import made
+   * years later would date the week to the day of the import).
+   */
+  private async weekAnchors(legRows: { weekId: number; createdAt: Date | null }[]): Promise<Map<number, number>> {
+    const submissions = new Map<number, (Date | null)[]>();
+    for (const row of legRows) submissions.set(row.weekId, [...(submissions.get(row.weekId) ?? []), row.createdAt]);
+    const weekIds = [...submissions.keys()];
+    if (weekIds.length === 0) return new Map();
+    const kickoffs = await db.select({ weekId: games.weekId, first: sql<string | null>`min(${games.gameTime})`.mapWith(dbTimestamp) })
+      .from(games).where(inArray(games.weekId, weekIds)).groupBy(games.weekId);
+    const firstKickoff = new Map(kickoffs.map(k => [k.weekId, k.first]));
+    const anchors = new Map<number, number>();
+    for (const [weekId, entered] of submissions) {
+      const earliestEntry = happenedAt(entered, null);
+      const t = happenedAt([firstKickoff.get(weekId)], earliestEntry);
+      if (t != null) anchors.set(weekId, t);
+    }
+    return anchors;
+  }
+
   async getLeagueStats(leagueId: number, weekIds?: number[]): Promise<UserStat[]> {
     const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
     const memberIds = members.map(m => m.userId);
@@ -531,15 +573,7 @@ export class DatabaseStorage implements IStorage {
         weekFilter,
       ));
 
-    // Anchor each week that saw real league activity to its earliest submission
-    // — the closest thing to "when that week happened" available to us.
-    const weekAnchor = new Map<number, number>();
-    for (const row of legRows) {
-      if (!row.createdAt) continue;
-      const t = new Date(row.createdAt).getTime();
-      const existing = weekAnchor.get(row.weekId);
-      if (existing === undefined || t < existing) weekAnchor.set(row.weekId, t);
-    }
+    const weekAnchor = await this.weekAnchors(legRows);
     const activeWeekIds = [...weekAnchor.keys()];
 
     // Participation uses leg contribution (a member contributed at least one
@@ -637,13 +671,7 @@ export class DatabaseStorage implements IStorage {
         inArray(parlayLegs.userId, memberIds),
       ));
 
-    const weekAnchor = new Map<number, number>();
-    for (const row of legRows) {
-      if (!row.createdAt) continue;
-      const t = new Date(row.createdAt).getTime();
-      const existing = weekAnchor.get(row.weekId);
-      if (existing === undefined || t < existing) weekAnchor.set(row.weekId, t);
-    }
+    const weekAnchor = await this.weekAnchors(legRows);
 
     const submittedWeeks = new Set(legRows.filter(r => r.userId === userId).map(r => r.weekId));
 
@@ -727,6 +755,70 @@ export class DatabaseStorage implements IStorage {
     return newLeague;
   }
 
+  /**
+   * A subcommittee of `parentLeagueId`, run by whoever creates it (any active
+   * member of the league may). `memberUserIds` are added with them; each has
+   * to be an active member of the league too.
+   */
+  async createSubcommittee(userId: string, parentLeagueId: number, league: Omit<InsertLeague, "parentLeagueId">, memberUserIds: string[] = []): Promise<League> {
+    const parent = await this.getLeague(parentLeagueId);
+    if (!parent) throw new SubcommitteeError("League not found.");
+    if (parent.parentLeagueId != null) throw new SubcommitteeError("A subcommittee can't have subcommittees of its own.");
+    const roster = new Set((await this.getLeagueMembers(parentLeagueId)).map((m) => m.userId));
+    if (!roster.has(userId)) throw new SubcommitteeError(`Only members of ${parent.name} can form a subcommittee in it.`);
+    const others = Array.from(new Set(memberUserIds)).filter((id) => id !== userId);
+    if (others.some((id) => !roster.has(id))) throw new SubcommitteeError(`Everyone in a subcommittee has to be a member of ${parent.name}.`);
+
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(leagues)
+        .values({ ...league, parentLeagueId, inviteCode: generateInviteCode() })
+        .returning();
+      await tx.insert(leagueMembers).values([
+        { leagueId: created.id, userId, role: "admin" },
+        ...others.map((id) => ({ leagueId: created.id, userId: id, role: "member" })),
+      ]);
+      return created;
+    });
+  }
+
+  /**
+   * The subcommittees `userId` has no business seeing: every one they aren't
+   * an active member of. Empty for a super user. Anything that reads across
+   * leagues (exports, win-rate series, live updates) drops these.
+   */
+  async subcommitteesClosedTo(userId: string): Promise<Set<number>> {
+    const subs = await db.select({ id: leagues.id }).from(leagues).where(sql`${leagues.parentLeagueId} is not null`);
+    if (subs.length === 0 || (await this.isSuperUser(userId))) return new Set();
+    const mine = await db.select({ leagueId: leagueMembers.leagueId }).from(leagueMembers)
+      .where(and(eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true)));
+    const open = new Set(mine.map((m) => m.leagueId));
+    return new Set(subs.map((l) => l.id).filter((id) => !open.has(id)));
+  }
+
+  async getLeagueIdForLeg(legId: number): Promise<number | null> {
+    const [row] = await db.select({ leagueId: parlays.leagueId }).from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(eq(parlayLegs.id, legId));
+    return row?.leagueId ?? null;
+  }
+
+  /** Whether `userId` may see `leagueId` at all: false only for a subcommittee they aren't in. */
+  async canSeeLeague(leagueId: number, userId: string): Promise<boolean> {
+    const league = await this.getLeague(leagueId);
+    if (!league || league.parentLeagueId == null) return true;
+    return (await this.isSuperUser(userId)) || (await this.getLeagueMembers(leagueId)).some((m) => m.userId === userId);
+  }
+
+  /** The league's subcommittees `userId` is an active member of (all of them for a super user). */
+  async getSubcommittees(parentLeagueId: number, userId: string): Promise<League[]> {
+    const rows = await db.select().from(leagues).where(eq(leagues.parentLeagueId, parentLeagueId));
+    if (rows.length === 0 || (await this.isSuperUser(userId))) return rows;
+    const mine = await db.select({ leagueId: leagueMembers.leagueId }).from(leagueMembers)
+      .where(and(eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true), inArray(leagueMembers.leagueId, rows.map((r) => r.id))));
+    const ids = new Set(mine.map((m) => m.leagueId));
+    return rows.filter((r) => ids.has(r.id));
+  }
+
   async getLeague(id: number): Promise<League | undefined> {
     const [league] = await db.select().from(leagues).where(eq(leagues.id, id));
     return league;
@@ -747,7 +839,7 @@ export class DatabaseStorage implements IStorage {
       : memberships.map(m => m.leagueId);
     if (leagueIds.length === 0) return [];
 
-    const [userLeagues, allMembers] = await Promise.all([
+    const [listedLeagues, allMembers] = await Promise.all([
       db.select().from(leagues).where(inArray(leagues.id, leagueIds)),
       db.select({ member: leagueMembers, user: users })
         .from(leagueMembers)
@@ -761,6 +853,11 @@ export class DatabaseStorage implements IStorage {
       existing.push(m);
       membersByLeague.set(m.member.leagueId, existing);
     }
+
+    // A subcommittee drops off the list of someone no longer in it (they
+    // left it, or left its league).
+    const userLeagues = isSuper ? listedLeagues : listedLeagues.filter(league =>
+      league.parentLeagueId == null || memberships.some(m => m.leagueId === league.id && m.isActive));
 
     return userLeagues.map(league => {
       const members = membersByLeague.get(league.id) ?? [];
@@ -1007,6 +1104,57 @@ export class DatabaseStorage implements IStorage {
     const [member] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true)));
     return member?.role === 'lieutenant';
+  }
+
+  /**
+   * Parlay Maestro: corrects when a member was in the league. Voids and
+   * participation are worked out from this window, so backdating a start
+   * makes a founding member answerable for old weeks, and moving it later
+   * clears weeks from before they joined. An end date only applies to a
+   * member who has left.
+   */
+  async setMemberDates(leagueId: number, userId: string, dates: { startDate: Date; endDate?: Date | null }): Promise<typeof leagueMembers.$inferSelect> {
+    const [member] = await db.select().from(leagueMembers)
+      .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
+    if (!member) throw new PickRuleError("That person isn't in this league.");
+    if (dates.startDate.getTime() > Date.now()) throw new PickRuleError("A start date can't be in the future.");
+    const endDate = dates.endDate === undefined ? member.endDate : dates.endDate;
+    if (member.isActive && endDate) throw new PickRuleError("Only a member who has left the league has an end date.");
+    if (!member.isActive && !endDate) throw new PickRuleError("A member who has left needs an end date.");
+    if (endDate && endDate.getTime() <= dates.startDate.getTime()) throw new PickRuleError("The end date has to come after the start date.");
+    const [updated] = await db.update(leagueMembers).set({ startDate: dates.startDate, endDate })
+      .where(eq(leagueMembers.id, member.id)).returning();
+    return updated;
+  }
+
+  /**
+   * Parlay Maestro: moves every member's start date back to the kickoff of
+   * their first pick in the league, where that's earlier than the date on
+   * file. For a league whose history was imported: members' picks from
+   * before they signed up to the app then count from when they were made.
+   * Never moves a date later. Returns who changed.
+   */
+  async backdateMembersToFirstPick(leagueId: number): Promise<{ userId: string; from: Date; to: Date }[]> {
+    const firstPicks = await db.select({
+      userId: parlayLegs.userId,
+      first: sql<string | null>`min(coalesce(${games.gameTime}, (select min(g2.game_time) from games g2 where g2.week_id = ${parlays.weekId}), ${parlays.createdAt}))`.mapWith(dbTimestamp),
+    })
+      .from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(games, eq(parlayLegs.gameId, games.id))
+      .where(and(eq(parlays.leagueId, leagueId), not(inArray(parlays.status as any, ["void", "rejected", "draft"]))))
+      .groupBy(parlayLegs.userId);
+    const firstByUser = new Map(firstPicks.filter(r => r.first).map(r => [r.userId, r.first!]));
+
+    const members = await db.select().from(leagueMembers).where(eq(leagueMembers.leagueId, leagueId));
+    const changed: { userId: string; from: Date; to: Date }[] = [];
+    for (const member of members) {
+      const first = firstByUser.get(member.userId);
+      if (!first || first.getTime() >= member.startDate.getTime()) continue;
+      await db.update(leagueMembers).set({ startDate: first }).where(eq(leagueMembers.id, member.id));
+      changed.push({ userId: member.userId, from: member.startDate, to: first });
+    }
+    return changed;
   }
 
   async getLeagueMembersWithUsers(leagueId: number, opts?: { includeInactive?: boolean; asOfDate?: Date }): Promise<LeagueMemberWithUser[]> {
@@ -1303,6 +1451,16 @@ export class DatabaseStorage implements IStorage {
     const parlayRecord = await db.transaction(async (tx) => {
       const league = await this.lockLeagueForPicks(tx, leagueId);
 
+      // A pick always belongs to a member of the league. A super user can
+      // act in any league, but only On Behalf Of someone who's in it.
+      const [membership] = await tx.select({ id: leagueMembers.id }).from(leagueMembers)
+        .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true)));
+      if (!membership) {
+        throw new PickRuleError(placedBy
+          ? "That person isn't a member of this league, so they can't have a pick in its parlay."
+          : "You aren't a member of this league, so you can't have a pick in its parlay. To add one, make it On Behalf Of a member.");
+      }
+
       const [lock] = await tx.select({ id: leagueWeekLocks.id }).from(leagueWeekLocks)
         .where(and(eq(leagueWeekLocks.leagueId, leagueId), eq(leagueWeekLocks.weekId, weekId)));
       if (lock) throw new PickRuleError("This week's picks are locked and can no longer be changed.");
@@ -1356,9 +1514,30 @@ export class DatabaseStorage implements IStorage {
         throw new PickRuleError(`This parlay is full (${maxLegs} legs).`);
       }
 
+      // A pick only counts as "from a suggestion" when that suggestion was
+      // made to this member for this exact bet. Re-saving the same bet
+      // (moving its line, say) keeps the link it already had.
+      let suggestionId: number | null = null;
+      if (leg.suggestionId != null) {
+        const [suggestion] = await tx.select({ id: pickSuggestions.id }).from(pickSuggestions)
+          .where(and(
+            eq(pickSuggestions.id, leg.suggestionId),
+            eq(pickSuggestions.userId, userId),
+            eq(pickSuggestions.leagueId, leagueId),
+            eq(pickSuggestions.weekId, weekId),
+            eq(pickSuggestions.betType, leg.betType),
+            eq(pickSuggestions.pick, leg.pick),
+            ...(leg.gameId != null ? [eq(pickSuggestions.gameId, leg.gameId)] : []),
+          ));
+        suggestionId = leg.gameId != null && suggestion ? suggestion.id : null;
+      } else {
+        suggestionId = mine.find(l => l.gameId === leg.gameId && l.betType === leg.betType && l.pick === leg.pick)?.suggestionId ?? null;
+      }
+
       if (mine.length > 0) await tx.delete(parlayLegs).where(inArray(parlayLegs.id, mine.map(l => l.id)));
       await tx.insert(parlayLegs).values({
         ...leg,
+        suggestionId,
         parlayId: target.id,
         userId,
         ...(placedBy ? { placedByUserId: placedBy, approvalStatus: "pending" } : {}),
@@ -1493,6 +1672,13 @@ export class DatabaseStorage implements IStorage {
   /** Sets or clears (null) a parlay's promo boost. Allowed at any status. */
   async setParlayBoost(parlayId: number, boostPct: number | null): Promise<Parlay> {
     const [updated] = await db.update(parlays).set({ boostPct }).where(eq(parlays.id, parlayId)).returning();
+    if (!updated) throw new Error("Parlay not found");
+    emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
+    return updated;
+  }
+
+  async setParlayActualOdds(parlayId: number, actualOdds: string | null): Promise<Parlay> {
+    const [updated] = await db.update(parlays).set({ actualOdds }).where(eq(parlays.id, parlayId)).returning();
     if (!updated) throw new Error("Parlay not found");
     emitLeague(updated.leagueId, updated.weekId, "parlays_updated");
     return updated;
@@ -1729,9 +1915,10 @@ export class DatabaseStorage implements IStorage {
     // leftJoin (not innerJoin) on users — a leg the caller contributed must never
     // disappear just because the parlay's owner record doesn't resolve (e.g. stale
     // import data). Missing `owner` (when not the caller's own parlay) signals that.
-    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users })
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, leagueName: leagues.name, owner: users })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(leagues, eq(parlays.leagueId, leagues.id))
       .leftJoin(users, eq(parlays.userId, users.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
       .where(
@@ -1747,13 +1934,15 @@ export class DatabaseStorage implements IStorage {
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
     return rows
-      .map(({ leg, game, parlay, owner }) => {
+      .map(({ leg, game, parlay, leagueName, owner }) => {
         const isOwnParlay = parlay.userId === userId;
         return {
           ...leg,
           game,
           parlay: {
             id: parlay.id,
+            leagueId: parlay.leagueId,
+            leagueName,
             weekId: parlay.weekId,
             week: weekById.get(parlay.weekId)!,
             status: parlay.status,
@@ -1780,9 +1969,10 @@ export class DatabaseStorage implements IStorage {
     if (legIds.length === 0) return [];
 
     const legOwners = alias(users, "leg_owners");
-    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users, legOwner: legOwners })
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, leagueName: leagues.name, owner: users, legOwner: legOwners })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(leagues, eq(parlays.leagueId, leagues.id))
       .leftJoin(users, eq(parlays.userId, users.id))
       .leftJoin(legOwners, eq(parlayLegs.userId, legOwners.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
@@ -1795,7 +1985,7 @@ export class DatabaseStorage implements IStorage {
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
     return rows
-      .map(({ leg, game, parlay, owner, legOwner }) => {
+      .map(({ leg, game, parlay, leagueName, owner, legOwner }) => {
         const isOwnParlay = parlay.userId === requestingUserId;
         return {
           ...leg,
@@ -1803,6 +1993,8 @@ export class DatabaseStorage implements IStorage {
           user: legOwnerSummary(legOwner),
           parlay: {
             id: parlay.id,
+            leagueId: parlay.leagueId,
+            leagueName,
             weekId: parlay.weekId,
             week: weekById.get(parlay.weekId)!,
             status: parlay.status,
@@ -1821,9 +2013,10 @@ export class DatabaseStorage implements IStorage {
   async getMyParlayLegsByIds(userId: string, legIds: number[]): Promise<ParlayLegWithParlayContext[]> {
     if (legIds.length === 0) return [];
 
-    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, legOwner: users })
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, leagueName: leagues.name, legOwner: users })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(leagues, eq(parlays.leagueId, leagues.id))
       .leftJoin(users, eq(parlayLegs.userId, users.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
       // Your own legs, plus any leg in a parlay you started (the dashboard's
@@ -1840,12 +2033,14 @@ export class DatabaseStorage implements IStorage {
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
     return rows
-      .map(({ leg, game, parlay, legOwner }) => ({
+      .map(({ leg, game, parlay, leagueName, legOwner }) => ({
         ...leg,
         game,
         user: legOwnerSummary(legOwner),
         parlay: {
           id: parlay.id,
+          leagueId: parlay.leagueId,
+          leagueName,
           weekId: parlay.weekId,
           week: weekById.get(parlay.weekId)!,
           status: parlay.status,
@@ -1864,7 +2059,10 @@ export class DatabaseStorage implements IStorage {
   async getLegExportRows(userId: string, opts: { leagueId?: number; mineOnly?: boolean } = {}): Promise<LegExportRow[]> {
     const memberships = await db.select({ leagueId: leagueMembers.leagueId }).from(leagueMembers)
       .where(eq(leagueMembers.userId, userId));
-    const leagueIds = memberships.map(m => m.leagueId).filter(id => opts.leagueId == null || id === opts.leagueId);
+    // A subcommittee's history goes with its membership: someone who has
+    // left it (or its league) no longer exports it.
+    const closed = await this.subcommitteesClosedTo(userId);
+    const leagueIds = memberships.map(m => m.leagueId).filter(id => !closed.has(id) && (opts.leagueId == null || id === opts.leagueId));
     if (leagueIds.length === 0) return [];
 
     const rows = await db
@@ -2525,6 +2723,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async addMemberToLeague(leagueId: number, userId: string): Promise<LeagueMember> {
+    // A subcommittee only takes members of its league. (The database refuses
+    // anyone else too; this is the readable version of that refusal.)
+    const league = await this.getLeague(leagueId);
+    if (league?.parentLeagueId != null) {
+      const inParent = (await this.getLeagueMembers(league.parentLeagueId)).some((m) => m.userId === userId);
+      if (!inParent) throw new SubcommitteeError("Only members of the league can join its subcommittees.");
+    }
     const [existing] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
     if (existing) {
@@ -3186,6 +3391,10 @@ export class DatabaseStorage implements IStorage {
     await db.update(games).set({ gameTime }).where(eq(games.id, gameId));
   }
 
+  async updateGameVenue(gameId: number, venue: string | null): Promise<void> {
+    await db.update(games).set({ venue }).where(eq(games.id, gameId));
+  }
+
   /**
    * One-time backfill for games that were finished before `finishedAt` existed.
    * Estimates finish time as kickoff + ~3.5 hours (typical NFL game length) —
@@ -3543,6 +3752,11 @@ export class DatabaseStorage implements IStorage {
         .returning({ id: players.id, nflverseId: players.nflverseId });
       for (const p of saved) if (p.nflverseId) idByNflverseId.set(p.nflverseId, p.id);
     }
+    // New players may be who an unlinked prop was about all along.
+    await db.execute(sql`
+      update parlay_legs set player_id = leg_player_id(player_name, game_id)
+      where bet_type = 'player_prop' and player_id is null and player_name is not null
+        and leg_player_id(player_name, game_id) is not null`);
     return idByNflverseId;
   }
 

@@ -103,11 +103,15 @@ export function wantsNotification(
 
 export type NotificationChannel = "email" | "sms" | "push";
 
-/** The extra channels (beyond the in-app inbox) a member has switched on. */
-export function enabledChannels(prefs: UserNotificationPreferences | null | undefined): NotificationChannel[] {
+/**
+ * The extra channels (beyond the in-app inbox) a member has switched on.
+ * Text only counts with a mobile number to send to. That number lives in
+ * user_contacts, not in these preferences, so the caller passes it in.
+ */
+export function enabledChannels(prefs: UserNotificationPreferences | null | undefined, phoneNumber?: string | null): NotificationChannel[] {
   const channels: NotificationChannel[] = [];
   if (prefs?.email) channels.push("email");
-  if (prefs?.sms && prefs.phone?.trim()) channels.push("sms");
+  if (prefs?.sms && phoneNumber?.trim()) channels.push("sms");
   if (prefs?.push) channels.push("push");
   return channels;
 }

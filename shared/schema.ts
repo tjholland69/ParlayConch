@@ -66,6 +66,8 @@ export type UserNotificationPreferences = {
   email: boolean;
   sms: boolean;
   push: boolean;
+  /** No longer used: the mobile number moved to user_contacts so it stops
+   * travelling with settings. Old app builds may still send it; it's dropped. */
   phone?: string;
   /** Which alerts the member wants, by NOTIFICATION_EVENTS key. An alert
    * left out follows its default (shared/notifications.ts). */
@@ -355,6 +357,9 @@ export type ParlayLegWithParlayContext = ParlayLeg & {
   user?: { firstName?: string | null; email?: string | null; settings?: UserSettings | null } | null;
   parlay: {
     id: number;
+    /** The league the bet was made in, for lists that span several leagues. */
+    leagueId?: number;
+    leagueName?: string | null;
     weekId: number;
     week: Week;
     status: string | null;

@@ -12,7 +12,7 @@ import { PageLoader } from "@/components/PageLoader";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { EXPORT_FORMATS, type ExportFormat } from "@shared/dataExport";
-import type { Report, ReportCatalogEntry, ReportId } from "@shared/reports";
+import { isReportId, type Report, type ReportCatalogEntry, type ReportId } from "@shared/reports";
 
 const StoryStudio = lazy(() => import("@/pages/StoryStudio"));
 
@@ -308,10 +308,15 @@ function ReportView({ leagueId, entry }: { leagueId: number; entry: ReportCatalo
 
 function CannedReports() {
   const { data: leagues, isLoading } = useLeagues();
-  const [leagueId, setLeagueId] = useState<number | null>(null);
-  const [reportId, setReportId] = useState<ReportId>("standings_season");
+  // A link can open a report directly: /reports?league=12&report=open_parlays
+  // (the pick page's "Open Parlays report" button does).
+  const linked = new URLSearchParams(useSearch());
+  const linkedLeague = Number(linked.get("league"));
+  const linkedReport = linked.get("report");
+  const [leagueId, setLeagueId] = useState<number | null>(Number.isInteger(linkedLeague) && linkedLeague > 0 ? linkedLeague : null);
+  const [reportId, setReportId] = useState<ReportId>(isReportId(linkedReport) ? linkedReport : "standings_season");
   useEffect(() => {
-    if (leagueId == null && leagues?.length) setLeagueId(leagues[0].id);
+    if (leagues?.length && (leagueId == null || !leagues.some((l) => l.id === leagueId))) setLeagueId(leagues[0].id);
   }, [leagues, leagueId]);
 
   const { data: catalog } = useQuery<ReportCatalogEntry[]>({

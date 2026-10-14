@@ -10,6 +10,9 @@ import { syncGameFinishTimesFromPlayByPlay } from "./playByPlay";
 import { getHistoricalGameLines } from "./historicalOddsCache";
 import { buildResultDetail } from "@shared/legJustification";
 import { gradePropOverUnder } from "@shared/propGrading";
+import { calculateLegResult, deriveApproximateLine, lineNumber } from "@shared/legGrading";
+
+export { calculateLegResult };
 
 const DEFENSIVE_PROP_TYPES = new Set(["sacks", "tackles"]);
 
@@ -19,57 +22,6 @@ export type EnrichLog = {
   warnings: string[];
   errors: string[];
 };
-
-/**
- * `line` is the line to grade against — pass the leg's own actual line
- * (what the bettor took) when known; only fall back to the game's current
- * spread/overUnder (`game.spread`/`game.overUnder`) when the leg has none,
- * since the current line can drift from what was actually bet.
- */
-export function calculateLegResult(betType: string, pick: string, game: Game, line?: string | null): "win" | "loss" | "push" | null {
-  const homeScore = game.homeScore;
-  const awayScore = game.awayScore;
-  if (homeScore == null || awayScore == null) return null;
-  const scoreDiff = homeScore - awayScore;
-
-  if (betType === "moneyline") {
-    if (pick === "home") return scoreDiff > 0 ? "win" : scoreDiff < 0 ? "loss" : "push";
-    if (pick === "away") return scoreDiff < 0 ? "win" : scoreDiff > 0 ? "loss" : "push";
-  }
-  if (betType === "spread") {
-    // A leg's own line is from the picked team's side ("BUF +3.5" is stored as
-    // +3.5 on an away pick), while game.spread is always the home team's.
-    // Put both on the picked team's side before grading.
-    const fallback = pickSideSpread(pick, game.spread) ?? "0";
-    const spread = parseFloat(line ?? fallback);
-    const margin = pick === "away" ? -scoreDiff : scoreDiff;
-    const adj = margin + spread;
-    if (pick === "home" || pick === "away") return adj > 0 ? "win" : adj < 0 ? "loss" : "push";
-  }
-  if (betType === "over" || betType === "under") {
-    const total = homeScore + awayScore;
-    const ou = parseFloat(line ?? game.overUnder ?? "0");
-    if (ou === 0) return null;
-    if (betType === "over") return total > ou ? "win" : total < ou ? "loss" : "push";
-    if (betType === "under") return total < ou ? "win" : total > ou ? "loss" : "push";
-  }
-  return null;
-}
-
-/** game.spread is the home team's spread; an away pick takes the other side of it. */
-function pickSideSpread(pick: string, homeSpread: string | null | undefined): string | null {
-  if (!homeSpread) return null;
-  if (pick !== "away") return homeSpread;
-  const n = parseFloat(homeSpread);
-  return Number.isNaN(n) ? homeSpread : String(-n);
-}
-
-function deriveApproximateLine(betType: string, pick: string, game: Game): string | null {
-  if (betType === "spread") return pickSideSpread(pick, game.spread);
-  if (betType === "moneyline") return pick === "home" ? (game.moneylineHome ?? null) : (game.moneylineAway ?? null);
-  if (betType === "over" || betType === "under") return game.overUnder ?? null;
-  return null;
-}
 
 const PROP_STAT_MAP: Partial<Record<string, keyof PlayerWeekStat>> = {
   rush_yards:     "rushingYards",
@@ -142,7 +94,7 @@ function calcPropResult(
     return { result: null, actual, note: `No line set — cannot determine over/under (actual: ${actual})` };
   }
 
-  const lineNum = parseFloat(line);
+  const lineNum = lineNumber(line) ?? NaN;
   if (isNaN(lineNum)) {
     return { result: null, actual, note: `Line "${line}" is not a valid number (actual: ${actual})` };
   }

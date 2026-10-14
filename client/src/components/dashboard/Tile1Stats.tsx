@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Trophy, Users, ListChecks, TrendingUp, Dices, User, CalendarDays, Clock, Loader2, Zap, Activity, BarChart3, Info, Shield, ArrowUpDown } from "lucide-react";
 import { SlidingCard, EmptyState } from "@/components/SlidingCard";
 import { useDashboardSummary, useDashboardPatterns } from "@/hooks/use-dashboard";
-import { useMyParlayLegsByIds } from "@/hooks/use-bets";
+import { useLeagues, useMyParlayLegsByIds } from "@/hooks/use-bets";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { LegsCsvButton, LegsWithParlayTable } from "@/components/LegsWithParlayTable";
@@ -64,6 +64,9 @@ type Lookthrough = { title: string; legIds: number[] };
 /** The legs behind whichever dashboard number was clicked. */
 function LegsLookthroughDialog({ lookthrough, onClose }: { lookthrough: Lookthrough | null; onClose: () => void }) {
   const { data: legs, isLoading } = useMyParlayLegsByIds(lookthrough?.legIds ?? []);
+  // Dashboard numbers add up every league the member is in, so with more
+  // than one, each bet says which league it came from.
+  const { data: leagues } = useLeagues();
   return (
     <Dialog open={lookthrough !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-6xl w-[95vw] max-h-[80vh] overflow-y-auto">
@@ -76,7 +79,7 @@ function LegsLookthroughDialog({ lookthrough, onClose }: { lookthrough: Lookthro
         {isLoading ? (
           <div className="py-8 text-center text-sm text-muted-foreground">Loading…</div>
         ) : (
-          <LegsWithParlayTable legs={legs ?? []} />
+          <LegsWithParlayTable legs={legs ?? []} showLeague={(leagues?.length ?? 0) > 1} />
         )}
       </DialogContent>
     </Dialog>

@@ -14,6 +14,7 @@ import { storage } from "../storage";
 import type { Game } from "@shared/schema";
 import { logger } from "../logger";
 import { abbrevToShort, NFLVERSE_ABBREV_TO_SHORT } from "@shared/nflTeams";
+import { neutralVenueLabel } from "@shared/stadiums";
 
 // ─── nflverse data URLs ─────────────────────────────────────────────────────
 
@@ -180,6 +181,8 @@ export interface NflverseScheduleRow {
   home_moneyline: string;
   away_moneyline: string;
   stadium: string;
+  /** "Home", or "Neutral" for a game away from the home team's stadium. */
+  location?: string;
   roof: string;
   surface: string;
   gameday: string; // e.g. "2023-01-08"
@@ -341,6 +344,10 @@ export async function syncGameTimesFromNflverse(
     // skipping the date correction entirely.
     const gameTime = zonedWallTimeToUtc(row.gameday, row.gametime || "13:00", "America/New_York");
     await storage.updateGameTime(game.id, gameTime);
+    // A game away from the home team's stadium (an international game, say)
+    // gets its real venue; an ordinary home game stores none.
+    const venue = row.location === "Neutral" ? neutralVenueLabel(homeShort, row.stadium) : null;
+    if ((game.venue ?? null) !== venue) await storage.updateGameVenue(game.id, venue);
     updated++;
   }
 

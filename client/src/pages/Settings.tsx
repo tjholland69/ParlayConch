@@ -1,3 +1,4 @@
+import { PhoneNumberField } from "@/components/PhoneNumberField";
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { useSetUserDemo, useUpdateUserSettings, useUpdateNotificationPreferences, useLeagues } from "@/hooks/use-bets";
@@ -21,7 +22,7 @@ import { NOTIFICATION_EVENTS } from "@shared/notifications";
 import { useToast } from "@/hooks/use-toast";
 import { ConnectorTokensCard } from "@/components/ConnectorTokensCard";
 
-const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false, phone: "" };
+const DEFAULT_PREFS: UserNotificationPreferences = { email: false, sms: false, push: false };
 
 function NflverseSyncCard() {
   const { toast } = useToast();
@@ -370,6 +371,10 @@ export default function Settings() {
 
               <Separator className="border-white/5" />
 
+              <PhoneNumberField />
+
+              <Separator className="border-white/5" />
+
               {/* Region */}
               <div className="space-y-3">
                 <div>
@@ -592,7 +597,7 @@ export default function Settings() {
                     </div>
                     <div>
                       <p className="text-sm font-medium">SMS / Text Message</p>
-                      <p className="text-xs text-muted-foreground">Requires a verified phone number</p>
+                      <p className="text-xs text-muted-foreground">Uses the mobile number on your Profile tab</p>
                     </div>
                   </div>
                   <Switch
@@ -602,19 +607,9 @@ export default function Settings() {
                   />
                 </div>
                 {notifPrefs.sms && (
-                  <div className="pl-11 space-y-2">
-                    <Label htmlFor="phone" className="text-xs text-muted-foreground">Phone number</Label>
-                    <Input
-                      id="phone"
-                      type="tel"
-                      placeholder="+1 555 000 0000"
-                      value={notifPrefs.phone || ""}
-                      onChange={(e) => setNotifPrefs((p) => ({ ...p, phone: e.target.value }))}
-                      className="bg-background border-white/10 h-8 text-sm"
-                      data-testid="input-phone-number"
-                    />
-                    <p className="text-xs text-green-400/80">Texts aren't being sent yet: no SMS provider is connected. Your preference is saved for when one is.</p>
-                  </div>
+                  <p className="pl-11 text-xs text-green-400/80">
+                    Texts go to the mobile number on your Profile tab. They aren't being sent yet: no SMS provider is connected. Your preference is saved for when one is.
+                  </p>
                 )}
               </div>
 
@@ -777,7 +772,6 @@ export default function Settings() {
                             { label: "Unlock Weekly Parlay", desc: "Unlock a previously locked parlay to re-open submissions", icon: "✓" },
                             { label: "Remove a Member's Pick", desc: "Clear an individual pick from another member's parlay", icon: "✓" },
                             { label: "Approve Member Invites", desc: "Approve pending invite requests from regular members", icon: "✓" },
-                            { label: "Mark League as Demo", desc: "Toggle the league's demo / QA flag", icon: "✓" },
                           ].map(({ label, desc, icon }) => (
                             <div key={label} className="flex items-start gap-3 py-2 border-b border-white/5 last:border-0">
                               <span className="text-green-400 text-xs font-bold mt-0.5 w-4 shrink-0">{icon}</span>

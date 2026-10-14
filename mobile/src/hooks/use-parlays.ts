@@ -120,6 +120,8 @@ export type PickInput = {
   propType?: string;
   /** Start another parlay instead of joining the open one. */
   startNew?: boolean;
+  /** The suggestion this pick was made from (pick_suggestions.id). */
+  suggestionId?: number;
 };
 
 /**

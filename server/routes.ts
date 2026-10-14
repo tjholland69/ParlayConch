@@ -66,8 +66,12 @@ import { notifyLeague, notifyUsers } from "./services/notify";
 import { openParlayReminderText } from "@shared/parlayReminder";
 import { userPasswords, passwordResetTokens } from "@shared/models/auth";
 import { registerMcpRoutes } from "./mcp";
+import { registerAccountRoutes } from "./accountRoutes";
+import { leaguePickTrends, suggestPicks } from "./services/pickSuggestions";
+import { parseActualOdds } from "@shared/parlayOdds";
 import { createApiToken, listApiTokens, revokeApiToken } from "./services/apiTokens";
 import { getLeagueReport } from "./services/reports";
+import { isSubcommittee, SubcommitteeError, subcommitteeWording } from "@shared/subcommittee";
 import { startLiveResultsWorker } from "./jobs/live-results-queue";
 import { isReportId, reportCatalog } from "@shared/reports";
 import { loserLabelText } from "@shared/leagueLabels";
@@ -163,6 +167,7 @@ export async function registerRoutes(
   // tokens, not the session, so it's registered ahead of the act-for
   // middleware and never sees an act-for identity.
   registerMcpRoutes(app);
+  registerAccountRoutes(app);
 
   // === Act-As middleware for super users ===
   // Overrides req.user.claims.sub for all routes except /api/superuser/* and /api/auth/user.
@@ -397,8 +402,15 @@ export async function registerRoutes(
       return s ? new Date(s) : undefined;
     };
 
+    // Only leagues the caller is in: the filter can narrow their own
+    // leagues, never reach into someone else's.
+    const requested = csvNumbers(req.query.leagueIds);
+    const mine = new Set((await storage.getUserLeagues(userId)).map(l => l.id));
+    const leagueIds = requested?.filter(id => mine.has(id));
+    if (requested && leagueIds!.length === 0) return res.json({ points: [] });
+
     const series = await computeWinRateSeries(userId, {
-      leagueIds: csvNumbers(req.query.leagueIds),
+      leagueIds,
       memberUserIds: csvStrings(req.query.memberUserIds),
       betTypes: csvStrings(req.query.betTypes),
       propTypes: csvStrings(req.query.propTypes),
@@ -568,7 +580,68 @@ export async function registerRoutes(
     res.json(series);
   });
 
+  // Inside a subcommittee the roles go by other names, so a message a route
+  // wrote for a league ("Only the Parlay Maestro can...") is reworded on the
+  // way out rather than in each of those routes.
+  const speakSubcommittee = (res: Response) => {
+    const send = res.json.bind(res);
+    res.json = (body?: any) =>
+      send(body && typeof body === "object" && typeof body.message === "string"
+        ? { ...body, message: subcommitteeWording(body.message, { parentLeagueId: 1 }) }
+        : body);
+  };
+  const guardLeague = async (leagueId: number, userId: string, res: Response, notFound: string): Promise<boolean> => {
+    const league = await storage.getLeague(leagueId);
+    if (!league || !isSubcommittee(league)) return true;
+    if (!(await storage.canSeeLeague(leagueId, userId))) {
+      res.status(404).json({ message: notFound });
+      return false;
+    }
+    speakSubcommittee(res);
+    return true;
+  };
+
   // ===== LEAGUES =====
+  // A subcommittee is closed to everyone outside it, on every league route
+  // at once: whatever a route below checks for itself, a caller who isn't
+  // an active member (or a super user) gets a 404 here first. Signed-out
+  // callers pass through to the route's own 401.
+  app.use("/api/leagues/:leagueId", async (req, res, next) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const userId = (req.user as any)?.claims?.sub as string | undefined;
+      if (!Number.isInteger(leagueId) || !userId) return next();
+      if (await guardLeague(leagueId, userId, res, "League not found")) next();
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // The same door on a subcommittee's parlays and bets, which are reached
+  // by their own ids rather than through the league.
+  app.use("/api/parlays/:parlayId", async (req, res, next) => {
+    try {
+      const parlayId = Number(req.params.parlayId);
+      const userId = (req.user as any)?.claims?.sub as string | undefined;
+      if (!Number.isInteger(parlayId) || !userId) return next();
+      const parlay = await storage.getParlay(parlayId);
+      if (!parlay || (await guardLeague(parlay.leagueId, userId, res, "Parlay not found"))) next();
+    } catch (err) {
+      next(err);
+    }
+  });
+  app.use("/api/parlay-legs/:legId", async (req, res, next) => {
+    try {
+      const legId = Number(req.params.legId);
+      const userId = (req.user as any)?.claims?.sub as string | undefined;
+      if (!Number.isInteger(legId) || !userId) return next();
+      const leagueId = await storage.getLeagueIdForLeg(legId);
+      if (leagueId == null || (await guardLeague(leagueId, userId, res, "Bet not found"))) next();
+    } catch (err) {
+      next(err);
+    }
+  });
+
   app.get("/api/leagues", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagues = await storage.getUserLeagues(userId);
@@ -577,7 +650,9 @@ export async function registerRoutes(
 
   app.post("/api/leagues", isAuthenticated, async (req, res) => {
     try {
-      const input = insertLeagueSchema.parse(req.body);
+      // A subcommittee is made through /api/leagues/:id/subcommittees, which
+      // checks the caller against the parent league.
+      const input = insertLeagueSchema.omit({ parentLeagueId: true }).parse(req.body);
       const userId = (req.user as any).claims.sub;
       const league = await storage.createLeague(userId, input);
       res.status(201).json(league);
@@ -594,9 +669,15 @@ export async function registerRoutes(
     if (!inviteCode) return res.status(400).json({ message: "Invite code required" });
     
     const userId = (req.user as any).claims.sub;
-    const member = await storage.joinLeague(userId, inviteCode);
-    if (!member) return res.status(404).json({ message: "Invalid invite code" });
-    res.json(member);
+    try {
+      const member = await storage.joinLeague(userId, inviteCode);
+      if (!member) return res.status(404).json({ message: "Invalid invite code" });
+      res.json(member);
+    } catch (err) {
+      // A subcommittee's code only works for members of its league.
+      if (err instanceof SubcommitteeError) return res.status(403).json({ message: err.message });
+      throw err;
+    }
   });
 
   // Must be before /api/leagues/:id to avoid route conflict
@@ -629,6 +710,69 @@ export async function registerRoutes(
     const league = await storage.getLeague(Number(req.params.id));
     if (!league) return res.status(404).json({ message: "League not found" });
     res.json(league);
+  });
+
+  // ===== SUBCOMMITTEES =====
+  // A league's subcommittees, as far as the caller is in them. Members of
+  // the league who aren't in a subcommittee don't see that it exists.
+  app.get("/api/leagues/:id/subcommittees", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const allowed = (await storage.isSuperUser(userId)) || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!allowed) return res.status(403).json({ message: "Not a member of this league" });
+    res.json(await storage.getSubcommittees(leagueId, userId));
+  });
+
+  // Any member of a league can form a subcommittee in it, and runs it.
+  app.post("/api/leagues/:id/subcommittees", isAuthenticated, auditLog("subcommittee.create", { targetParam: "id", targetType: "league" }), async (req, res) => {
+    try {
+      const parentLeagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const { name, description, memberUserIds } = z.object({
+        name: z.string().trim().min(1, "Give the subcommittee a name").max(80),
+        description: z.string().trim().max(500).optional(),
+        memberUserIds: z.array(z.string().min(1)).max(100).optional(),
+      }).parse(req.body);
+      const parent = await storage.getLeague(parentLeagueId);
+      if (!parent) return res.status(404).json({ message: "League not found" });
+      // Starts with the league's own rules; the Frondeur can change them after.
+      const league = await storage.createSubcommittee(userId, parentLeagueId, {
+        name,
+        description: description || null,
+        minLegsPerParlay: parent.minLegsPerParlay,
+        maxLegsPerParlay: parent.maxLegsPerParlay,
+        maxParlaysPerWeek: parent.maxParlaysPerWeek,
+        loserLabel: parent.loserLabel,
+        heroLabel: parent.heroLabel,
+      }, memberUserIds ?? []);
+      res.status(201).json(league);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      if (err instanceof SubcommitteeError) return res.status(403).json({ message: err.message });
+      throw err;
+    }
+  });
+
+  // The Frondeur adds people from the league's roster to the subcommittee.
+  app.post("/api/leagues/:id/subcommittee-members", isAuthenticated, auditLog("subcommittee.add_members", { targetParam: "id", targetType: "league" }), async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const league = await storage.getLeague(leagueId);
+      if (!league || !isSubcommittee(league)) return res.status(404).json({ message: "Subcommittee not found" });
+      if (!(await storage.isLeagueAdmin(leagueId, userId))) return res.status(403).json({ message: "Only the Frondeur can add members" });
+      const { userIds } = z.object({ userIds: z.array(z.string().min(1)).min(1).max(100) }).parse(req.body);
+      const roster = new Set((await storage.getLeagueMembers(league.parentLeagueId!)).map(m => m.userId));
+      if (userIds.some(id => !roster.has(id))) {
+        return res.status(403).json({ message: "Only members of the league can join its subcommittees." });
+      }
+      for (const id of Array.from(new Set(userIds))) await storage.addMemberToLeague(leagueId, id);
+      res.json(await storage.getLeagueMembersWithUsers(leagueId));
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      if (err instanceof SubcommitteeError) return res.status(403).json({ message: err.message });
+      throw err;
+    }
   });
 
   app.get("/api/leagues/:id/stats", isAuthenticated, async (req, res) => {
@@ -843,6 +987,41 @@ export async function registerRoutes(
     res.json(picks);
   });
 
+  // Suggested picks for the caller in this week's parlay (?parlayId, when
+  // one is open, so bets other members already have are left out). Each one
+  // shown is stored: see services/pickSuggestions.ts.
+  app.get("/api/leagues/:leagueId/weeks/:weekId/suggestions", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const weekId = Number(req.params.weekId);
+      const userId = (req.user as any).claims.sub;
+      if (!Number.isInteger(leagueId) || !Number.isInteger(weekId)) return res.status(400).json({ message: "Invalid league or week" });
+      // Suggestions are stored against the member, so a super user looking
+      // in on a league they aren't in gets none.
+      if (!(await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId)) return res.json([]);
+      const parlayId = req.query.parlayId != null ? Number(req.query.parlayId) : undefined;
+      res.json(await suggestPicks(userId, leagueId, weekId, Number.isInteger(parlayId) ? parlayId : undefined));
+    } catch (err) {
+      logger.error({ err }, "[suggestions] failed");
+      res.status(500).json({ message: "Couldn't load suggestions." });
+    }
+  });
+
+  // The caller's and the league's win-loss records by kind of bet
+  // ("You're 7-2 betting running backs"). See shared/pickTrends.ts.
+  app.get("/api/leagues/:leagueId/pick-trends", isAuthenticated, async (req, res) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const userId = (req.user as any).claims.sub;
+      if (!Number.isInteger(leagueId)) return res.status(400).json({ message: "Invalid league" });
+      if (!(await isLeagueMember(leagueId, userId))) return res.status(403).json({ message: "Not a member of this league" });
+      res.json(await leaguePickTrends(userId, leagueId));
+    } catch (err) {
+      logger.error({ err }, "[trends] failed");
+      res.status(500).json({ message: "Couldn't load trends." });
+    }
+  });
+
   // Every pick a DIFFERENT league member already has this week (in
   // ?parlayId, when given), so the client can gray out those tiles. See
   // storage.getTakenPicksForWeek.
@@ -911,6 +1090,7 @@ export async function registerRoutes(
         line: emptyToNull(leg.line),
         playerName: leg.playerName ?? null,
         propType: leg.propType ?? null,
+        suggestionId: leg.suggestionId ?? null,
       };
       const saved = await storage.setDraftPick(ownerId, leagueId, weekId, legInput, {
         parlayId,
@@ -1027,6 +1207,34 @@ export async function registerRoutes(
       }
       const { boostPct } = parlayBoostInputSchema.parse(req.body);
       res.json(await storage.setParlayBoost(parlayId, boostPct));
+    } catch (err: any) {
+      res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // PUT /api/parlays/:id/actual-odds — records what the sportsbook actually
+  // paid on the whole ticket ("+650"), or clears it with null so the app's
+  // estimate shows again. Books reprice a parlay as a unit and the number
+  // moves, so this is set at the parlay, never per leg. Works at any status.
+  // Open to the parlay's owner and the league's Parlay Maestro, like a boost.
+  app.put("/api/parlays/:id/actual-odds", isAuthenticated, auditLog("parlay.set_actual_odds", { targetParam: "id", targetType: "parlay" }), async (req, res) => {
+    try {
+      const userId = (req.user as any).claims.sub;
+      const parlayId = Number(req.params.id);
+      const existing = await storage.getParlay(parlayId);
+      if (!existing) return res.status(404).json({ message: "Parlay not found" });
+      if (existing.userId !== userId && !(await storage.isLeagueAdmin(existing.leagueId, userId))) {
+        return res.status(403).json({ message: "Only the parlay's owner or the Parlay Maestro can change its odds" });
+      }
+      if (existing.status === "draft") {
+        return res.status(409).json({ message: "This parlay is still open. Record its odds once it's locked and placed." });
+      }
+      const { actualOdds } = z.object({ actualOdds: z.string().max(12).nullable() }).strict().parse(req.body);
+      const parsed = actualOdds == null || actualOdds.trim() === "" ? null : parseActualOdds(actualOdds);
+      if (actualOdds != null && actualOdds.trim() !== "" && !parsed) {
+        return res.status(400).json({ message: "Enter the odds the way your sportsbook shows them, like +650 or -120." });
+      }
+      res.json(await storage.setParlayActualOdds(parlayId, parsed));
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
     }
@@ -2055,7 +2263,7 @@ export async function registerRoutes(
       if (cached) return res.json(cached);
 
       const teams = await storage.getAllTeams();
-      const homeTeam = teams.find((t) => t.abbreviation === game.homeTeam);
+      const homeTeam = teams.find((t) => t.nickname === game.homeTeam || t.abbreviation === game.homeTeam);
       if (!homeTeam || (homeTeam.stadiumType && homeTeam.stadiumType !== "outdoor")) {
         return res.json(null);
       }
@@ -2229,6 +2437,9 @@ export async function registerRoutes(
         storage.getUser(userId),
       ]);
       if (!league) return res.status(404).json({ message: "League not found" });
+      const parentRoster = league.parentLeagueId != null
+        ? new Set((await storage.getLeagueMembers(league.parentLeagueId)).map(m => m.userId))
+        : null;
 
       const inviterName =
         inviter?.firstName
@@ -2239,6 +2450,12 @@ export async function registerRoutes(
         emails.map(async (email) => {
           // Check if they already have an account
           const existingUser = await storage.getUserByEmail(email);
+
+          // A subcommittee takes people from its league's roster, nobody else:
+          // no invite goes out, and an account outside the league isn't added.
+          if (parentRoster && (!existingUser || !parentRoster.has(existingUser.id))) {
+            return { email, status: "not_in_league" as const };
+          }
 
           if (!existingUser) {
             // Not a member yet — send invite email with the join code
@@ -2304,6 +2521,47 @@ export async function registerRoutes(
       res.json(league);
     } catch (err: any) {
       res.status(err instanceof z.ZodError ? 400 : 500).json({ message: err.message });
+    }
+  });
+
+  // Parlay Maestro: correct when a member was in the league (see
+  // storage.setMemberDates). Dates are calendar days, "2023-09-07".
+  app.patch("/api/leagues/:id/members/:userId/dates", isAuthenticated, auditLog("league_member.dates_change", { targetParam: "userId", targetType: "league_member" }), async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      if (!(await storage.isLeagueAdmin(leagueId, (req.user as any).claims.sub))) {
+        return res.status(403).json({ message: "Parlay Maestro access required" });
+      }
+      const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2023-09-07");
+      const input = z.object({ startDate: day, endDate: day.nullable().optional() }).strict().parse(req.body);
+      // A start counts from the beginning of its day and an end to the end
+      // of its day, so a parlay on either day is inside the window.
+      const startDate = new Date(`${input.startDate}T00:00:00Z`);
+      const endDate = input.endDate == null ? input.endDate : new Date(`${input.endDate}T23:59:59Z`);
+      if (Number.isNaN(startDate.getTime()) || (endDate && Number.isNaN(endDate.getTime()))) {
+        return res.status(400).json({ message: "That isn't a real date." });
+      }
+      res.json(await storage.setMemberDates(leagueId, req.params.userId, { startDate, endDate }));
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0]?.message ?? "Invalid input" });
+      if (err instanceof PickRuleError) return res.status(400).json({ message: err.message });
+      logger.error({ err }, "[members] save member dates failed");
+      res.status(500).json({ message: "Couldn't save that. Please try again." });
+    }
+  });
+
+  // Parlay Maestro: move every member's start date back to their first pick.
+  app.post("/api/leagues/:id/members/backdate-to-first-pick", isAuthenticated, auditLog("league_member.backdate_all", { targetParam: "id", targetType: "league" }), async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      if (!(await storage.isLeagueAdmin(leagueId, (req.user as any).claims.sub))) {
+        return res.status(403).json({ message: "Parlay Maestro access required" });
+      }
+      res.json({ changed: await storage.backdateMembersToFirstPick(leagueId) });
+    } catch (err) {
+      if (err instanceof PickRuleError) return res.status(400).json({ message: err.message });
+      logger.error({ err }, "[members] backdate members failed");
+      res.status(500).json({ message: "Couldn't save that. Please try again." });
     }
   });
 
@@ -3116,7 +3374,9 @@ export async function registerRoutes(
   app.patch("/api/users/me/notification-preferences", isAuthenticated, async (req, res) => {
     try {
       const userId = realUserId(req);
-      const prefs = notificationPreferencesSchema.parse(req.body);
+      // An old app build may still send `phone`. It isn't kept here: settings
+      // travel to everyone in the member's leagues (see user_contacts).
+      const { phone: _phone, ...prefs } = notificationPreferencesSchema.parse(req.body);
 
       await storage.updateUserSettings(userId, { notificationPreferences: prefs });
       res.json({ success: true });
