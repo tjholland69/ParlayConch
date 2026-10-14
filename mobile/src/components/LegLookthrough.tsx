@@ -56,6 +56,8 @@ function kickoffLabel(gameTime: Date | string): string {
  * One parlay leg, the same two lines everywhere a leg is listed:
  *   Bet Owner · the bet ("49ers +6.5", "Lamar Jackson - Rush Yds O 25")   Result
  *   Week 4 2026 - Patriots @ Bills - 1:05pm EDT                            -110
+ * A third line names the league, only when `leagueName` is passed: that's
+ * for lists drawn from more than one league.
  * The right side holds the result, with the bet's odds under it. Tapping the row opens
  * the game details underneath. On the member's own bet (`disputable`) the
  * bet text is a link that opens the dispute sheet. `trailing` sits before
@@ -65,11 +67,14 @@ export function LegRow({
   leg,
   ownerName,
   week,
+  leagueName,
   disputable,
   trailing,
 }: {
   leg: LegRowLeg;
   ownerName: string;
+  /** The league the bet came from. Pass it only in a multi-league list. */
+  leagueName?: string | null;
   week?: { label: string; season: number; weekNumber?: number | null } | null;
   /** The viewer's own bet: tapping the bet text disputes it. */
   disputable?: boolean;
@@ -128,6 +133,11 @@ export function LegRow({
           {/* The bet's odds, right under its result. */}
           {odds ? <Text style={styles.odds} testID={`text-leg-odds-${leg.id}`}>{odds}</Text> : null}
         </View>
+        {leagueName ? (
+          <View style={styles.line}>
+            <Text style={styles.meta} numberOfLines={1} testID={`text-leg-league-${leg.id}`}>{leagueName}</Text>
+          </View>
+        ) : null}
       </Pressable>
       {open && (
         <View style={styles.details}>
@@ -194,11 +204,14 @@ export function LegLookthroughSheet({
   isLoading,
   onClose,
   emptyText = "No legs found.",
+  showLeague = false,
   children,
 }: {
   visible: boolean;
   title: string;
   legs?: ParlayLegWithParlayContext[];
+  /** Name each bet's league. Only for legs drawn from more than one league. */
+  showLeague?: boolean;
   isLoading?: boolean;
   onClose: () => void;
   emptyText?: string;
@@ -231,6 +244,7 @@ export function LegLookthroughSheet({
                   leg={leg}
                   ownerName={leg.user ? legOwnerName(leg.user) : leg.parlay.isOwnParlay ? "You" : legOwnerName(leg.parlay.owner)}
                   week={leg.parlay.week}
+                  leagueName={showLeague ? leg.parlay.leagueName : null}
                 />
               ))}
             </ScrollView>

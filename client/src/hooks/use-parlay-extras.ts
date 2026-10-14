@@ -176,3 +176,49 @@ export function usePickTrends(leagueId: number | undefined, enabled = true) {
     staleTime: 5 * 60_000,
   });
 }
+
+/** Forms a subcommittee in a league: the caller runs it, `memberUserIds` join them. */
+export function useCreateSubcommittee(parentLeagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (data: { name: string; description?: string; memberUserIds: string[] }) => {
+      const res = await fetch(`/api/leagues/${parentLeagueId}/subcommittees`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Couldn't create the subcommittee");
+      return res.json() as Promise<{ id: number; name: string }>;
+    },
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
+      toast({ title: "Subcommittee formed", description: `${created.name} is ready. You're its Frondeur.` });
+    },
+    onError: (error: Error) => toast({ title: "Error", description: error.message, variant: "destructive" }),
+  });
+}
+
+/** The Frondeur adds members of the league to their subcommittee. */
+export function useAddSubcommitteeMembers(leagueId: number) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  return useMutation({
+    mutationFn: async (userIds: string[]) => {
+      const res = await fetch(`/api/leagues/${leagueId}/subcommittee-members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.message ?? "Couldn't add members");
+      return res.json();
+    },
+    onSuccess: (_data, userIds) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/leagues"] });
+      toast({ title: userIds.length === 1 ? "Member added" : `${userIds.length} members added` });
+    },
+    onError: (error: Error) => toast({ title: "Error", description: error.message, variant: "destructive" }),
+  });
+}

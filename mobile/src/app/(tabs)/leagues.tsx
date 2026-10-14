@@ -16,7 +16,10 @@ import { openParlayPrompt } from "@shared/weekParlays";
 import { useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useLeagues, useLeaguesOverviewStats, useCreateLeague, useJoinLeague } from "@/hooks/use-leagues";
+import { useLeagues, useLeaguesOverviewStats, useCreateLeague, useJoinLeague, useCreateSubcommittee } from "@/hooks/use-leagues";
+import { useEffectiveUserId } from "@/hooks/use-acting-as";
+import { SubcommitteeSheet } from "@/components/SubcommitteeSheet";
+import { isSubcommittee, subcommitteeCandidates, withSubcommitteesNested } from "@shared/subcommittee";
 import { useActiveWeek } from "@/hooks/use-weeks";
 import { useActiveWeekStatus } from "@/hooks/use-parlays";
 import { LeagueCard } from "@/components/LeagueCard";
@@ -32,6 +35,11 @@ export default function LeaguesScreen() {
   const createLeague = useCreateLeague();
   const joinLeague = useJoinLeague();
   const insets = useSafeAreaInsets();
+  const effectiveUserId = useEffectiveUserId();
+  const createSubcommittee = useCreateSubcommittee();
+  // The league a new subcommittee is being formed in.
+  const [subcommitteeParentId, setSubcommitteeParentId] = useState<number | null>(null);
+  const subcommitteeParent = leagues?.find((l) => l.id === subcommitteeParentId);
 
   // The server's answer for the active week: whether each league's parlay
   // is open, how many legs are in it, and whether this member still owes one.
@@ -100,7 +108,7 @@ export default function LeaguesScreen() {
         <FlatList
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
-          data={leagues ?? []}
+          data={withSubcommitteesNested(leagues ?? [])}
           keyExtractor={(item) => String(item.id)}
           ListHeaderComponent={
             <>
@@ -124,6 +132,8 @@ export default function LeaguesScreen() {
           renderItem={({ item: league }) => (
             <LeagueCard
               league={league}
+              parentName={leagues?.find((l) => l.id === league.parentLeagueId)?.name}
+              onNewSubcommittee={isSubcommittee(league) ? undefined : () => setSubcommitteeParentId(league.id)}
               stat={overviewStats?.[league.id]}
               needsPick={needsPick(league.id)}
               openParlay={openParlay(league.id)}
@@ -135,6 +145,25 @@ export default function LeaguesScreen() {
           }
         />
       )}
+
+      <SubcommitteeSheet
+        visible={!!subcommitteeParent}
+        mode="create"
+        parentName={subcommitteeParent?.name ?? ""}
+        candidates={subcommitteeCandidates(subcommitteeParent?.members, effectiveUserId ? [effectiveUserId] : [])}
+        busy={createSubcommittee.isPending}
+        onClose={() => setSubcommitteeParentId(null)}
+        onSubmit={(input) => {
+          if (!subcommitteeParent) return;
+          createSubcommittee.mutate(
+            { parentLeagueId: subcommitteeParent.id, ...input },
+            {
+              onSuccess: () => setSubcommitteeParentId(null),
+              onError: (e: any) => Alert.alert("Error", e?.message ?? "Couldn't create the subcommittee."),
+            },
+          );
+        }}
+      />
 
       {/* Create League Sheet */}
       <Modal

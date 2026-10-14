@@ -54,7 +54,9 @@ SELECT (jsonb_populate_record(NULL::leagues, doc->'league' || jsonb_build_object
   'name', (doc->'league'->>'name') || ' (seed copy)',
   'invite_code', 'SEED' || upper(substr(md5(random()::text), 1, 8)),
   'is_demo', true,
-  'use_demo_week_data', false
+  'use_demo_week_data', false,
+  -- A copied subcommittee stands alone: its parent league isn't here.
+  'parent_league_id', NULL
 ))).*
 FROM _in;
 

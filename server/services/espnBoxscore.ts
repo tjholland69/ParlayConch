@@ -1,5 +1,5 @@
 /**
- * ESPN boxscore sync service — defensive player stats only.
+ * ESPN boxscore sync service: final scores and player stats.
  *
  * nflverse (see nflverse.ts) is a community CSV data dump that has
  * repeatedly renamed its release/file scheme and, on its legacy fallback
@@ -9,11 +9,13 @@
  * boxscore includes a "defensive" stat category (tackles, solo tackles,
  * sacks) that nflverse's data does not reliably provide.
  *
- * This service is scoped to defense only — passing/rushing/receiving stats
- * stay on nflverse, which already handles them well.
+ * nflverse stays the season-long source for passing/rushing/receiving. ESPN
+ * supplies defense always, and the offensive numbers on game day, when
+ * nflverse hasn't published yet (see syncPlayerStatsFromEspn).
  */
 
 import { storage } from "../storage";
+import type { InsertPlayerWeekStat } from "@shared/schema";
 import { logger } from "../logger";
 import { abbrevToShort, findGameInDb } from "./nflverse";
 import { fetchJsonWithRetry } from "../lib/fetchWithRetry";
@@ -35,63 +37,103 @@ async function fetchEspnWeekEvents(season: number, week: number): Promise<EspnSc
   return data.events ?? [];
 }
 
+type EspnStatColumns = Partial<Pick<InsertPlayerWeekStat,
+  | "completions" | "attempts" | "passingYards" | "passingTds" | "interceptions"
+  | "carries" | "rushingYards" | "rushingTds"
+  | "receptions" | "targets" | "receivingYards" | "receivingTds"
+  | "defSacks" | "defTacklesSolo" | "defTacklesWithAssist"
+>>;
+
 interface EspnAthleteStat {
   espnId: string;
   displayName: string;
   team: string; // ESPN team abbreviation
-  tackleTotal: number;
-  tackleSolo: number;
-  sacks: number;
+  stats: EspnStatColumns;
 }
 
-/** Pull the "defensive" boxscore category for both teams of one event. */
-async function fetchEspnDefensiveStats(eventId: string): Promise<EspnAthleteStat[]> {
+/**
+ * One boxscore category's rows as our stat columns. `cell` reads a labelled
+ * column of the athlete's row; a missing or unreadable cell comes back null
+ * and is left out, so it never overwrites a number we already hold.
+ */
+type Cell = (label: string, part?: 0 | 1) => number | null;
+const ESPN_CATEGORIES: Record<string, { offense: boolean; read: (cell: Cell) => Record<string, number | null> }> = {
+  passing: {
+    offense: true,
+    // "C/ATT" is "19/25".
+    read: (c) => ({ completions: c("C/ATT", 0), attempts: c("C/ATT", 1), passingYards: c("YDS"), passingTds: c("TD"), interceptions: c("INT") }),
+  },
+  rushing: { offense: true, read: (c) => ({ carries: c("CAR"), rushingYards: c("YDS"), rushingTds: c("TD") }) },
+  receiving: { offense: true, read: (c) => ({ receptions: c("REC"), targets: c("TGTS"), receivingYards: c("YDS"), receivingTds: c("TD") }) },
+  defensive: {
+    offense: false,
+    read: (c) => {
+      const tot = c("TOT");
+      const solo = c("SOLO");
+      return {
+        defSacks: c("SACKS"),
+        defTacklesSolo: solo === null ? null : Math.round(solo),
+        defTacklesWithAssist: tot === null || solo === null ? null : Math.round(tot - solo),
+      };
+    },
+  },
+};
+
+/** Pull one event's boxscore: a row per player, merged across categories. */
+async function fetchEspnPlayerStats(eventId: string, includeOffense: boolean): Promise<EspnAthleteStat[]> {
   const url = `${ESPN_BASE}/summary?event=${eventId}`;
   const data = await fetchJsonWithRetry(url, { headers: { "User-Agent": "parlayconch-app/1.0" }, label: "espn" });
   const teams: any[] = data?.boxscore?.players ?? [];
 
-  const out: EspnAthleteStat[] = [];
+  const byAthlete = new Map<string, EspnAthleteStat>();
   for (const teamBlock of teams) {
     const teamAbbrev = teamBlock?.team?.abbreviation;
-    const defCategory = teamBlock?.statistics?.find((c: any) => c.name === "defensive");
-    if (!defCategory) continue;
+    for (const category of teamBlock?.statistics ?? []) {
+      const spec = ESPN_CATEGORIES[category?.name];
+      if (!spec || (spec.offense && !includeOffense)) continue;
+      const labels: string[] = category.labels ?? [];
 
-    // labels: ['TOT', 'SOLO', 'SACKS', 'TFL', 'PD', 'QB HTS', 'TD']
-    const labels: string[] = defCategory.labels ?? [];
-    const totIdx = labels.indexOf("TOT");
-    const soloIdx = labels.indexOf("SOLO");
-    const sacksIdx = labels.indexOf("SACKS");
-
-    for (const athlete of defCategory.athletes ?? []) {
-      const stats: string[] = athlete.stats ?? [];
-      const tot = totIdx >= 0 ? parseFloat(stats[totIdx]) : NaN;
-      const solo = soloIdx >= 0 ? parseFloat(stats[soloIdx]) : NaN;
-      const sacks = sacksIdx >= 0 ? parseFloat(stats[sacksIdx]) : NaN;
-
-      out.push({
-        espnId: String(athlete.athlete?.id ?? ""),
-        displayName: athlete.athlete?.displayName ?? "",
-        team: teamAbbrev,
-        tackleTotal: isNaN(tot) ? 0 : tot,
-        tackleSolo: isNaN(solo) ? 0 : solo,
-        sacks: isNaN(sacks) ? 0 : sacks,
-      });
+      for (const athlete of category.athletes ?? []) {
+        const espnId = String(athlete.athlete?.id ?? "");
+        const displayName = athlete.athlete?.displayName ?? "";
+        if (!espnId || !displayName) continue;
+        const stats: string[] = athlete.stats ?? [];
+        const cell: Cell = (label, part) => {
+          const idx = labels.indexOf(label);
+          if (idx < 0) return null;
+          const raw = part === undefined ? stats[idx] : String(stats[idx] ?? "").split("/")[part];
+          const n = parseFloat(raw ?? "");
+          return Number.isNaN(n) ? null : n;
+        };
+        const row = byAthlete.get(espnId) ?? { espnId, displayName, team: teamAbbrev, stats: {} };
+        for (const [column, value] of Object.entries(spec.read(cell))) {
+          if (value !== null) (row.stats as Record<string, number>)[column] = value;
+        }
+        byAthlete.set(espnId, row);
+      }
     }
   }
-  return out;
+  return Array.from(byAthlete.values());
 }
 
 /**
- * Sync defensive stats (sacks, solo/assist tackles) for a season+week from
- * ESPN's boxscore API, for games already in our DB.
+ * Sync player stats for a season+week from ESPN's boxscore API, for games
+ * already in our DB that ESPN shows as final.
  *
- * Only writes the defensive columns — passing/rushing/receiving/fantasy
- * fields are left untouched (upsertPlayerWeekStat merges by omitted key,
- * not by explicit null) so this never clobbers nflverse-sourced stats.
+ * By default only the defensive columns (sacks, solo/assist tackles), which
+ * nflverse doesn't reliably carry. With `offense`, passing, rushing and
+ * receiving too: ESPN has those the moment a game ends, hours before
+ * nflverse publishes, which is what lets a prop settle at the whistle.
+ * nflverse's numbers replace them when its own sync next runs.
+ *
+ * Only the columns ESPN reports for a player are written (upsertPlayerWeekStat
+ * merges by omitted key), so a defense-only sync never clobbers other stats.
+ * `gameIds` limits the work to those games.
  */
-export async function syncDefensiveStatsFromEspn(
+export async function syncPlayerStatsFromEspn(
   season: number,
   week: number,
+  opts: { offense?: boolean; gameIds?: Set<number> } = {},
 ): Promise<{ events: number; matched: number; players: number; stats: number }> {
   const dbGames = await storage.getGamesForSeasonWeek(season, week);
   if (dbGames.length === 0) {
@@ -117,46 +159,42 @@ export async function syncDefensiveStatsFromEspn(
     const homeShort = abbrevToShort(home.team.abbreviation);
     const awayShort = abbrevToShort(away.team.abbreviation);
     const game = await findGameInDb(season, week, homeShort, awayShort);
-    if (!game) continue;
+    if (!game || (opts.gameIds && !opts.gameIds.has(game.id))) continue;
 
     matched++;
 
-    let defRows: EspnAthleteStat[];
+    let rows: EspnAthleteStat[];
     try {
-      defRows = await fetchEspnDefensiveStats(event.id);
+      rows = await fetchEspnPlayerStats(event.id, !!opts.offense);
     } catch (err) {
       logger.warn({ err, eventId: event.id }, "[espn] boxscore fetch failed for event; skipping");
       continue;
     }
 
-    for (const row of defRows) {
-      if (!row.espnId || !row.displayName) continue;
-
+    for (const row of rows) {
+      // The boxscore carries no position or headshot. They're left out, not
+      // sent as null, so a player nflverse already described keeps both.
       const player = await storage.upsertPlayerByEspn({
         espnId: row.espnId,
         name: row.displayName,
         displayName: row.displayName,
-        position: null,
         team: row.team,
-        headshot: null,
       });
       playerCount++;
 
-      await storage.upsertPlayerWeekStat({
-        playerId: player.id,
-        season,
-        week,
-        team: row.team,
-        defSacks: row.sacks,
-        defTacklesSolo: Math.round(row.tackleSolo),
-        defTacklesWithAssist: Math.round(row.tackleTotal - row.tackleSolo),
-      });
+      await storage.upsertPlayerWeekStat({ playerId: player.id, season, week, team: row.team, ...row.stats });
       statCount++;
     }
   }
 
   return { events: events.length, matched, players: playerCount, stats: statCount };
 }
+
+/** Defensive stats only. See syncPlayerStatsFromEspn. */
+export function syncDefensiveStatsFromEspn(season: number, week: number) {
+  return syncPlayerStatsFromEspn(season, week);
+}
+
 /**
  * Marks games final from ESPN's scoreboard, which flips to "completed"
  * within a minute or two of the whistle. nflverse's schedule file (the other

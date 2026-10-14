@@ -1,3 +1,4 @@
+import { leagueTerms } from "@shared/subcommittee";
 import {
   View,
   Text,
@@ -806,7 +807,7 @@ export default function BuildPickScreen() {
         ) : (
           <Text style={styles.slipNote} testID="text-pick-saved-note">
             {myPick
-              ? `Your pick is saved. Whoever started the parlay, or the Parlay Maestro, submits it once ${minLegs} legs are in.`
+              ? `Your pick is saved. Whoever started the parlay, or the ${leagueTerms(league).admin}, submits it once ${minLegs} legs are in.`
               : `Each member adds one pick. The parlay can be submitted once ${minLegs} legs are in.`}
           </Text>
         )}

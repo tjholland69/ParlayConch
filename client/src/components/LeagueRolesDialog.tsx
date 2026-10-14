@@ -1,3 +1,4 @@
+import { leagueTerms, subcommitteeWording } from "@shared/subcommittee";
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -24,7 +25,9 @@ const MEMBER_POWERS = [
  * are league-configurable (see League Settings > Lieutenants), so those are
  * rendered from the same PERMISSION_LABELS list admins use to grant them,
  * rather than a separately-maintained description that could drift. */
-export function LeagueRolesDialog({ triggerClassName }: { triggerClassName?: string }) {
+export function LeagueRolesDialog({ triggerClassName, league }: { triggerClassName?: string; league?: { parentLeagueId?: number | null } | null }) {
+  // A subcommittee has the same roles under its own names.
+  const terms = leagueTerms(league);
   const [open, setOpen] = useState(false);
 
   return (
@@ -50,8 +53,8 @@ export function LeagueRolesDialog({ triggerClassName }: { triggerClassName?: str
           <section className="space-y-2">
             <div className="flex items-center gap-2">
               <Crown className="w-4 h-4 text-amber-400" />
-              <h3 className="font-semibold text-sm">Admin — "Parlay Maestro"</h3>
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0">1 per league</Badge>
+              <h3 className="font-semibold text-sm">Admin — "{terms.admin}"</h3>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0">1 per {terms.kindLower}</Badge>
             </div>
             <p className="text-xs text-muted-foreground">
               Full control over the league, plus everything a lieutenant can do. Only the admin can:
@@ -68,17 +71,17 @@ export function LeagueRolesDialog({ triggerClassName }: { triggerClassName?: str
           <section className="space-y-2">
             <div className="flex items-center gap-2">
               <Star className="w-4 h-4 text-primary" />
-              <h3 className="font-semibold text-sm">Lieutenant — "Parlay Lieutenant"</h3>
-              <Badge variant="outline" className="text-[10px] px-1.5 py-0">up to 2 per league</Badge>
+              <h3 className="font-semibold text-sm">Lieutenant — "{terms.lieutenant}"</h3>
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0">up to 2 per {terms.kindLower}</Badge>
             </div>
             <p className="text-xs text-muted-foreground">
-              Has whichever of these the admin has turned on for this league (League Settings &gt; Lieutenants):
+              Has whichever of these the admin has turned on for this {terms.kindLower} (League Settings &gt; {terms.lieutenants}):
             </p>
             <ul className="space-y-1">
               {PERMISSION_LABELS.map(p => (
                 <li key={p.key} className="text-xs text-muted-foreground flex gap-1.5">
                   <span className="text-primary/70 shrink-0">›</span>
-                  <span><span className="text-foreground/90">{p.label}</span> — {p.description}</span>
+                  <span><span className="text-foreground/90">{p.label}</span> — {subcommitteeWording(p.description, league)}</span>
                 </li>
               ))}
             </ul>

@@ -16,6 +16,7 @@ import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import { storage } from "../storage";
 import { buildResultDetail } from "@shared/legJustification";
 import { gradePropOverUnder } from "@shared/propGrading";
+import { lineNumber } from "@shared/legGrading";
 
 const BASE_URL = "https://api.the-odds-api.com/v4";
 const SPORT    = "americanfootball_nfl";
@@ -104,7 +105,7 @@ export async function resolvePropsFromStats(): Promise<PropResolveResult> {
 
       let legResult: "win" | "loss" | "push" | null = null;
       const pick   = (leg.pick ?? "").toLowerCase();
-      const lineRaw = parseFloat(leg.line ?? "");
+      const lineRaw = lineNumber(leg.line) ?? NaN;
       const propType = leg.propType;
 
       // ── TD scorer props (yes/no) ──────────────────────────────────────────

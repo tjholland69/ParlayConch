@@ -1,3 +1,4 @@
+import { isSubcommittee, leagueTerms } from "@shared/subcommittee";
 import { useState, useMemo, useRef, Suspense, lazy, type Dispatch, type SetStateAction, type ElementType } from "react";
 import { useRoute, useLocation } from "wouter";
 import { useLeagues, useUpdateLeagueSettings, useLeagueStats, useWeeks, useGames, useGamesForWeeks, useLeagueParlays, useMyParlay, useAddDraftLeg, useRemoveDraftLeg, useSubmitDraftParlay, useApproveParlay, useRejectParlay, useWeekLockStatus, useLockWeekParlay, useUnlockWeekParlay, useLeagueMembersWithUsers, useInviteByEmail, useLeaveLeague, useTransferAndLeave, useLeaguesOverviewStats, useAllLeagueParlaysReadOnly, flattenParlayPages, useLeagueDataStats, useLeagueRecords, useParlayLegsByIds, useMissedWeeks, useLeaguePokes, usePokeMember, useDismissPoke, type LeagueRecordEntry } from "@/hooks/use-bets";
@@ -42,6 +43,7 @@ import { standingsCsv } from "@shared/standingsExport";
 import { OnBehalfBar, PendingApprovals, PickDelegatesCard, UnlockRequests } from "@/components/OnBehalfControls";
 import { useOnBehalfInfo } from "@/hooks/use-on-behalf";
 import { LeagueRolesDialog } from "@/components/LeagueRolesDialog";
+import { AddSubcommitteeMembersDialog } from "@/components/SubcommitteeDialog";
 import { PageLoader } from "@/components/PageLoader";
 import { UserAvatar } from "@/components/UserAvatar";
 import { getDisplayName, shortId } from "@/lib/displayName";
@@ -421,6 +423,7 @@ export default function LeagueDetail() {
   
   const { data: leagues } = useLeagues();
   const league = leagues?.find(l => l.id === leagueId);
+  const terms = leagueTerms(league);
   
   const { data: weeks } = useWeeks();
   // Header week dropdown — purely a filter for the All Parlays list. Open Parlays
@@ -549,6 +552,7 @@ export default function LeagueDetail() {
   );
   const inviteByEmail = useInviteByEmail(leagueId);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [addSubMembersOpen, setAddSubMembersOpen] = useState(false);
   const [inviteEmails, setInviteEmails] = useState<string[]>(['']);
   const [inviteResults, setInviteResults] = useState<{ email: string; status: string; username?: string }[] | null>(null);
 
@@ -907,6 +911,11 @@ export default function LeagueDetail() {
           <div>
             <div className="flex items-center gap-3">
               <h1 className="text-3xl font-display font-bold" data-testid="text-league-name">{league.name}</h1>
+              {isSubcommittee(league) && (
+                <p className="text-sm text-muted-foreground" data-testid="text-subcommittee-of">
+                  Subcommittee of {leagues?.find((l) => l.id === league.parentLeagueId)?.name ?? "another league"}
+                </p>
+              )}
               {league.isDemo && (
                 <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30" data-testid="badge-league-demo">
                   DEMO
@@ -1169,7 +1178,7 @@ export default function LeagueDetail() {
 
           {!lockStatus?.isLocked && (!myParlay || myParlay.status === "draft") && (!!myParlay || iAmMissing || !lockStatus || startingNew) ? (
             <>
-              <OnBehalfBar info={onBehalfInfo} targetId={onBehalfOf} onChange={setOnBehalfOf} />
+              <OnBehalfBar leagueId={leagueId} info={onBehalfInfo} targetId={onBehalfOf} onChange={setOnBehalfOf} />
               <PendingApprovals
                 parlay={myParlay}
                 games={allSlateGames}
@@ -1215,7 +1224,7 @@ export default function LeagueDetail() {
                       ? `${minLegs - parlayLegs.length} more ${minLegs - parlayLegs.length === 1 ? "pick" : "picks"} needed before it can be submitted. ${onBehalfOf ? (myLeg ? "Their pick is saved." : "Pick a market below to add theirs.") : myLeg ? "Your pick is saved." : "Pick a market below to add yours."}`
                       : canSubmitRole
                       ? "Enough picks are in. Submit when the league is ready."
-                      : `${myLeg ? "Your pick is saved. " : ""}Whoever started the parlay, or the Parlay Maestro, submits it.`}
+                      : `${myLeg ? "Your pick is saved. " : ""}Whoever started the parlay, or the ${terms.admin}, submits it.`}
                   </p>
                   {parlayLegs.length > 0 && (
                     <button
@@ -1883,14 +1892,21 @@ export default function LeagueDetail() {
               <CardTitle className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-primary" />
                 League Members
-                <LeagueRolesDialog />
+                <LeagueRolesDialog league={league} />
                 {(pokes?.received.length ?? 0) > 0 && (
                   <Badge className="bg-amber-500/15 text-amber-300 border-amber-500/30 text-xs font-normal" data-testid="badge-pokes-received">
                     👉 {pokes!.received.length} poke{pokes!.received.length !== 1 ? "s" : ""}
                   </Badge>
                 )}
               </CardTitle>
-              {league.isAdmin && (
+              {/* A subcommittee is filled from its league's roster, not by invite. */}
+              {league.isAdmin && isSubcommittee(league) && (
+                <Button size="sm" onClick={() => setAddSubMembersOpen(true)} data-testid="button-add-subcommittee-members">
+                  <UserPlus className="w-4 h-4 mr-1" />
+                  Add Members
+                </Button>
+              )}
+              {league.isAdmin && !isSubcommittee(league) && (
                 <Button
                   size="sm"
                   onClick={() => { setInviteEmails(['']); setInviteResults(null); setInviteOpen(true); }}
@@ -1985,12 +2001,12 @@ export default function LeagueDetail() {
                           {m.role === 'admin' ? (
                             <Badge className="flex items-center gap-1 bg-primary/20 text-primary border-primary/30">
                               <Crown className="w-3 h-3" />
-                              Parlay Maestro
+                              {terms.admin}
                             </Badge>
                           ) : m.role === 'lieutenant' ? (
                             <Badge className="flex items-center gap-1 bg-blue-500/20 text-blue-400 border-blue-500/30">
                               <Star className="w-3 h-3" />
-                              Parlay Lieutenant
+                              {terms.lieutenant}
                             </Badge>
                           ) : (
                             <Badge variant="outline" className="text-muted-foreground">Member</Badge>
@@ -2080,6 +2096,15 @@ export default function LeagueDetail() {
       />
 
       {/* Invite Members Dialog */}
+      {league && isSubcommittee(league) && (
+        <AddSubcommitteeMembersDialog
+          league={league}
+          parent={leagues?.find((l) => l.id === league.parentLeagueId)}
+          currentMemberIds={(members ?? []).map((m) => m.userId)}
+          open={addSubMembersOpen}
+          onOpenChange={setAddSubMembersOpen}
+        />
+      )}
       <Dialog open={inviteOpen} onOpenChange={(open) => { setInviteOpen(open); if (!open) setInviteResults(null); }}>
         <DialogContent className="sm:max-w-md" data-testid="dialog-invite-members">
           <DialogHeader>
@@ -2344,10 +2369,10 @@ export default function LeagueDetail() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Crown className="w-5 h-5 text-primary" />
-              Transfer Parlay Maestro &amp; Leave
+              Transfer {terms.admin} &amp; Leave
             </DialogTitle>
             <DialogDescription>
-              As the Parlay Maestro, you must hand the role to another member before you can leave. Lieutenants are listed first. Current lieutenants will remain in their roles — the new Maestro can adjust the structure at any time.
+              As the {terms.admin}, you must hand the role to another member before you can leave. {terms.lieutenants} are listed first. Current {terms.lieutenants.toLowerCase()} will remain in their roles — the new Maestro can adjust the structure at any time.
             </DialogDescription>
           </DialogHeader>
 
@@ -2384,7 +2409,7 @@ export default function LeagueDetail() {
                   <div className="flex items-center gap-1.5 shrink-0">
                     {m.role === 'lieutenant' && (
                       <Badge className="text-[10px] px-1.5 py-0 h-5 bg-blue-500/20 text-blue-400 border-blue-500/30">
-                        <Star className="w-2.5 h-2.5 mr-0.5" />Lieutenant
+                        <Star className="w-2.5 h-2.5 mr-0.5" />{terms.lieutenant}
                       </Badge>
                     )}
                     {m.user.isDemo && (

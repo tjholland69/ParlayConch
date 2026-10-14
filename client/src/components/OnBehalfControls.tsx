@@ -1,3 +1,4 @@
+import { useLeagueWording } from "@/hooks/use-league-wording";
 import { useState } from "react";
 import type { Game, LeagueMemberWithUser, MemberWeekParlay, OnBehalfInfo, WeekLockStatus } from "@shared/schema";
 import { legChipLabel } from "@shared/formatPick";
@@ -32,12 +33,15 @@ export function OnBehalfBar({
   info,
   targetId,
   onChange,
+  leagueId,
 }: {
+  leagueId?: number;
   info: OnBehalfInfo | undefined;
   targetId: string | undefined;
   onChange: (userId: string | undefined) => void;
 }) {
   const [choosing, setChoosing] = useState(false);
+  const wording = useLeagueWording(leagueId);
   if (!info || info.targets.length === 0) return null;
   const target = info.targets.find((t) => t.userId === targetId);
 
@@ -96,7 +100,7 @@ export function OnBehalfBar({
       <Button
         size="sm"
         variant="outline"
-        title={info.via ? VIA_TEXT[info.via] : undefined}
+        title={info.via ? wording(VIA_TEXT[info.via]) : undefined}
         onClick={() => (info.targets.length === 1 ? onChange(info.targets[0].userId) : setChoosing(true))}
         data-testid="button-on-behalf-mode"
       >
@@ -130,6 +134,7 @@ export function PendingApprovals({
   weekId: number;
 }) {
   const resolve = useResolveLegApproval(leagueId, weekId);
+  const wording = useLeagueWording(leagueId);
   const pending = (parlay?.legs ?? []).filter((l) => l.approvalStatus === "pending");
   if (pending.length === 0) return null;
   const nameOf = (userId: string | null | undefined) =>
@@ -141,7 +146,7 @@ export function PendingApprovals({
         {pending.length === 1 ? "A pick is" : `${pending.length} picks are`} waiting on approval
       </p>
       <p className="text-xs text-muted-foreground">
-        A pick made on a member's behalf has to be approved by that member before the parlay can be submitted or locked. The Parlay Maestro can override.
+        A pick made on a member's behalf has to be approved by that member before the parlay can be submitted or locked. {wording("The Parlay Maestro can override.")}
       </p>
       {pending.map((leg) => {
         const mine = leg.userId === viewerId;
@@ -200,6 +205,7 @@ export function PickDelegatesCard({
 }) {
   const { data: info } = useOnBehalfInfo(leagueId);
   const setDelegate = useSetPickDelegate(leagueId);
+  const wording = useLeagueWording(leagueId);
   const others = (members ?? []).filter((m) => m.userId !== selfId && m.isActive !== false);
   if (!info || others.length === 0) return null;
   const allowed = new Set(info.myDelegateIds);
@@ -212,7 +218,7 @@ export function PickDelegatesCard({
           On Behalf Of
         </CardTitle>
         <CardDescription>
-          Choose who can make your pick for you. You're asked to approve any pick made for you before it counts. The Parlay Maestro can always pick for anyone.
+          Choose who can make your pick for you. You're asked to approve any pick made for you before it counts. {wording("The Parlay Maestro can always pick for anyone.")}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-2">
@@ -251,6 +257,7 @@ export function UnlockRequests({
 }) {
   const requestUnlock = useRequestUnlock(leagueId, weekId);
   const resolve = useResolveUnlockRequest(leagueId, weekId);
+  const wording = useLeagueWording(leagueId);
   const viewer = lockStatus.viewer;
   const requests = lockStatus.openUnlockRequests ?? [];
 
@@ -259,7 +266,7 @@ export function UnlockRequests({
       {viewer?.canRequestUnlock && (
         viewer.hasOpenRequest ? (
           <p className="mt-2 text-xs text-amber-300" data-testid="text-unlock-requested">
-            You've asked for this week to be unlocked. Waiting on the Parlay Maestro.
+            You've asked for this week to be unlocked. {wording("Waiting on the Parlay Maestro.")}
           </p>
         ) : (
           <Button

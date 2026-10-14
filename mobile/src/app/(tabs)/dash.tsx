@@ -135,7 +135,7 @@ function SummarySlide({ leagueId, dateRange }: { leagueId?: number; dateRange?: 
           }}
         />
       </View>
-      <DashLookthrough lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
+      <DashLookthrough lookthrough={lookthrough} leagueId={leagueId} onClose={() => setLookthrough(null)} />
       {/* The Leagues tile has no legs behind it: its lookthrough is the leagues themselves. */}
       <LegLookthroughSheet visible={leaguesOpen} title="Leagues" onClose={() => setLeaguesOpen(false)}>
         <ScrollView style={{ flexGrow: 0 }}>
@@ -220,14 +220,18 @@ const BET_TYPE_LABELS: Record<string, string> = {
 type Lookthrough = { title: string; legIds: number[] };
 
 /** The legs behind a tapped Dash number, in the app-wide lookthrough sheet. */
-function DashLookthrough({ lookthrough, onClose }: { lookthrough: Lookthrough | null; onClose: () => void }) {
+function DashLookthrough({ lookthrough, leagueId, onClose }: { lookthrough: Lookthrough | null; leagueId?: number; onClose: () => void }) {
   const { data: legs, isLoading } = useMyParlayLegsByIds(lookthrough?.legIds ?? []);
+  // With no league picked the Dash adds up every league, so each bet says
+  // which one it came from.
+  const { data: leagues } = useLeagues();
   return (
     <LegLookthroughSheet
       visible={lookthrough !== null}
       title={lookthrough?.title ?? ""}
       legs={legs}
       isLoading={isLoading}
+      showLeague={leagueId === undefined && (leagues?.length ?? 0) > 1}
       onClose={onClose}
     />
   );
@@ -321,7 +325,7 @@ function AnalyticsSlide({ leagueId, dateRange }: { leagueId?: number; dateRange?
         )}
       </View>
 
-      <DashLookthrough lookthrough={lookthrough} onClose={() => setLookthrough(null)} />
+      <DashLookthrough lookthrough={lookthrough} leagueId={leagueId} onClose={() => setLookthrough(null)} />
     </View>
   );
 }

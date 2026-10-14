@@ -317,6 +317,15 @@ WHERE email = 'admin@example.com';
 
 There is no public API for granting this role.
 
+### Subcommittees
+
+A subcommittee is a league formed inside another league, from that league's members only. In the data it is an ordinary league with a parent (`leagues.parent_league_id`): it has its own members, roles, settings, parlays and stats, and its members' join and leave dates are kept in `league_members` like any league's. Its picks never count toward the parent league's stats; a member's own Dashboard totals do include them.
+
+- **Who can form one:** any active member of the league (`POST /api/leagues/:id/subcommittees`). They run it. Members are picked from the league's roster, then or later (`POST /api/leagues/:id/subcommittee-members`); there is no invite code to share.
+- **Role names:** the same `admin` and `lieutenant` roles, shown as **Frondeur** and **Minion** (`shared/subcommittee.ts`). Only the display differs. Server messages and alerts written for a league are reworded on the way out (`subcommitteeWording`), so routes don't each need a subcommittee variant.
+- **Who can see it:** only its active members, and super users. Guards in front of every `/api/leagues/:id`, `/api/parlays/:id` and `/api/parlay-legs/:id` route answer 404 to anyone else, the parent league's Parlay Maestro included. Reads that span leagues (exports, win-rate series and custom indexes, live-update subscriptions) drop subcommittees the caller isn't in (`storage.subcommitteesClosedTo`), and its parlays are left off the global leaderboard.
+- **Rules kept by the database** (triggers in migration 0032, so SQL scripts and imports obey them too): only an active member of the parent can be an active member of a subcommittee; a subcommittee can't have subcommittees; leaving or being removed from the parent ends the member's place in its subcommittees on the same date, and if they ran one it passes to its longest-standing Minion, else its longest-standing member. Deleting a league deletes its subcommittees.
+
 ### User Manager (super users)
 
 The Admin page has a User Manager for supporting members without writing SQL: search every account by name or email, then correct its first name, last name, display name, email or mobile number, flag it as demo, or set a new password (`/api/admin/users`, `server/accountRoutes.ts`). Every route checks the signed-in user, never an act-for identity. A change writes an `admin.user_update` audit event naming the fields that changed (and the email before and after); a password reset writes `admin.reset_password` and emails nothing, so the new password is passed on by hand. Making someone a super user is still done in the database.
@@ -415,7 +424,7 @@ Supported prop categories include passing, rushing, receiving, touchdowns, inter
 
 Game-score enrichment cannot resolve player props. They are resolved manually or through the player-stat enrichment flow.
 
-While games are on, `server/jobs/live-results-queue.ts` checks every 5 minutes: final scores come from ESPN's scoreboard, so game bets settle minutes after a game ends. Props wait on player stats. Sacks and tackles come from ESPN and are quick; passing, rushing and receiving stats come from nflverse, which publishes some hours later, and are retried every 30 minutes until they land.
+While games are on, `server/jobs/live-results-queue.ts` checks every 2 minutes: final scores come from ESPN's scoreboard, so game bets settle minutes after a game ends. Player props settle at the same time from ESPN's boxscore (passing, rushing, receiving, sacks and tackles). A prop ESPN can't settle is retried every 15 minutes, against nflverse's stats too, which publish some hours later. Games are found by kickoff time rather than by the active week, so a Monday night game still settles after the week rolls over. A pick stays in the grading queue until it has a result; a spread or total is graded against the pick's own line (`shared/legGrading.ts`), and one with no readable line is left ungraded rather than called a push.
 
 ## Data imports and enrichment
 

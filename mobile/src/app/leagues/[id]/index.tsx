@@ -1,3 +1,5 @@
+import { isSubcommittee, leagueTerms, subcommitteeCandidates, type LeagueTerms } from "@shared/subcommittee";
+import { SubcommitteeSheet } from "@/components/SubcommitteeSheet";
 import {
   View,
   Text,
@@ -30,6 +32,8 @@ import {
   useLockWeekParlay,
   useUnlockWeekParlay,
   useInviteByEmail,
+  useAddSubcommitteeMembers,
+  useLeagues,
   useLeagueDataStats,
   useRequestUnlock,
   useResolveUnlockRequest,
@@ -802,9 +806,9 @@ function FilterChipRow({
   );
 }
 
-function roleMeta(role: string | undefined) {
+function roleMeta(role: string | undefined, terms: LeagueTerms) {
   const roleColor = role === "admin" ? "#2563eb" : role === "lieutenant" ? "#0ea5e9" : "#475569";
-  const roleLabel = role === "admin" ? "Parlay Maestro" : role === "lieutenant" ? "Parlay Lieutenant" : "Member";
+  const roleLabel = role === "admin" ? terms.admin : role === "lieutenant" ? terms.lieutenant : "Member";
   return { roleColor, roleLabel };
 }
 
@@ -820,7 +824,9 @@ const MEMBER_SORT_COLUMNS: { key: MemberSortKey; label: string }[] = [
 
 function MemberRow({
   member,
+  terms,
 }: {
+  terms: LeagueTerms;
   member: {
     userId: string;
     name: string;
@@ -832,7 +838,7 @@ function MemberRow({
     participationRate: number;
   };
 }) {
-  const { roleColor, roleLabel } = roleMeta(member.role);
+  const { roleColor, roleLabel } = roleMeta(member.role, terms);
 
   return (
     <View style={styles.memberRow}>
@@ -860,7 +866,9 @@ function MembersTable({
   stats,
   leagueName,
   scopeLabel,
+  terms,
 }: {
+  terms: LeagueTerms;
   members: any[];
   stats: any[] | undefined;
   leagueName: string;
@@ -951,7 +959,7 @@ function MembersTable({
         })}
       </View>
       {sortedRows.map((row) => (
-        <MemberRow key={row.userId} member={row} />
+        <MemberRow key={row.userId} member={row} terms={terms} />
       ))}
     </View>
   );
@@ -1069,6 +1077,9 @@ export default function LeagueDetailScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("parlays");
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [addSubMembersOpen, setAddSubMembersOpen] = useState(false);
+  const addSubcommitteeMembers = useAddSubcommitteeMembers(leagueId);
+  const { data: myLeagues } = useLeagues();
   const [inviteEmails, setInviteEmails] = useState("");
   // Expand all / Collapse all for the Parlays tab's cards.
   const [bulk, setBulk] = useState({ n: 0, collapsed: true });
@@ -1092,6 +1103,7 @@ export default function LeagueDetailScreen() {
         loserLabel?: string | null;
         heroLabel?: string | null;
         shameEmoji?: string | null;
+        parentLeagueId?: number | null;
       }>("GET", `/api/leagues/${leagueId}`),
     enabled: !!leagueId,
   });
@@ -1105,6 +1117,8 @@ export default function LeagueDetailScreen() {
   const { data: stats, isLoading: statsLoading, refetch: refetchStats } = useLeagueStats(leagueId);
   const { data: dataStats, refetch: refetchDataStats } = useLeagueDataStats(leagueId);
   const memberStats = standingsScope === "season" ? dataStats?.currentSeasonStandings : dataStats?.allTimeStandings ?? stats;
+  // A subcommittee has its own names for the league roles.
+  const terms = leagueTerms(league);
   const { data: leagueRecords, isLoading: recordsLoading } = useLeagueRecords(leagueId);
   const [lookthroughRecord, setLookthroughRecord] = useState<LeagueRecordEntry | null>(null);
   const isParticipationLookthrough = lookthroughRecord?.lookthroughKind === "participation";
@@ -1281,7 +1295,9 @@ export default function LeagueDetailScreen() {
                 Alert.alert(leagueName, undefined, [
                   ...(isAdmin
                     ? [
-                        { text: "Invite members", onPress: () => setInviteOpen(true) },
+                        isSubcommittee(league)
+                          ? { text: "Add members", onPress: () => setAddSubMembersOpen(true) }
+                          : { text: "Invite members", onPress: () => setInviteOpen(true) },
                         { text: "League settings", onPress: openLeagueSettings },
                       ]
                     : []),
@@ -1510,14 +1526,14 @@ export default function LeagueDetailScreen() {
                 lockStatus.viewer.hasOpenRequest ? (
                   <View style={styles.missedBanner} testID="text-unlock-requested">
                     <Ionicons name="time-outline" size={16} color="#f59e0b" />
-                    <Text style={styles.missedBannerText}>Unlock requested. Waiting on the Parlay Maestro.</Text>
+                    <Text style={styles.missedBannerText}>Unlock requested. Waiting on the {terms.admin}.</Text>
                   </View>
                 ) : (
                   <Pressable
                     style={({ pressed }) => [styles.requestUnlockBtn, pressed && { opacity: 0.7 }]}
                     disabled={requestUnlock.isPending}
                     onPress={() =>
-                      Alert.alert("Request an unlock?", "The Parlay Maestro will be asked to reopen this week so picks can change.", [
+                      Alert.alert("Request an unlock?", `The ${terms.admin} will be asked to reopen this week so picks can change.`, [
                         { text: "Cancel", style: "cancel" },
                         {
                           text: "Send request",
@@ -1644,10 +1660,11 @@ export default function LeagueDetailScreen() {
               {isAdmin && (
                 <Pressable
                   style={({ pressed }) => [styles.submitBanner, pressed && styles.submitBannerPressed]}
-                  onPress={() => setInviteOpen(true)}
+                  onPress={() => (isSubcommittee(league) ? setAddSubMembersOpen(true) : setInviteOpen(true))}
                 >
                   <Ionicons name="person-add-outline" size={16} color="#2563eb" />
-                  <Text style={styles.submitBannerText}>Invite members</Text>
+                  {/* A subcommittee is filled from its league's roster, not by invite. */}
+                  <Text style={styles.submitBannerText}>{isSubcommittee(league) ? "Add members" : "Invite members"}</Text>
                   <Ionicons name="chevron-forward" size={14} color="#2563eb" />
                 </Pressable>
               )}
@@ -1677,6 +1694,7 @@ export default function LeagueDetailScreen() {
                     })}
                   </View>
                   <MembersTable
+                    terms={terms}
                     members={members}
                     stats={memberStats}
                     leagueName={leagueName}
@@ -1764,6 +1782,30 @@ export default function LeagueDetailScreen() {
         title={reportCatalog?.find((r) => r.id === openReportId)?.title ?? "Report"}
         onClose={() => setOpenReportId(null)}
       />
+
+      {isSubcommittee(league) && (() => {
+        const parent = myLeagues?.find((l) => l.id === league?.parentLeagueId);
+        return (
+          <SubcommitteeSheet
+            visible={addSubMembersOpen}
+            mode="add"
+            parentName={parent?.name ?? "its league"}
+            subcommitteeName={leagueName}
+            candidates={subcommitteeCandidates(parent?.members, (members ?? []).map((m: any) => m.userId))}
+            busy={addSubcommitteeMembers.isPending}
+            onClose={() => setAddSubMembersOpen(false)}
+            onSubmit={({ memberUserIds }) =>
+              addSubcommitteeMembers.mutate(memberUserIds, {
+                onSuccess: () => {
+                  setAddSubMembersOpen(false);
+                  refetchMembers();
+                },
+                onError: (e: any) => Alert.alert("Error", e?.message ?? "Couldn't add members."),
+              })
+            }
+          />
+        );
+      })()}
 
       <Modal
         visible={inviteOpen}

@@ -1,3 +1,4 @@
+import { SubcommitteeError } from "@shared/subcommittee";
 import { db } from "./db";
 import { logger } from "./logger";
 import {
@@ -163,7 +164,12 @@ export interface IStorage {
   // Leagues
   createLeague(userId: string, league: InsertLeague): Promise<League>;
   getLeague(id: number): Promise<League | undefined>;
-  getUserLeagues(userId: string): Promise<LeagueWithMembers[]>;
+createSubcommittee(userId: string, parentLeagueId: number, league: Omit<InsertLeague, "parentLeagueId">, memberUserIds?: string[]): Promise<League>;
+  getSubcommittees(parentLeagueId: number, userId: string): Promise<League[]>;
+  subcommitteesClosedTo(userId: string): Promise<Set<number>>;
+  canSeeLeague(leagueId: number, userId: string): Promise<boolean>;
+  getLeagueIdForLeg(legId: number): Promise<number | null>;
+    getUserLeagues(userId: string): Promise<LeagueWithMembers[]>;
   joinLeague(userId: string, inviteCode: string): Promise<LeagueMember | null>;
   getLeagueMembers(leagueId: number): Promise<LeagueMember[]>;
   getLeagueMembersWithUsers(leagueId: number, opts?: { includeInactive?: boolean; asOfDate?: Date }): Promise<LeagueMemberWithUser[]>;
@@ -461,7 +467,12 @@ export class DatabaseStorage implements IStorage {
         pushes: sql<number>`count(*) filter (where ${parlays.status} = 'push')`,
       })
       .from(users)
-      .leftJoin(parlays, eq(parlays.userId, users.id))
+      // Everyone sees this board, so a subcommittee's parlays stay off it:
+      // those are for the people in the subcommittee only.
+      .leftJoin(parlays, and(
+        eq(parlays.userId, users.id),
+        sql`not exists (select 1 from ${leagues} where ${leagues.id} = ${parlays.leagueId} and ${leagues.parentLeagueId} is not null)`,
+      ))
       .where(sql`${users.isDemo} is not true`)
       .groupBy(users.id);
 
@@ -744,6 +755,70 @@ export class DatabaseStorage implements IStorage {
     return newLeague;
   }
 
+  /**
+   * A subcommittee of `parentLeagueId`, run by whoever creates it (any active
+   * member of the league may). `memberUserIds` are added with them; each has
+   * to be an active member of the league too.
+   */
+  async createSubcommittee(userId: string, parentLeagueId: number, league: Omit<InsertLeague, "parentLeagueId">, memberUserIds: string[] = []): Promise<League> {
+    const parent = await this.getLeague(parentLeagueId);
+    if (!parent) throw new SubcommitteeError("League not found.");
+    if (parent.parentLeagueId != null) throw new SubcommitteeError("A subcommittee can't have subcommittees of its own.");
+    const roster = new Set((await this.getLeagueMembers(parentLeagueId)).map((m) => m.userId));
+    if (!roster.has(userId)) throw new SubcommitteeError(`Only members of ${parent.name} can form a subcommittee in it.`);
+    const others = Array.from(new Set(memberUserIds)).filter((id) => id !== userId);
+    if (others.some((id) => !roster.has(id))) throw new SubcommitteeError(`Everyone in a subcommittee has to be a member of ${parent.name}.`);
+
+    return db.transaction(async (tx) => {
+      const [created] = await tx.insert(leagues)
+        .values({ ...league, parentLeagueId, inviteCode: generateInviteCode() })
+        .returning();
+      await tx.insert(leagueMembers).values([
+        { leagueId: created.id, userId, role: "admin" },
+        ...others.map((id) => ({ leagueId: created.id, userId: id, role: "member" })),
+      ]);
+      return created;
+    });
+  }
+
+  /**
+   * The subcommittees `userId` has no business seeing: every one they aren't
+   * an active member of. Empty for a super user. Anything that reads across
+   * leagues (exports, win-rate series, live updates) drops these.
+   */
+  async subcommitteesClosedTo(userId: string): Promise<Set<number>> {
+    const subs = await db.select({ id: leagues.id }).from(leagues).where(sql`${leagues.parentLeagueId} is not null`);
+    if (subs.length === 0 || (await this.isSuperUser(userId))) return new Set();
+    const mine = await db.select({ leagueId: leagueMembers.leagueId }).from(leagueMembers)
+      .where(and(eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true)));
+    const open = new Set(mine.map((m) => m.leagueId));
+    return new Set(subs.map((l) => l.id).filter((id) => !open.has(id)));
+  }
+
+  async getLeagueIdForLeg(legId: number): Promise<number | null> {
+    const [row] = await db.select({ leagueId: parlays.leagueId }).from(parlayLegs)
+      .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .where(eq(parlayLegs.id, legId));
+    return row?.leagueId ?? null;
+  }
+
+  /** Whether `userId` may see `leagueId` at all: false only for a subcommittee they aren't in. */
+  async canSeeLeague(leagueId: number, userId: string): Promise<boolean> {
+    const league = await this.getLeague(leagueId);
+    if (!league || league.parentLeagueId == null) return true;
+    return (await this.isSuperUser(userId)) || (await this.getLeagueMembers(leagueId)).some((m) => m.userId === userId);
+  }
+
+  /** The league's subcommittees `userId` is an active member of (all of them for a super user). */
+  async getSubcommittees(parentLeagueId: number, userId: string): Promise<League[]> {
+    const rows = await db.select().from(leagues).where(eq(leagues.parentLeagueId, parentLeagueId));
+    if (rows.length === 0 || (await this.isSuperUser(userId))) return rows;
+    const mine = await db.select({ leagueId: leagueMembers.leagueId }).from(leagueMembers)
+      .where(and(eq(leagueMembers.userId, userId), eq(leagueMembers.isActive, true), inArray(leagueMembers.leagueId, rows.map((r) => r.id))));
+    const ids = new Set(mine.map((m) => m.leagueId));
+    return rows.filter((r) => ids.has(r.id));
+  }
+
   async getLeague(id: number): Promise<League | undefined> {
     const [league] = await db.select().from(leagues).where(eq(leagues.id, id));
     return league;
@@ -764,7 +839,7 @@ export class DatabaseStorage implements IStorage {
       : memberships.map(m => m.leagueId);
     if (leagueIds.length === 0) return [];
 
-    const [userLeagues, allMembers] = await Promise.all([
+    const [listedLeagues, allMembers] = await Promise.all([
       db.select().from(leagues).where(inArray(leagues.id, leagueIds)),
       db.select({ member: leagueMembers, user: users })
         .from(leagueMembers)
@@ -778,6 +853,11 @@ export class DatabaseStorage implements IStorage {
       existing.push(m);
       membersByLeague.set(m.member.leagueId, existing);
     }
+
+    // A subcommittee drops off the list of someone no longer in it (they
+    // left it, or left its league).
+    const userLeagues = isSuper ? listedLeagues : listedLeagues.filter(league =>
+      league.parentLeagueId == null || memberships.some(m => m.leagueId === league.id && m.isActive));
 
     return userLeagues.map(league => {
       const members = membersByLeague.get(league.id) ?? [];
@@ -1835,9 +1915,10 @@ export class DatabaseStorage implements IStorage {
     // leftJoin (not innerJoin) on users — a leg the caller contributed must never
     // disappear just because the parlay's owner record doesn't resolve (e.g. stale
     // import data). Missing `owner` (when not the caller's own parlay) signals that.
-    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users })
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, leagueName: leagues.name, owner: users })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(leagues, eq(parlays.leagueId, leagues.id))
       .leftJoin(users, eq(parlays.userId, users.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
       .where(
@@ -1853,13 +1934,15 @@ export class DatabaseStorage implements IStorage {
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
     return rows
-      .map(({ leg, game, parlay, owner }) => {
+      .map(({ leg, game, parlay, leagueName, owner }) => {
         const isOwnParlay = parlay.userId === userId;
         return {
           ...leg,
           game,
           parlay: {
             id: parlay.id,
+            leagueId: parlay.leagueId,
+            leagueName,
             weekId: parlay.weekId,
             week: weekById.get(parlay.weekId)!,
             status: parlay.status,
@@ -1886,9 +1969,10 @@ export class DatabaseStorage implements IStorage {
     if (legIds.length === 0) return [];
 
     const legOwners = alias(users, "leg_owners");
-    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, owner: users, legOwner: legOwners })
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, leagueName: leagues.name, owner: users, legOwner: legOwners })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(leagues, eq(parlays.leagueId, leagues.id))
       .leftJoin(users, eq(parlays.userId, users.id))
       .leftJoin(legOwners, eq(parlayLegs.userId, legOwners.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
@@ -1901,7 +1985,7 @@ export class DatabaseStorage implements IStorage {
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
     return rows
-      .map(({ leg, game, parlay, owner, legOwner }) => {
+      .map(({ leg, game, parlay, leagueName, owner, legOwner }) => {
         const isOwnParlay = parlay.userId === requestingUserId;
         return {
           ...leg,
@@ -1909,6 +1993,8 @@ export class DatabaseStorage implements IStorage {
           user: legOwnerSummary(legOwner),
           parlay: {
             id: parlay.id,
+            leagueId: parlay.leagueId,
+            leagueName,
             weekId: parlay.weekId,
             week: weekById.get(parlay.weekId)!,
             status: parlay.status,
@@ -1927,9 +2013,10 @@ export class DatabaseStorage implements IStorage {
   async getMyParlayLegsByIds(userId: string, legIds: number[]): Promise<ParlayLegWithParlayContext[]> {
     if (legIds.length === 0) return [];
 
-    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, legOwner: users })
+    const rows = await db.select({ leg: parlayLegs, game: games, parlay: parlays, leagueName: leagues.name, legOwner: users })
       .from(parlayLegs)
       .innerJoin(parlays, eq(parlayLegs.parlayId, parlays.id))
+      .leftJoin(leagues, eq(parlays.leagueId, leagues.id))
       .leftJoin(users, eq(parlayLegs.userId, users.id))
       .leftJoin(games, eq(parlayLegs.gameId, games.id))
       // Your own legs, plus any leg in a parlay you started (the dashboard's
@@ -1946,12 +2033,14 @@ export class DatabaseStorage implements IStorage {
     const weekById = new Map(allWeeks.map(w => [w.id, w]));
 
     return rows
-      .map(({ leg, game, parlay, legOwner }) => ({
+      .map(({ leg, game, parlay, leagueName, legOwner }) => ({
         ...leg,
         game,
         user: legOwnerSummary(legOwner),
         parlay: {
           id: parlay.id,
+          leagueId: parlay.leagueId,
+          leagueName,
           weekId: parlay.weekId,
           week: weekById.get(parlay.weekId)!,
           status: parlay.status,
@@ -1970,7 +2059,10 @@ export class DatabaseStorage implements IStorage {
   async getLegExportRows(userId: string, opts: { leagueId?: number; mineOnly?: boolean } = {}): Promise<LegExportRow[]> {
     const memberships = await db.select({ leagueId: leagueMembers.leagueId }).from(leagueMembers)
       .where(eq(leagueMembers.userId, userId));
-    const leagueIds = memberships.map(m => m.leagueId).filter(id => opts.leagueId == null || id === opts.leagueId);
+    // A subcommittee's history goes with its membership: someone who has
+    // left it (or its league) no longer exports it.
+    const closed = await this.subcommitteesClosedTo(userId);
+    const leagueIds = memberships.map(m => m.leagueId).filter(id => !closed.has(id) && (opts.leagueId == null || id === opts.leagueId));
     if (leagueIds.length === 0) return [];
 
     const rows = await db
@@ -2631,6 +2723,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async addMemberToLeague(leagueId: number, userId: string): Promise<LeagueMember> {
+    // A subcommittee only takes members of its league. (The database refuses
+    // anyone else too; this is the readable version of that refusal.)
+    const league = await this.getLeague(leagueId);
+    if (league?.parentLeagueId != null) {
+      const inParent = (await this.getLeagueMembers(league.parentLeagueId)).some((m) => m.userId === userId);
+      if (!inParent) throw new SubcommitteeError("Only members of the league can join its subcommittees.");
+    }
     const [existing] = await db.select().from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.userId, userId)));
     if (existing) {

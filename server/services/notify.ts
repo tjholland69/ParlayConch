@@ -12,10 +12,11 @@
  * Sending never throws into the caller: a failed alert is logged and the
  * action that triggered it still succeeds.
  */
+import { subcommitteeWording } from "@shared/subcommittee";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
 import { logger } from "../logger";
-import { leagueMembers, notifications, users } from "@shared/db-schema";
+import { leagueMembers, leagues, notifications, users } from "@shared/db-schema";
 import { userContacts } from "@shared/models/auth";
 import type { UserNotificationPreferences, UserSettings } from "@shared/schema";
 import {
@@ -127,7 +128,14 @@ export async function notifyLeague(leagueId: number, input: Omit<NotifyInput, "l
       .select({ userId: leagueMembers.userId })
       .from(leagueMembers)
       .where(and(eq(leagueMembers.leagueId, leagueId), eq(leagueMembers.isActive, true)));
-    await notifyUsers(members.map((m) => m.userId), { ...input, leagueId });
+    // A subcommittee's alerts use its own names for the roles.
+    const [league] = await db.select({ parentLeagueId: leagues.parentLeagueId }).from(leagues).where(eq(leagues.id, leagueId));
+    await notifyUsers(members.map((m) => m.userId), {
+      ...input,
+      title: subcommitteeWording(input.title, league),
+      message: subcommitteeWording(input.message, league) ?? undefined,
+      leagueId,
+    });
   } catch (err) {
     logger.error({ err, event: input.event }, "[notify] failed");
   }

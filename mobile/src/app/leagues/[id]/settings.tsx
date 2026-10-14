@@ -1,3 +1,4 @@
+import { isSubcommittee, leagueTerms, subcommitteeWording } from "@shared/subcommittee";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
 import { Stack, useLocalSearchParams } from "expo-router";
@@ -97,6 +98,7 @@ export default function LeagueSettingsScreen() {
   const queryClient = useQueryClient();
   const { data: leagues, isLoading } = useLeagues();
   const league = leagues?.find((l) => l.id === leagueId);
+  const terms = leagueTerms(league);
   const { data: members } = useLeagueMembersWithUsers(leagueId);
 
   const [name, setName] = useState("");
@@ -206,8 +208,8 @@ export default function LeagueSettingsScreen() {
       <View style={styles.centered}>
         <Stack.Screen options={{ title: "League Settings" }} />
         <Ionicons name="lock-closed-outline" size={28} color="#64748b" />
-        <Text style={styles.lockedTitle}>Parlay Maestro only</Text>
-        <Text style={styles.sectionNote}>Only the league's Parlay Maestro can change its settings.</Text>
+        <Text style={styles.lockedTitle}>{terms.admin} only</Text>
+        <Text style={styles.sectionNote}>Only the {terms.kindLower}'s {terms.admin} can change its settings.</Text>
       </View>
     );
   }
@@ -285,8 +287,8 @@ export default function LeagueSettingsScreen() {
         </View>
 
         <Section
-          label="Parlay Lieutenants"
-          note={`Up to ${MAX_LIEUTENANTS} members who help run the league. These switches save as you flip them.`}
+          label={terms.lieutenants}
+          note={`Up to ${MAX_LIEUTENANTS} members who help run the ${terms.kindLower}. These switches save as you flip them.`}
         />
         <View style={styles.card}>
           {activeMembers.length === 0 ? (
@@ -301,7 +303,7 @@ export default function LeagueSettingsScreen() {
                   <View style={styles.row}>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={styles.rowLabel} numberOfLines={1}>{legOwnerName(m.user, "Member")}</Text>
-                      <Text style={styles.rowSub}>{isMaestro ? "Parlay Maestro" : isLt ? "Parlay Lieutenant" : "Member"}</Text>
+                      <Text style={styles.rowSub}>{isMaestro ? terms.admin : isLt ? terms.lieutenant : "Member"}</Text>
                     </View>
                     {!isMaestro && (
                       <Switch
@@ -310,7 +312,7 @@ export default function LeagueSettingsScreen() {
                         disabled={setRole.isPending || (!isLt && lieutenantCount >= MAX_LIEUTENANTS)}
                         trackColor={{ false: "#1e2a3b", true: accent }}
                         thumbColor="#ffffff"
-                        accessibilityLabel={`${legOwnerName(m.user, "Member")} is a Parlay Lieutenant`}
+                        accessibilityLabel={`${legOwnerName(m.user, "Member")} is a ${terms.lieutenant}`}
                         testID={`switch-lieutenant-${m.userId}`}
                       />
                     )}
@@ -361,7 +363,7 @@ export default function LeagueSettingsScreen() {
           </Pressable>
         </View>
 
-        <Section label="What lieutenants can do" />
+        <Section label={`What ${terms.lieutenants.toLowerCase()} can do`} />
         <View style={styles.card}>
           {PERMISSION_LABELS.map((perm, i) => (
             <View key={perm.key}>
@@ -369,7 +371,7 @@ export default function LeagueSettingsScreen() {
               <View style={styles.row}>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={styles.rowLabel}>{perm.label}</Text>
-                  <Text style={styles.rowSub}>{perm.description}</Text>
+                  <Text style={styles.rowSub}>{subcommitteeWording(perm.description, league)}</Text>
                 </View>
                 <Switch
                   value={!!permissions[perm.key]}

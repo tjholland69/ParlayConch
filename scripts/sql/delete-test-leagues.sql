@@ -49,6 +49,15 @@ BEGIN
   END IF;
 END $$;
 
+-- Deleting a league deletes its subcommittees too, and the copy below
+-- wouldn't include them. Stop if there are any.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM leagues WHERE parent_league_id IN (SELECT id FROM _doomed)) THEN
+    RAISE EXCEPTION 'One of these leagues has subcommittees. Delete those first. Nothing was deleted.';
+  END IF;
+END $$;
+
 -- Copy every row that's about to go. Parents come before the rows that
 -- point at them: restore-test-leagues.sql puts them back in this order.
 -- Stops here if the schema already exists, so an earlier copy is never

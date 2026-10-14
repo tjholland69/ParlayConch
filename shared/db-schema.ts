@@ -4,7 +4,7 @@
 // pg-core pulls in. Client-safe types/constants live in ./schema, which
 // re-exports the *types* defined here via `import type` / `export type` so
 // those re-exports are erased at build time and never pull this file in.
-import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb, real, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, varchar, jsonb, real, uniqueIndex, index, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { users } from "./models/auth";
@@ -79,6 +79,11 @@ export const historicalOddsSnapshots = pgTable("historical_odds_snapshots", {
 // Leagues - groups of users
 export const leagues = pgTable("leagues", {
   id: serial("id").primaryKey(),
+  // Set on a subcommittee: a league formed inside another league, from that
+  // league's members only. Everything else about it (members, roles, picks,
+  // stats) is an ordinary league's. One level deep: a subcommittee has no
+  // subcommittees of its own. See shared/subcommittee.ts.
+  parentLeagueId: integer("parent_league_id").references((): AnyPgColumn => leagues.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
   inviteCode: text("invite_code").notNull().unique(),
@@ -101,7 +106,9 @@ export const leagues = pgTable("leagues", {
   // siren on the slides, a bell in the text version).
   shameEmoji: text("shame_emoji"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => [
+  index("leagues_parent_league_id_idx").on(table.parentLeagueId),
+]);
 
 // League memberships
 export const leagueMembers = pgTable("league_members", {

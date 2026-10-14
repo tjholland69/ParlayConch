@@ -357,6 +357,9 @@ export type ParlayLegWithParlayContext = ParlayLeg & {
   user?: { firstName?: string | null; email?: string | null; settings?: UserSettings | null } | null;
   parlay: {
     id: number;
+    /** The league the bet was made in, for lists that span several leagues. */
+    leagueId?: number;
+    leagueName?: string | null;
     weekId: number;
     week: Week;
     status: string | null;

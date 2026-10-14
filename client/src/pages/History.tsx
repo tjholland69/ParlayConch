@@ -315,6 +315,8 @@ export default function History() {
   };
 
   const leagueId = selectedLeagueId === "all" ? undefined : Number(selectedLeagueId);
+  // "All leagues" with more than one to draw from: each bet names its league.
+  const spansLeagues = leagueId === undefined && (leagues?.length ?? 0) > 1;
   const exportOptions = { leagueId, mineOnly: ownPicksOnly };
   const { data: myLegs } = useMyLegHistory(leagueId);
   const [activeTile, setActiveTile] = useState<TileKey | null>(null);
@@ -976,7 +978,7 @@ export default function History() {
               {filteredMyLegs.length === 0 ? (
                 <p className="text-sm text-muted-foreground italic py-2 px-1">No legs match this query.</p>
               ) : (
-                <LegsWithParlayTable legs={filteredMyLegs} />
+                <LegsWithParlayTable legs={filteredMyLegs} showLeague={spansLeagues} />
               )}
             </>
           )}
@@ -1019,7 +1021,7 @@ export default function History() {
               </div>
             )
           ) : activeTileInfo?.kind === "legs" ? (
-            <LegsWithParlayTable legs={activeTileInfo.items} />
+            <LegsWithParlayTable legs={activeTileInfo.items} showLeague={spansLeagues} />
           ) : null}
         </DialogContent>
       </Dialog>

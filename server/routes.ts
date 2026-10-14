@@ -71,6 +71,7 @@ import { leaguePickTrends, suggestPicks } from "./services/pickSuggestions";
 import { parseActualOdds } from "@shared/parlayOdds";
 import { createApiToken, listApiTokens, revokeApiToken } from "./services/apiTokens";
 import { getLeagueReport } from "./services/reports";
+import { isSubcommittee, SubcommitteeError, subcommitteeWording } from "@shared/subcommittee";
 import { startLiveResultsWorker } from "./jobs/live-results-queue";
 import { isReportId, reportCatalog } from "@shared/reports";
 import { loserLabelText } from "@shared/leagueLabels";
@@ -401,8 +402,15 @@ export async function registerRoutes(
       return s ? new Date(s) : undefined;
     };
 
+    // Only leagues the caller is in: the filter can narrow their own
+    // leagues, never reach into someone else's.
+    const requested = csvNumbers(req.query.leagueIds);
+    const mine = new Set((await storage.getUserLeagues(userId)).map(l => l.id));
+    const leagueIds = requested?.filter(id => mine.has(id));
+    if (requested && leagueIds!.length === 0) return res.json({ points: [] });
+
     const series = await computeWinRateSeries(userId, {
-      leagueIds: csvNumbers(req.query.leagueIds),
+      leagueIds,
       memberUserIds: csvStrings(req.query.memberUserIds),
       betTypes: csvStrings(req.query.betTypes),
       propTypes: csvStrings(req.query.propTypes),
@@ -572,7 +580,68 @@ export async function registerRoutes(
     res.json(series);
   });
 
+  // Inside a subcommittee the roles go by other names, so a message a route
+  // wrote for a league ("Only the Parlay Maestro can...") is reworded on the
+  // way out rather than in each of those routes.
+  const speakSubcommittee = (res: Response) => {
+    const send = res.json.bind(res);
+    res.json = (body?: any) =>
+      send(body && typeof body === "object" && typeof body.message === "string"
+        ? { ...body, message: subcommitteeWording(body.message, { parentLeagueId: 1 }) }
+        : body);
+  };
+  const guardLeague = async (leagueId: number, userId: string, res: Response, notFound: string): Promise<boolean> => {
+    const league = await storage.getLeague(leagueId);
+    if (!league || !isSubcommittee(league)) return true;
+    if (!(await storage.canSeeLeague(leagueId, userId))) {
+      res.status(404).json({ message: notFound });
+      return false;
+    }
+    speakSubcommittee(res);
+    return true;
+  };
+
   // ===== LEAGUES =====
+  // A subcommittee is closed to everyone outside it, on every league route
+  // at once: whatever a route below checks for itself, a caller who isn't
+  // an active member (or a super user) gets a 404 here first. Signed-out
+  // callers pass through to the route's own 401.
+  app.use("/api/leagues/:leagueId", async (req, res, next) => {
+    try {
+      const leagueId = Number(req.params.leagueId);
+      const userId = (req.user as any)?.claims?.sub as string | undefined;
+      if (!Number.isInteger(leagueId) || !userId) return next();
+      if (await guardLeague(leagueId, userId, res, "League not found")) next();
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  // The same door on a subcommittee's parlays and bets, which are reached
+  // by their own ids rather than through the league.
+  app.use("/api/parlays/:parlayId", async (req, res, next) => {
+    try {
+      const parlayId = Number(req.params.parlayId);
+      const userId = (req.user as any)?.claims?.sub as string | undefined;
+      if (!Number.isInteger(parlayId) || !userId) return next();
+      const parlay = await storage.getParlay(parlayId);
+      if (!parlay || (await guardLeague(parlay.leagueId, userId, res, "Parlay not found"))) next();
+    } catch (err) {
+      next(err);
+    }
+  });
+  app.use("/api/parlay-legs/:legId", async (req, res, next) => {
+    try {
+      const legId = Number(req.params.legId);
+      const userId = (req.user as any)?.claims?.sub as string | undefined;
+      if (!Number.isInteger(legId) || !userId) return next();
+      const leagueId = await storage.getLeagueIdForLeg(legId);
+      if (leagueId == null || (await guardLeague(leagueId, userId, res, "Bet not found"))) next();
+    } catch (err) {
+      next(err);
+    }
+  });
+
   app.get("/api/leagues", isAuthenticated, async (req, res) => {
     const userId = (req.user as any).claims.sub;
     const leagues = await storage.getUserLeagues(userId);
@@ -581,7 +650,9 @@ export async function registerRoutes(
 
   app.post("/api/leagues", isAuthenticated, async (req, res) => {
     try {
-      const input = insertLeagueSchema.parse(req.body);
+      // A subcommittee is made through /api/leagues/:id/subcommittees, which
+      // checks the caller against the parent league.
+      const input = insertLeagueSchema.omit({ parentLeagueId: true }).parse(req.body);
       const userId = (req.user as any).claims.sub;
       const league = await storage.createLeague(userId, input);
       res.status(201).json(league);
@@ -598,9 +669,15 @@ export async function registerRoutes(
     if (!inviteCode) return res.status(400).json({ message: "Invite code required" });
     
     const userId = (req.user as any).claims.sub;
-    const member = await storage.joinLeague(userId, inviteCode);
-    if (!member) return res.status(404).json({ message: "Invalid invite code" });
-    res.json(member);
+    try {
+      const member = await storage.joinLeague(userId, inviteCode);
+      if (!member) return res.status(404).json({ message: "Invalid invite code" });
+      res.json(member);
+    } catch (err) {
+      // A subcommittee's code only works for members of its league.
+      if (err instanceof SubcommitteeError) return res.status(403).json({ message: err.message });
+      throw err;
+    }
   });
 
   // Must be before /api/leagues/:id to avoid route conflict
@@ -633,6 +710,69 @@ export async function registerRoutes(
     const league = await storage.getLeague(Number(req.params.id));
     if (!league) return res.status(404).json({ message: "League not found" });
     res.json(league);
+  });
+
+  // ===== SUBCOMMITTEES =====
+  // A league's subcommittees, as far as the caller is in them. Members of
+  // the league who aren't in a subcommittee don't see that it exists.
+  app.get("/api/leagues/:id/subcommittees", isAuthenticated, async (req, res) => {
+    const leagueId = Number(req.params.id);
+    const userId = (req.user as any).claims.sub;
+    const allowed = (await storage.isSuperUser(userId)) || (await storage.getLeagueMembers(leagueId)).some(m => m.userId === userId);
+    if (!allowed) return res.status(403).json({ message: "Not a member of this league" });
+    res.json(await storage.getSubcommittees(leagueId, userId));
+  });
+
+  // Any member of a league can form a subcommittee in it, and runs it.
+  app.post("/api/leagues/:id/subcommittees", isAuthenticated, auditLog("subcommittee.create", { targetParam: "id", targetType: "league" }), async (req, res) => {
+    try {
+      const parentLeagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const { name, description, memberUserIds } = z.object({
+        name: z.string().trim().min(1, "Give the subcommittee a name").max(80),
+        description: z.string().trim().max(500).optional(),
+        memberUserIds: z.array(z.string().min(1)).max(100).optional(),
+      }).parse(req.body);
+      const parent = await storage.getLeague(parentLeagueId);
+      if (!parent) return res.status(404).json({ message: "League not found" });
+      // Starts with the league's own rules; the Frondeur can change them after.
+      const league = await storage.createSubcommittee(userId, parentLeagueId, {
+        name,
+        description: description || null,
+        minLegsPerParlay: parent.minLegsPerParlay,
+        maxLegsPerParlay: parent.maxLegsPerParlay,
+        maxParlaysPerWeek: parent.maxParlaysPerWeek,
+        loserLabel: parent.loserLabel,
+        heroLabel: parent.heroLabel,
+      }, memberUserIds ?? []);
+      res.status(201).json(league);
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      if (err instanceof SubcommitteeError) return res.status(403).json({ message: err.message });
+      throw err;
+    }
+  });
+
+  // The Frondeur adds people from the league's roster to the subcommittee.
+  app.post("/api/leagues/:id/subcommittee-members", isAuthenticated, auditLog("subcommittee.add_members", { targetParam: "id", targetType: "league" }), async (req, res) => {
+    try {
+      const leagueId = Number(req.params.id);
+      const userId = (req.user as any).claims.sub;
+      const league = await storage.getLeague(leagueId);
+      if (!league || !isSubcommittee(league)) return res.status(404).json({ message: "Subcommittee not found" });
+      if (!(await storage.isLeagueAdmin(leagueId, userId))) return res.status(403).json({ message: "Only the Frondeur can add members" });
+      const { userIds } = z.object({ userIds: z.array(z.string().min(1)).min(1).max(100) }).parse(req.body);
+      const roster = new Set((await storage.getLeagueMembers(league.parentLeagueId!)).map(m => m.userId));
+      if (userIds.some(id => !roster.has(id))) {
+        return res.status(403).json({ message: "Only members of the league can join its subcommittees." });
+      }
+      for (const id of Array.from(new Set(userIds))) await storage.addMemberToLeague(leagueId, id);
+      res.json(await storage.getLeagueMembersWithUsers(leagueId));
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ message: err.errors[0].message });
+      if (err instanceof SubcommitteeError) return res.status(403).json({ message: err.message });
+      throw err;
+    }
   });
 
   app.get("/api/leagues/:id/stats", isAuthenticated, async (req, res) => {
@@ -2297,6 +2437,9 @@ export async function registerRoutes(
         storage.getUser(userId),
       ]);
       if (!league) return res.status(404).json({ message: "League not found" });
+      const parentRoster = league.parentLeagueId != null
+        ? new Set((await storage.getLeagueMembers(league.parentLeagueId)).map(m => m.userId))
+        : null;
 
       const inviterName =
         inviter?.firstName
@@ -2307,6 +2450,12 @@ export async function registerRoutes(
         emails.map(async (email) => {
           // Check if they already have an account
           const existingUser = await storage.getUserByEmail(email);
+
+          // A subcommittee takes people from its league's roster, nobody else:
+          // no invite goes out, and an account outside the league isn't added.
+          if (parentRoster && (!existingUser || !parentRoster.has(existingUser.id))) {
+            return { email, status: "not_in_league" as const };
+          }
 
           if (!existingUser) {
             // Not a member yet — send invite email with the join code
